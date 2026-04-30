@@ -1,0 +1,21 @@
+# 隱藏所有環境變數檔案 (包含 API Key)
+.env
+*.env
+
+# 隱藏 Python 虛擬環境與快取
+.venv/
+__pycache__/
+*.py[cod]
+
+# 隱藏資料庫 (保護交易紀錄)
+*.db
+*.sqlite3
+
+# 隱藏日誌與系統垃圾
+*.log
+.DS_Store
+
+# 隱藏個人開發筆記 (選用，若想保持專案乾淨)
+*.txt
+!README.md
+!requirements.txt
