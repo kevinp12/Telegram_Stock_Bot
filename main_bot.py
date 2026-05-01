@@ -57,8 +57,8 @@ def get_user_display_name(m) -> str:
         name = user.first_name or ""
         if user.last_name:
             name += f" {user.last_name}"
-        return name or user.username or "Kevin"
-    return "Kevin"
+        return name or user.username or "User"
+    return "User"
 
 
 def get_user_id(m) -> int:
@@ -70,8 +70,11 @@ def get_user_id(m) -> int:
 
 def is_admin_user(user_id: int) -> bool:
     try:
-        return CHAT_ID and str(user_id) == str(int(CHAT_ID))
-    except Exception:
+        # CHAT_ID 在 .env 是字串，例如 "-1003802320479"
+        # 移除 int() 轉換，直接比對字串，避免處理負號轉型問題
+        return CHAT_ID and str(user_id) == str(CHAT_ID).lstrip("-") or str(user_id) == str(CHAT_ID)
+    except Exception as exc:
+        logging.error(f"is_admin_user error: {exc}")
         return False
 
 
@@ -117,77 +120,53 @@ def _split_ai_sections(text: str) -> list[str]:
 
 
 def safe_send(chat_id, text: str | list[str], parse_mode: str | None = None, reply_markup: any = None):
-    """安全發送：支援分段 AI 區塊與長訊息分割。"""
+    """安全發送：確保完整傳遞內容，嚴格按字元長度切割，且不破壞段落結構。"""
     if text is None:
         text = ""
-
-    def _escape_for_parse_mode(original: str, mode: str | None) -> str:
-        if not mode:
-            return original
-        mode = mode.lower()
-        if mode == "html":
-            return html.escape(original)
-        if mode in {"markdown", "markdownv2"}:
-            # 保守脫逸，防止 Telegram 渲染錯誤，但保留 AI 的 Markdown 結構
-            # 如果 parse 失敗，Telebot 會拋出 ApiTelegramException
-            return original
-        return original
-
-    def _split_text_chunks(full_text: str, limit: int) -> list[str]:
-        if len(full_text) <= limit:
-            return [full_text]
-        chunks: list[str] = []
-        start = 0
-        while start < len(full_text):
-            end = min(start + limit, len(full_text))
-            if end < len(full_text):
-                # 優先在雙換行（段落）處切割
-                split_at = full_text.rfind("\n\n", start, end)
-                if split_at <= start + (limit // 2): # 如果雙換行太靠前，找單換行
-                    split_at = full_text.rfind("\n", start, end)
-                if split_at <= start + (limit // 2): # 如果單換行也太靠前，找空白
-                    split_at = full_text.rfind(" ", start, end)
-                if split_at <= start:
-                    split_at = end
-            else:
-                split_at = len(full_text)
+    
+    # 將所有內容視為一個長字串
+    if isinstance(text, list):
+        full_text = "\n\n".join(text)
+    else:
+        full_text = text
+    
+    # Telegram 單則訊息最大限制為 4096，設為 3800 以保留邊界
+    CHUNK_SIZE = 3800
+    
+    def _chunk_text(s: str, limit: int) -> list[str]:
+        if len(s) <= limit:
+            return [s]
+        
+        chunks = []
+        while len(s) > limit:
+            # 尋找最近的換行符號切割，避免破壞段落
+            split_at = s.rfind("\n", 0, limit)
+            if split_at == -1:
+                # 若找不到換行，強行切斷
+                split_at = limit
             
-            chunk = full_text[start:split_at].strip()
-            if chunk:
-                chunks.append(chunk)
-            start = split_at
-            while start < len(full_text) and full_text[start] in {"\n", " "}:
-                start += 1
+            chunks.append(s[:split_at].strip())
+            s = s[split_at:].strip()
+        
+        if s:
+            chunks.append(s)
         return chunks
 
-    messages: list[str] = []
-    if isinstance(text, list):
-        messages.extend(text)
-    else:
-        messages.extend(_split_ai_sections(text))
-
-    last_message = None
-    for i, message_text in enumerate(messages):
-        # 提高單次發送上限，減少被強行切斷的機會
-        max_len = 4000 
-        raw_chunks = _split_text_chunks(message_text, max_len)
-        for j, chunk in enumerate(raw_chunks):
-            is_last_message = (i == len(messages) - 1 and j == len(raw_chunks) - 1)
-            markup = reply_markup if is_last_message else None
-            payload = _escape_for_parse_mode(chunk, parse_mode)
+    message_chunks = _chunk_text(full_text, CHUNK_SIZE)
+    
+    for i, chunk in enumerate(message_chunks):
+        markup = reply_markup if i == len(message_chunks) - 1 else None
+        try:
+            bot.send_message(chat_id, chunk, parse_mode=parse_mode, reply_markup=markup)
+        except Exception as exc:
+            logging.error(f"Failed to send message chunk {i}: {exc}")
+            # 降級發送：去除可能導致 Markdown 解析錯誤的符號
             try:
-                last_message = bot.send_message(chat_id, payload, parse_mode=parse_mode, reply_markup=markup)
-            except Exception as exc:
-                logging.warning("send with parse_mode=%s failed: %s", parse_mode, exc)
-                # 如果 parse_mode 導致失敗，嘗試不帶 parse_mode 發送
-                try:
-                    # 去除可能導致錯誤的特殊符號
-                    fallback_text = re.sub(r'[_\*\[\]()~`>#+\-=|{}.!]', ' ', chunk)
-                    last_message = bot.send_message(chat_id, fallback_text, reply_markup=markup)
-                except Exception as exc2:
-                    logging.warning("plain send failed: %s", exc2)
-            time.sleep(1.0)
-    return last_message
+                plain_text = re.sub(r'[*_`]', '', chunk)
+                bot.send_message(chat_id, plain_text, reply_markup=markup)
+            except Exception as e:
+                logging.error(f"Fallback send failed: {e}")
+        time.sleep(1.0) # 確保發送間隔，防止被擋
 
 
 def reply(message, text: str | list[str], parse_mode: str | None = None, reply_markup: any = None):
@@ -464,13 +443,19 @@ def on_model(m):
 @bot.message_handler(commands=["op"])
 @bot.channel_post_handler(commands=["op"])
 def on_op(m):
+    logging.info(f"Received /op command from user {m.from_user.id if m.from_user else 'None'}: {m.text}")
     user_id = get_user_id(m)
-    if not is_admin_user(user_id):
+    admin_check = is_admin_user(user_id)
+    logging.info(f"Admin check for user {user_id}: {admin_check}")
+    
+    if not admin_check:
+        logging.warning(f"Unauthorized /op attempt from user {user_id}")
         return
     
     bot.send_chat_action(m.chat.id, "typing")
     text = m.text or ""
     parts = text.split()
+    logging.info(f"Processing /op parts: {parts}")
     
     loading_message = None
     if len(parts) > 1 and parts[1].lower() in {"log", "quota"}:
@@ -478,6 +463,7 @@ def on_op(m):
 
     try:
         res = command.cmd_op(text, user_id)
+        logging.info(f"cmd_op result: {res}")
         if loading_message:
             bot.delete_message(m.chat.id, loading_message.message_id)
             
@@ -486,7 +472,7 @@ def on_op(m):
         else:
             reply(m, res)
     except Exception as exc:
-        logging.warning("op command failed: %s", exc)
+        logging.error(f"op command failed with exception: {exc}", exc_info=True)
         if loading_message:
             bot.delete_message(m.chat.id, loading_message.message_id)
         reply(m, "⚠️ 管理指令執行失敗。")

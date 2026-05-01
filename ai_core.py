@@ -27,7 +27,19 @@ SYSTEM_PROMPT_TEMPLATE = """
 9. 新聞摘要：若涉及新聞，務必提供原文網址，並將摘要整理成專業新聞稿風格。
 """.strip()
 
-def ask_flash(prompt: str, user_name: str, *, user_id: int | None = None, temperature: float = 0.45, max_output_tokens: int = 8192) -> str:
+def get_current_time_str() -> str:
+    """獲取精確到秒的當前時間與星期。"""
+    now = datetime.now()
+    weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+    weekday_str = weekdays[now.weekday()]
+    return now.strftime(f"%Y年%m月%d日 {weekday_str} %H:%M:%S")
+
+def sanitize_for_telegram(text: str) -> str:
+    if not text:
+        return ""
+    return text.replace("_", " ").replace("*", " ").strip()
+
+def ask_flash(prompt: str, user_name: str, *, user_id: int | None = None, temperature: float = 0.45, max_output_tokens: int = 4000) -> str:
     current_time = get_current_time_str()
     return sanitize_for_telegram(
         brain.generate_text(
@@ -40,8 +52,7 @@ def ask_flash(prompt: str, user_name: str, *, user_id: int | None = None, temper
         )
     )
 
-
-def ask_pro(prompt: str, user_name: str, *, user_id: int | None = None, temperature: float = 0.35, max_output_tokens: int = 8192) -> str:
+def ask_pro(prompt: str, user_name: str, *, user_id: int | None = None, temperature: float = 0.35, max_output_tokens: int = 4000) -> str:
     current_time = get_current_time_str()
     return sanitize_for_telegram(
         brain.generate_text(
@@ -54,7 +65,6 @@ def ask_pro(prompt: str, user_name: str, *, user_id: int | None = None, temperat
         )
     )
 
-
 def ask_model(
     prompt: str,
     user_name: str,
@@ -62,13 +72,12 @@ def ask_model(
     *,
     user_id: int | None = None,
     temperature: float = 0.35,
-    max_output_tokens: int = 3000,
+    max_output_tokens: int = 4000,
 ) -> str:
     model_name = (model or "flash").strip().lower()
     if model_name == "pro":
         return ask_pro(prompt, user_name, user_id=user_id, temperature=temperature, max_output_tokens=max_output_tokens)
     return ask_flash(prompt, user_name, user_id=user_id, temperature=temperature, max_output_tokens=max_output_tokens)
-
 
 def summarize_tech_news(symbol: str, news_item: dict[str, Any], user_name: str, model: str | None = None, user_id: int | None = None) -> str:
     """一般科技新聞：強制輸出情緒分數與 Hashtag"""
@@ -94,8 +103,7 @@ def summarize_tech_news(symbol: str, news_item: dict[str, Any], user_name: str, 
 💡 深度觀點：[長篇深度分析，評估對科技產業鏈的上下游影響與潛在投資機會，並包含量價趨勢與支撐壓力觀察]
 🔗 原文：{url}
 """
-    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=1500)
-
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=2500)
 
 def summarize_earnings_report(symbol: str, news_item: dict[str, Any], user_name: str, model: str | None = None, user_id: int | None = None) -> str:
     """財報專用：強制提取 EPS、營收與未來指引(Guidance)"""
@@ -122,8 +130,7 @@ def summarize_earnings_report(symbol: str, news_item: dict[str, Any], user_name:
 ⚖️ 戰術評估：[深度分析這份財報對股價及同業板塊的可能催化方向，包含斐波那契位置參考]
 🔗 原文：{url}
 """
-    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.2, max_output_tokens=2000)
-
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.2, max_output_tokens=2500)
 
 def get_market_tactical_comment(
 macro_text: str, portfolio: dict[str, float], user_name: str, user_id: int | None = None, model: str | None = None) -> str:
@@ -142,8 +149,7 @@ macro_text: str, portfolio: dict[str, float], user_name: str, user_id: int | Non
 2. VIX 與風險資產的連動解讀
 3. 具體的交易戰術建議（追價、分批、或等待）
 """.strip()
-    return ask_model(prompt, user_name, model=model, temperature=0.5, max_output_tokens=1000)
-
+    return ask_model(prompt, user_name, model=model, temperature=0.5, max_output_tokens=1500)
 
 def infer_related_news_terms(symbol: str, user_name: str, *, user_id: int | None = None) -> list[str]:
     prompt = f"""
@@ -152,10 +158,9 @@ def infer_related_news_terms(symbol: str, user_name: str, *, user_id: int | None
 
 輸出格式：僅用逗號分隔，不要加其他文字。
 """.strip()
-    result = ask_flash(prompt, user_name, user_id=user_id, temperature=0.4, max_output_tokens=200)
+    result = ask_flash(prompt, user_name, user_id=user_id, temperature=0.4, max_output_tokens=500)
     items = [item.strip() for item in result.replace(";", ",").replace("\n", ",").split(",") if item.strip()]
     return items[:5]
-
 
 def ask_ai_investment_advice(
     symbol: str,
@@ -210,8 +215,7 @@ def ask_ai_investment_advice(
    - 短、中、長期展望分析
    - 風險評估與具體戰術建議
 """.strip()
-    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=3000)
-
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=4000)
 
 def compare_financials(
     symbols: list[str],
@@ -264,10 +268,9 @@ def compare_financials(
         "5. 列出最值得投資的標的排序。\n"
         "6. 回應必須詳盡且專業，展現強大的數據洞察力。"
     )
-    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=3000)
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=4000)
 
-
-def chat_with_kevin(
+def chat_with_user(
 query: str, user_name: str, context_symbol: str | None = None, snapshot: dict[str, Any] | None = None, user_id: int | None = None, model: str | None = None) -> str:
     if context_symbol:
         prompt = f"""
@@ -279,9 +282,9 @@ query: str, user_name: str, context_symbol: str | None = None, snapshot: dict[st
 【要求】
 1. 使用大綱或條列式簡述。
 2. 包含短中長期展望與核心技術位（含斐波那契 0.382、0.618、1.618）。
-3. 內容精確，不需要過度展開，但要將話講完。
+3. 內容精確，不需要過度展開，但要將話講完，絕對不要斷句。
 """.strip()
-        return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.38, max_output_tokens=1500)
+        return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.38, max_output_tokens=4000)
 
     prompt = f"""
 {user_name} 說：{query}
@@ -289,8 +292,7 @@ query: str, user_name: str, context_symbol: str | None = None, snapshot: dict[st
 回答要有特色，語氣可以更有個性與觀點，但保持精準。
 【要求】
 1. 若問題與投資或金融相關，可提供有洞察力的觀察與分析；若問題屬於其他領域，請用通用的專業分析方式回答。
-2. 不要加入無謂的風險提醒或制式結語，除非題目需要。
+2. 絕對完整性：**嚴禁斷句或草草結束**。請務必將所有分析細節講得非常透徹，確保輸出內容長串且結構完整，將話講完為止。
 3. 保持簡練且完整，必要時可用條列式呈現。
 """.strip()
-    return ask_model(prompt, user_name, model=model, temperature=0.5, max_output_tokens=1000)
-
+    return ask_model(prompt, user_name, model=model, temperature=0.5, max_output_tokens=4000)

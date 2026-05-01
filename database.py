@@ -130,7 +130,7 @@ def get_user_model_preference(user_id: int) -> str:
 def get_user_display_name(user_id: int) -> str:
     with get_conn() as conn:
         row = conn.execute("SELECT display_name FROM users WHERE user_id = ?", (user_id,)).fetchone()
-        return row[0] if row else "Kevin"
+        return row[0] if row else "User"
 
 
 def get_all_user_ids() -> list[int]:

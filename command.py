@@ -727,7 +727,7 @@ def _build_comprehensive_news(user_name: str, user_id: int) -> str:
     return "\n\n".join(sections)
 
 
-def cmd_test(user_name: str = "Kevin", user_id: int | None = None) -> str:
+def cmd_test(user_name: str = "User", user_id: int | None = None) -> str:
     """立即執行包含新聞與即時盤勢的完整市場報告。"""
     sections = ["🚀 美股顧問：完整市場報告", "━━━━━━━━━━━━━━"]
     
@@ -762,7 +762,7 @@ def cmd_help() -> str:
     return frame.help_text()
 
 
-def cmd_proactive_news(user_name: str = "Kevin", user_id: int | None = None) -> str:
+def cmd_proactive_news(user_name: str = "User", user_id: int | None = None) -> str:
     # 這裡由 main_bot 的循環邏輯決定發什麼，或者在這裡隨機挑選
     sections = ["⏰ 美股顧問自動情報推播", "━━━━━━━━━━━━━━"]
 
@@ -795,7 +795,7 @@ def cmd_proactive_news(user_name: str = "Kevin", user_id: int | None = None) -> 
     return "\n\n".join(sections)
 
 
-def cmd_pre_market_report(user_name: str = "Kevin", user_id: int | None = None) -> str:
+def cmd_pre_market_report(user_name: str = "User", user_id: int | None = None) -> str:
     sections = ["🔔 美股開盤預備匯報 (開盤前 30 分鐘)", "━━━━━━━━━━━━━━"]
     if user_id is not None:
         sections.append(build_now_dashboard(user_name, user_id, with_ai=True))
@@ -813,7 +813,7 @@ def cmd_pre_market_report(user_name: str = "Kevin", user_id: int | None = None) 
     return "\n\n".join(sections)
 
 
-def cmd_post_market_report(user_name: str = "Kevin", user_id: int | None = None) -> str:
+def cmd_post_market_report(user_name: str = "User", user_id: int | None = None) -> str:
     sections = ["🏁 美股收盤結算匯報 (收盤後 30 分鐘)", "━━━━━━━━━━━━━━"]
     if user_id is not None:
         sections.append(cmd_list(user_id)[0]) # 分頁列表的第一頁文字
@@ -864,4 +864,4 @@ def handle_natural_language(text: str, user_name: str, user_id: int | None = Non
 
     # 一般日常對話
     model_pref = database.get_user_model_preference(user_id) if user_id is not None else None
-    return ai_core.chat_with_kevin(text, user_name, None, None, user_id=user_id, model=model_pref)
+    return ai_core.chat_with_user(text, user_name, None, None, user_id=user_id, model=model_pref)

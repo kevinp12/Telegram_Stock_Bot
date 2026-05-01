@@ -384,7 +384,7 @@ def resolve_news_topic(query: str) -> dict[str, str]:
                 note = f"已判斷為股票代號 {normalized_topic}。"
                 related = RELATED_NEWS_TOPICS.get(normalized_topic, [])
                 if not related:
-                    related = ai_core.infer_related_news_terms(normalized_topic, "Kevin")
+                    related = ai_core.infer_related_news_terms(normalized_topic, "User")
                 if related:
                     unique_related = []
                     for item in [normalized_topic] + related:
