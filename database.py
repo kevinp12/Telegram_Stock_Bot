@@ -23,6 +23,7 @@ def init_db() -> None:
                 user_id INTEGER PRIMARY KEY,
                 username TEXT,
                 display_name TEXT,
+                model_pref TEXT DEFAULT 'flash',
                 first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -81,6 +82,12 @@ def init_db() -> None:
             c.execute("DROP TABLE stats")
             c.execute("ALTER TABLE stats_new RENAME TO stats")
 
+        # 如果舊版 users 表沒有 model_pref 欄位，嘗試新增
+        c.execute("PRAGMA table_info(users)")
+        existing_columns = [row[1] for row in c.fetchall()]
+        if "model_pref" not in existing_columns:
+            c.execute("ALTER TABLE users ADD COLUMN model_pref TEXT DEFAULT 'flash'")
+
         conn.commit()
 
 
@@ -101,6 +108,23 @@ def add_or_update_user(user_id: int, display_name: str = "", username: str | Non
             (username or "", display_name, user_id),
         )
         conn.commit()
+
+
+def set_user_model_preference(user_id: int, model_pref: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET model_pref = ? WHERE user_id = ?",
+            (model_pref, user_id),
+        )
+        conn.commit()
+
+
+def get_user_model_preference(user_id: int) -> str:
+    with get_conn() as conn:
+        row = conn.execute("SELECT model_pref FROM users WHERE user_id = ?", (user_id,)).fetchone()
+        if row and row[0]:
+            return str(row[0])
+        return "flash"
 
 
 def get_user_display_name(user_id: int) -> str:

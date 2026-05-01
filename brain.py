@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from typing import Iterable, Callable
 
 from google import genai
@@ -16,10 +18,12 @@ from google.genai import types
 
 import database
 from config import (
+    BASE_DIR,
     GEMINI_API_KEY,
     FLASH_FALLBACK_MODELS,
     PRO_FALLBACK_MODELS,
     DAILY_TOKEN_LIMIT,
+    GEMINI_AUDIT_LOG_PATH,
 )
 
 
@@ -38,6 +42,94 @@ class BrainStats:
 stats = BrainStats()
 _client: genai.Client | None = None
 _last_alert_percent = 0
+
+AUDIT_LOG_PATH: Path = GEMINI_AUDIT_LOG_PATH
+AUDIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _append_audit_line(line: str) -> None:
+    try:
+        with open(AUDIT_LOG_PATH, "a", encoding="utf-8") as handle:
+            handle.write(line.rstrip() + "\n")
+    except Exception as exc:
+        logging.warning("[Brain] 無法寫入 Gemini audit log: %s", exc)
+
+
+def _format_usage(response: object) -> dict[str, int | None]:
+    usage = getattr(response, "usage_metadata", None)
+    if not usage:
+        return {"prompt": None, "output": None, "total": None, "lost": None}
+
+    prompt_tokens = getattr(usage, "prompt_token_count", None)
+    output_tokens = getattr(usage, "output_token_count", None)
+    total_tokens = getattr(usage, "total_token_count", None)
+    lost_tokens = None
+    if total_tokens is not None and prompt_tokens is not None and output_tokens is not None:
+        lost_tokens = total_tokens - prompt_tokens - output_tokens
+        if lost_tokens < 0:
+            lost_tokens = None
+    return {
+        "prompt": prompt_tokens,
+        "output": output_tokens,
+        "total": total_tokens,
+        "lost": lost_tokens,
+    }
+
+
+def _audit_gemini_entry(
+    *,
+    user_id: int | None,
+    model: str,
+    success: bool,
+    response_text: str | None = None,
+    usage_info: dict[str, int | None] | None = None,
+    error: str | None = None,
+    max_output_tokens: int | None = None,
+) -> None:
+    if response_text is not None:
+        cleaned_text = response_text.replace("\n", "\\n").strip()
+        if len(cleaned_text) > 1000:
+            cleaned_text = cleaned_text[:1000] + "..."
+    else:
+        cleaned_text = "<NO_RETURN_TEXT>"
+
+    usage_info = usage_info or {"prompt": None, "output": None, "total": None, "lost": None}
+    line = (
+        f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
+        f"user_id={user_id or 0} model={model} success={success} "
+        f"return_text={cleaned_text!r} "
+        f"prompt_tokens={usage_info.get('prompt')} output_tokens={usage_info.get('output')} "
+        f"total_tokens={usage_info.get('total')} lost_tokens={usage_info.get('lost')}"
+    )
+    if error:
+        line += f" error={error!r}"
+    if success and max_output_tokens is not None and response_text is None:
+        line += f" computed_lost_max_output={max_output_tokens}"
+    _append_audit_line(line)
+
+
+def log_gemini_error(user_id: int | None, model: str, exc: Exception) -> None:
+    msg = str(exc).replace("\n", " ").strip()
+    _audit_gemini_entry(
+        user_id=user_id,
+        model=model,
+        success=False,
+        response_text=None,
+        usage_info=None,
+        error=msg[:500],
+    )
+
+
+def log_gemini_success(user_id: int | None, model: str, response: object, response_text: str | None, max_output_tokens: int) -> None:
+    usage_info = _format_usage(response)
+    _audit_gemini_entry(
+        user_id=user_id,
+        model=model,
+        success=True,
+        response_text=response_text,
+        usage_info=usage_info,
+        max_output_tokens=max_output_tokens,
+    )
 
 
 def get_client() -> genai.Client:
@@ -164,11 +256,13 @@ def generate_text(
             stats.last_model = clean_model
             stats.last_mode = mode
             stats.last_error = "N/A"
+            log_gemini_success(user_id, clean_model, response, text, max_output_tokens)
             return text.strip()
         except Exception as exc:
             last_exc = exc
             msg = str(exc)
             stats.last_error = msg[:500]
+            log_gemini_error(user_id, clean_model, exc)
             
             # 若為配額耗盡錯誤
             if "429" in msg or "ResourceExhausted" in msg:

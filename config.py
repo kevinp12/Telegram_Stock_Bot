@@ -32,6 +32,7 @@ FINNHUB_KEY = os.getenv("FINNHUB_KEY", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_FLASH_MODEL = os.getenv("GEMINI_FLASH_MODEL", "gemini-2.5-flash").strip()
 GEMINI_PRO_MODEL = os.getenv("GEMINI_PRO_MODEL", "gemini-2.5-pro").strip()
+GEMINI_AUDIT_LOG_PATH = BASE_DIR / ".gemini_audit.log"
 
 # Fallbacks：基本對話優先 Flash；深度對話優先 Pro。
 FLASH_FALLBACK_MODELS = [

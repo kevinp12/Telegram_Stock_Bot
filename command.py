@@ -262,7 +262,14 @@ def build_now_dashboard(user_name: str, user_id: int, with_ai: bool = True) -> l
     tactical = "暫時無法產生 AI 戰術建議。"
     if with_ai:
         try:
-            tactical = ai_core.get_market_tactical_comment("\n".join(q.get("symbol", "") + ": " + market_api.format_quote(q) for q in quotes), portfolio, user_name, user_id=user_id)
+            model_pref = database.get_user_model_preference(user_id)
+            tactical = ai_core.get_market_tactical_comment(
+                "\n".join(q.get("symbol", "") + ": " + market_api.format_quote(q) for q in quotes),
+                portfolio,
+                user_name,
+                user_id=user_id,
+                model=model_pref,
+            )
         except Exception as exc:
             logging.warning("AI tactical failed: %s", exc)
 
@@ -356,7 +363,7 @@ def cmd_watch(text: str, user_id: int) -> str:
     return frame.watch_guide()
 
 
-def cmd_ask(text: str, user_name: str, user_id: int) -> str:
+def cmd_ask(text: str, user_name: str, user_id: int) -> list[str] | str:
     parts = text.split(maxsplit=2)
     if len(parts) < 3:
         return "🤖 用法：/ask [代號] [問題]\n例如：/ask NVDA 現在是否過熱？"
@@ -365,7 +372,9 @@ def cmd_ask(text: str, user_name: str, user_id: int) -> str:
     snapshot = market_api.get_stock_snapshot(symbol)
     news = market_api.fetch_news_multi(symbol, limit=3)
     holdings = database.get_aggregated_portfolio(user_id) if user_id is not None else {}
-    return "🤖 AI 深度戰術分析：" + symbol + "\n━━━━━━━━━━━━━━\n" + ai_core.ask_ai_investment_advice(
+
+    model_pref = database.get_user_model_preference(user_id)
+    ai_answer = ai_core.ask_ai_investment_advice(
         symbol,
         query,
         snapshot,
@@ -373,11 +382,24 @@ def cmd_ask(text: str, user_name: str, user_id: int) -> str:
         user_name,
         user_holdings=holdings,
         user_id=user_id,
+        model=model_pref,
     )
+
+    header = (
+        f"🤖 AI 深度戰術分析：{symbol}\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"問題：{query}\n"
+        f"當前價位：{snapshot.get('price', 'N/A')}，"
+        f"漲跌：{snapshot.get('diff', 'N/A')}，"
+        f"漲幅：{snapshot.get('pct', 'N/A')}%\n"
+        f"新聞摘要：{news[0].get('description','暫無新聞摘要。') if news else '暫無新聞摘要。'}\n"
+        f"━━━━━━━━━━━━━━"
+    )
+    return [header, ai_answer]
 
 
 def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
-    """取得最相關的一則新聞，並以自然對話方式提供最新判斷。"""
+    """取得最相關的一則新聞，並以 /now 式詳細結構化回覆。"""
     watchlist = database.get_watchlist(user_id)
     holdings = database.get_aggregated_portfolio(user_id)
 
@@ -426,9 +448,15 @@ def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
         symbol = raw_query.strip().upper()
         snapshot = market_api.get_stock_snapshot(symbol)
         ai_prompt = (
-            f"請以自然對話形式回答：這則新聞對 {symbol} 的最新影響為何？"
-            "請用交易副官口吻說明風險、短中長期觀察，以及價格位置與策略。"
+            f"請以 /now 類似的詳細回饋模式，針對這則新聞與 {symbol} 的最新行情進行分析。"
+            "請輸出完整且結構化的分析內容，包含：\n"
+            "1. 新聞摘要與關鍵催化劑\n"
+            "2. 對股價的短期、中期、長期影響判斷\n"
+            "3. 技術面與風險重點（如支撐/壓力、成交量、趨勢排列）\n"
+            "4. 若使用者已持有，請評估成本價與持股風險\n"
+            "5. 具體交易策略方向與後續觀察指標"
         )
+        model_pref = database.get_user_model_preference(user_id)
         ai_answer = ai_core.ask_ai_investment_advice(
             symbol,
             ai_prompt,
@@ -437,8 +465,9 @@ def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
             user_name,
             user_holdings=holdings,
             user_id=user_id,
+            model=model_pref,
         )
-        header = f"📰 /news {symbol} 最新回饋"
+        header = f"📰 /news {symbol} 詳細回饋"
         market_line = (
             f"現價：{snapshot.get('price', 'N/A')}，"
             f"漲跌：{snapshot.get('diff', 'N/A')}，"
@@ -446,22 +475,26 @@ def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
         )
     else:
         ai_prompt = (
-            f"請以自然對話形式回答：這則新聞對於「{raw_query}」主題的最新市場影響為何？"
-            "請用交易副官口吻說明風險、短中長期觀察、以及關鍵判斷。"
+            f"請以 /now 類似的詳細回饋模式，針對此新聞主題「{raw_query}」進行分析。"
+            "請輸出完整且結構化的分析內容，包含：\n"
+            "1. 新聞摘要與核心觀點\n"
+            "2. 對市場情緒與短中長期趨勢的判斷\n"
+            "3. 相關風險要點與關鍵觀察指標\n"
+            "4. 建議後續觀察重點與操作思路"
         )
-        ai_answer = ai_core.summarize_news_with_format(
-            "新聞觀點",
-            title,
-            item,
+        model_pref = database.get_user_model_preference(user_id)
+        ai_answer = ai_core.ask_model(
+            ai_prompt,
             user_name,
-            watchlist=watchlist,
-            user_holdings=holdings,
+            model=model_pref,
             user_id=user_id,
+            temperature=0.35,
+            max_output_tokens=2200,
         )
-        header = f"📰 /news {raw_query} 最新回饋"
+        header = f"📰 /news {raw_query} 詳細回饋"
         market_line = ""
 
-    message = (
+    header_message = (
         f"{header}\n"
         f"讀取時間：{latest_time}\n"
         f"查詢目標：{target} {note}\n"
@@ -472,10 +505,11 @@ def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
         f"原文：{url}\n"
         f"{market_line}\n"
         f"━━━━━━━━━━━━━━\n"
-        f"摘要：{outline}\n\n"
-        f"AI 回應：\n{ai_answer}"
+        f"摘要：{outline}\n"
+        f"━━━━━━━━━━━━━━"
     )
-    return [message]
+    ai_message = f"AI 回應：\n{ai_answer}"
+    return [header_message, ai_message]
 
 
 def cmd_news_help() -> str:
@@ -528,7 +562,23 @@ def cmd_status(user_id: int) -> str:
         ok = brain.ping(user_id)
     except Exception:
         ok = False
-    return frame.status_text(VERSION, brain.get_status_text(user_id), get_system_status(), ok)
+    brain_status = brain.get_status_text(user_id)
+    model_pref = database.get_user_model_preference(user_id)
+    brain_status = f"{brain_status}\n• 模型偏好：{model_pref}"
+    return frame.status_text(VERSION, brain_status, get_system_status(), ok)
+
+
+def cmd_set_model(text: str, user_id: int) -> str:
+    parts = text.split()
+    if len(parts) == 1:
+        current = database.get_user_model_preference(user_id)
+        return f"目前回覆模型：{current}\n使用 /model flash 或 /model pro 來切換。"
+
+    choice = parts[1].strip().lower()
+    if choice not in {"flash", "pro"}:
+        return "可設定模型：flash 或 pro。範例：/model pro"
+    database.set_user_model_preference(user_id, choice)
+    return f"✅ 已將回覆模型切換為：{choice}"
 
 
 def _build_comprehensive_news(user_name: str, user_id: int) -> str:
@@ -675,4 +725,5 @@ def handle_natural_language(text: str, user_name: str, user_id: int | None = Non
     syms = STOCK_RE.findall(text or "")
     symbol = syms[0].upper() if syms else None
     snapshot = market_api.get_stock_snapshot(symbol) if symbol else None
-    return ai_core.chat_with_kevin(text, user_name, symbol, snapshot, user_id=user_id)
+    model_pref = database.get_user_model_preference(user_id) if user_id is not None else None
+    return ai_core.chat_with_kevin(text, user_name, symbol, snapshot, user_id=user_id, model=model_pref)

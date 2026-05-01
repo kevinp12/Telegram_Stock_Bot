@@ -28,6 +28,7 @@ import database
 import frame
 from config import (
     CHAT_ID,
+    GEMINI_AUDIT_LOG_PATH,
     LONG_POLLING_TIMEOUT,
     MAX_TELEGRAM_MESSAGE_LENGTH,
     POLLING_TIMEOUT,
@@ -65,6 +66,25 @@ def get_user_id(m) -> int:
     return int(m.chat.id)
 
 
+def is_admin_user(user_id: int) -> bool:
+    try:
+        return CHAT_ID and str(user_id) == str(int(CHAT_ID))
+    except Exception:
+        return False
+
+
+def read_hidden_log_lines(line_count: int = 40) -> list[str]:
+    try:
+        with open(GEMINI_AUDIT_LOG_PATH, "r", encoding="utf-8") as handle:
+            lines = [line.rstrip() for line in handle.readlines() if line.strip()]
+        return lines[-line_count:]
+    except FileNotFoundError:
+        return []
+    except Exception as exc:
+        logging.warning("read hidden log failed: %s", exc)
+        return []
+
+
 def register_user(m) -> tuple[int, str]:
     user_id = get_user_id(m)
     display_name = get_user_display_name(m)
@@ -76,8 +96,27 @@ def register_user(m) -> tuple[int, str]:
     return user_id, display_name
 
 
-def safe_send(chat_id, text: str, parse_mode: str | None = None, reply_markup: any = None):
-    """安全發送：自動切長訊息、逃逸 parse_mode，並處理 Telegram FloodWait。"""
+def _split_ai_sections(text: str) -> list[str]:
+    markers = [
+        "\n🤖 AI 交易副官結語",
+        "\n🤖 AI 深度戰術分析：",
+        "\nAI 回應：",
+        "\nAI 評析：",
+        "\nAI 交易副官結語",
+        "\nAI 深度戰術分析：",
+    ]
+    for marker in markers:
+        idx = text.find(marker)
+        if idx > 0:
+            before = text[:idx].rstrip()
+            after = text[idx:].lstrip()
+            if before and after:
+                return [before, after]
+    return [text]
+
+
+def safe_send(chat_id, text: str | list[str], parse_mode: str | None = None, reply_markup: any = None):
+    """安全發送：支援分段 AI 區塊與長訊息分割。"""
     if text is None:
         text = ""
 
@@ -116,32 +155,38 @@ def safe_send(chat_id, text: str, parse_mode: str | None = None, reply_markup: a
                 start += 1
         return chunks
 
-    max_len = MAX_TELEGRAM_MESSAGE_LENGTH
-    raw_chunks = _split_text_chunks(text, max_len)
-    last_message = None
+    messages: list[str] = []
+    if isinstance(text, list):
+        messages.extend(text)
+    else:
+        messages.extend(_split_ai_sections(text))
 
-    for i, chunk in enumerate(raw_chunks):
-        is_last = (i == len(raw_chunks) - 1)
-        markup = reply_markup if is_last else None
-        payload = _escape_for_parse_mode(chunk, parse_mode)
-        try:
-            last_message = bot.send_message(chat_id, payload, parse_mode=parse_mode, reply_markup=markup)
-        except Exception as exc:
-            logging.warning("send with parse_mode=%s failed: %s", parse_mode, exc)
-            if isinstance(exc, RetryAfter):
-                wait_seconds = getattr(exc, "retry_after", 1)
-                logging.warning("FloodWait: wait %s seconds", wait_seconds)
-                time.sleep(wait_seconds)
+    last_message = None
+    for i, message_text in enumerate(messages):
+        max_len = MAX_TELEGRAM_MESSAGE_LENGTH
+        raw_chunks = _split_text_chunks(message_text, max_len)
+        for j, chunk in enumerate(raw_chunks):
+            is_last_message = (i == len(messages) - 1 and j == len(raw_chunks) - 1)
+            markup = reply_markup if is_last_message else None
+            payload = _escape_for_parse_mode(chunk, parse_mode)
             try:
-                fallback_text = re.sub(r'[_\*\[\]()~`>#+\-=|{}.!]', ' ', chunk)
-                last_message = bot.send_message(chat_id, fallback_text, reply_markup=markup)
-            except Exception as exc2:
-                logging.warning("plain send failed: %s", exc2)
-        time.sleep(0.25)
+                last_message = bot.send_message(chat_id, payload, parse_mode=parse_mode, reply_markup=markup)
+            except Exception as exc:
+                logging.warning("send with parse_mode=%s failed: %s", parse_mode, exc)
+                if isinstance(exc, RetryAfter):
+                    wait_seconds = getattr(exc, "retry_after", 1)
+                    logging.warning("FloodWait: wait %s seconds", wait_seconds)
+                    time.sleep(wait_seconds)
+                try:
+                    fallback_text = re.sub(r'[_\*\[\]()~`>#+\-=|{}.!]', ' ', chunk)
+                    last_message = bot.send_message(chat_id, fallback_text, reply_markup=markup)
+                except Exception as exc2:
+                    logging.warning("plain send failed: %s", exc2)
+            time.sleep(0.25)
     return last_message
 
 
-def reply(message, text: str, parse_mode: str | None = None, reply_markup: any = None):
+def reply(message, text: str | list[str], parse_mode: str | None = None, reply_markup: any = None):
     return safe_send(message.chat.id, text, parse_mode=parse_mode, reply_markup=reply_markup)
 
 
@@ -383,6 +428,27 @@ def on_status(m):
     bot.send_chat_action(m.chat.id, "typing")
     user_id, _ = register_user(m)
     reply(m, command.cmd_status(user_id))
+
+
+@bot.message_handler(commands=["model"])
+@bot.channel_post_handler(commands=["model"])
+def on_model(m):
+    user_id, _ = register_user(m)
+    reply(m, command.cmd_set_model(m.text or "", user_id))
+
+
+@bot.message_handler(commands=["log"])
+@bot.channel_post_handler(commands=["log"])
+def on_log(m):
+    user_id = get_user_id(m)
+    if not is_admin_user(user_id):
+        return
+    log_lines = read_hidden_log_lines(40)
+    if not log_lines:
+        reply(m, "🔒 系統日誌目前為空或尚未產生。")
+        return
+    payload = "🔒 Gemini 系統日誌 (最近 40 筆)\n" + "\n".join(log_lines)
+    safe_send(m.chat.id, payload)
 
 
 @bot.message_handler(commands=["test"])

@@ -70,7 +70,22 @@ def ask_pro(prompt: str, user_name: str, *, user_id: int | None = None, temperat
     )
 
 
-def get_market_tactical_comment(macro_text: str, portfolio: dict[str, float], user_name: str, user_id: int | None = None) -> str:
+def ask_model(
+    prompt: str,
+    user_name: str,
+    model: str | None = None,
+    *,
+    user_id: int | None = None,
+    temperature: float = 0.35,
+    max_output_tokens: int = 3000,
+) -> str:
+    model_name = (model or "flash").strip().lower()
+    if model_name == "pro":
+        return ask_pro(prompt, user_name, user_id=user_id, temperature=temperature, max_output_tokens=max_output_tokens)
+    return ask_flash(prompt, user_name, user_id=user_id, temperature=temperature, max_output_tokens=max_output_tokens)
+
+
+def get_market_tactical_comment(macro_text: str, portfolio: dict[str, float], user_name: str, user_id: int | None = None, model: str | None = None) -> str:
     pl_pct = float(portfolio.get("pl_pct", 0.0))
     pl_val = float(portfolio.get("pl_val", 0.0))
     prompt = f"""
@@ -86,7 +101,7 @@ def get_market_tactical_comment(macro_text: str, portfolio: dict[str, float], us
 2. VIX 與風險資產的連動解讀
 3. 具體的交易戰術建議（追價、分批、或等待）
 """.strip()
-    return ask_flash(prompt, user_name, temperature=0.5, max_output_tokens=1000)
+    return ask_model(prompt, user_name, model=model, temperature=0.5, max_output_tokens=1000)
 
 
 def infer_related_news_terms(symbol: str, user_name: str, *, user_id: int | None = None) -> list[str]:
@@ -119,7 +134,7 @@ def analyze_news(symbol: str, news_items: list[dict[str, Any]], user_name: str, 
 4. 基於斐波那契 0.382、0.618、1.618 位置的潛在支撐壓力分析。
 5. 具體的戰術觀察與待觀察訊號。
 """.strip()
-    analysis = ask_pro(prompt, user_name, user_id=user_id, temperature=0.35, max_output_tokens=1500)
+    analysis = ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=1500)
     return f"📌 {symbol}\n{analysis}"
 
 
@@ -131,6 +146,7 @@ def ask_ai_investment_advice(
     user_name: str,
     user_holdings: dict[str, Any] | None = None,
     user_id: int | None = None,
+    model: str | None = None,
 ) -> str:
     news_text = "\n".join(
         f"- {n.get('title','')}｜{n.get('description','')}"
@@ -173,7 +189,7 @@ def ask_ai_investment_advice(
    - 短、中、長期展望分析
    - 風險評估與具體戰術建議
 """.strip()
-    return ask_pro(prompt, user_name, user_id=user_id, temperature=0.35, max_output_tokens=3000)
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=3000)
 
 
 def compare_financials(
@@ -183,6 +199,7 @@ def compare_financials(
     user_name: str,
     user_holdings: dict[str, Any] | None = None,
     user_id: int | None = None,
+    model: str | None = None,
 ) -> str:
     holdings = user_holdings or {}
     summary_lines: list[str] = []
@@ -224,7 +241,7 @@ def compare_financials(
         "5. 若這次比較 2~3 支股票，請直接列出最健康與次健康標的。\n"
         "6. 用簡潔的條列式結構輸出，不要用太長冗言。"
     )
-    return ask_pro(prompt, user_name, user_id=user_id, temperature=0.35, max_output_tokens=2000)
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=2000)
 
 
 def summarize_news_with_format(
@@ -235,6 +252,7 @@ def summarize_news_with_format(
     watchlist: list[str] | None = None,
     user_holdings: dict[str, Any] | None = None,
     user_id: int | None = None,
+    model: str | None = None,
 ) -> str:
     """依照使用者要求格式化單一新聞：[Tag] [Importance] [Outline] [URL]"""
     title = news_item.get("title", "")
@@ -288,10 +306,10 @@ def summarize_news_with_format(
 可能影響標的：[列出對你的持股或觀察清單可能有影響的股票，最多 1-2 檔]
 原文連結：{url}
 """.strip()
-    return ask_flash(prompt, user_name, user_id=user_id, temperature=0.3, max_output_tokens=800)
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=800)
 
 
-def chat_with_kevin(query: str, user_name: str, context_symbol: str | None = None, snapshot: dict[str, Any] | None = None, user_id: int | None = None) -> str:
+def chat_with_kevin(query: str, user_name: str, context_symbol: str | None = None, snapshot: dict[str, Any] | None = None, user_id: int | None = None, model: str | None = None) -> str:
     if context_symbol:
         prompt = f"""
 {user_name} 的自然語言問題：{query}
@@ -304,7 +322,7 @@ def chat_with_kevin(query: str, user_name: str, context_symbol: str | None = Non
 2. 包含短中長期展望與核心技術位（含斐波那契 0.382、0.618、1.618）。
 3. 內容精確，不需要過度展開，但要將話講完。
 """.strip()
-        return ask_pro(prompt, user_name, user_id=user_id, temperature=0.38, max_output_tokens=1500)
+        return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.38, max_output_tokens=1500)
 
     prompt = f"""
 {user_name} 說：{query}
@@ -315,5 +333,5 @@ def chat_with_kevin(query: str, user_name: str, context_symbol: str | None = Non
 2. 不要加入無謂的風險提醒或制式結語，除非題目需要。
 3. 保持簡練且完整，必要時可用條列式呈現。
 """.strip()
-    return ask_flash(prompt, user_name, temperature=0.5, max_output_tokens=1000)
+    return ask_model(prompt, user_name, model=model, temperature=0.5, max_output_tokens=1000)
 
