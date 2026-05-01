@@ -28,10 +28,11 @@ def help_text() -> str:
         "• /watch clear - 清空雷達名單\n\n"
         "🚀 報告與分析\n"
         "• /news - 立即執行完整市場報告與新聞摘要\n"
+        "• /theme [主題] - 產生產業趨勢深度速報 (如: AI, 核能)\n"
         "• /news list - 顯示可搜尋的新聞來源與縮寫\n"
         "• /news [代號|關鍵詞] - 獲取指定標的或主題的即時新聞分析\n"
         "• /fin [代號] - 查詢個股財報、EPS、營收、估值與關鍵數字\n"
-        "• /fin compare [代號1] [代號2] - 比較 2 到 3 支股票的財務健康與最新消息。\n"
+        "• /fin compare [股票A] [股票B] - 比較 2 到 3 支股票的財務健康與最新消息。\n"
         "• /ask [代號] [問題] - 啟動 Pro 深度戰術分析\n"
         "• /status - 驗證 Gemini 配額與連線\n\n"
         "💬 自然語言\n"
@@ -172,20 +173,34 @@ def fin_report(data: dict[str, Any]) -> str:
     )
 
 
-def news_list_page(news_items: list[str], page: int, total_pages: int) -> str:
-    sections = [f"📰 美股顧問情報摘要 (第 {page}/{total_pages} 頁)", "━━━━━━━━━━━━━━"]
-    sections.extend(news_items)
-    return "\n\n".join(sections)
-
-
-def now_dashboard(macro_lines: list[str], pl_pct: float, pl_val: float, tactical: str) -> str:
-    sign = "+" if pl_val >= 0 else ""
+def admin_op_text(current_model: str) -> str:
     return (
-        "🌍 市場即時全景\n"
+        "🛠️ 管理者專用指令集 (Hidden)\n"
         "━━━━━━━━━━━━━━\n"
-        + "\n".join(macro_lines)
-        + "\n\n"
-        + f"💰 帳戶總損益: {sign}{pl_pct:.2f}% ({sign}${pl_val:,.2f} USD)\n\n"
-        + "🤖 AI 顧問戰術評語\n"
-        + f"> {tactical}"
+        f"• 當前 AI 模型：`{current_model}`\n\n"
+        "📌 指令清單：\n"
+        "• `/op model flash` - 切換至 Gemini Flash (快速、經濟)\n"
+        "• `/op model pro`   - 切換至 Gemini Pro (深度、分析)\n"
+        "• `/op log`         - 查看系統最近 40 筆運行日誌\n"
+        "• `/op quota`       - 查詢今日 Gemini 配額使用量\n"
+        "━━━━━━━━━━━━━━\n"
+        "⚠️ 此選單僅管理員可見，且不會出現在選單按鈕中。"
+    )
+
+
+def quota_text(used: int, limit: int, percent: float) -> str:
+    # 建立進度條
+    bar_length = 10
+    filled_length = int(bar_length * percent / 100)
+    if filled_length > bar_length: filled_length = bar_length
+    bar = "█" * filled_length + "░" * (bar_length - filled_length)
+    
+    return (
+        "💎 Gemini 配額使用報告\n"
+        "━━━━━━━━━━━━━━\n"
+        f"今日已使用 Token：{used:,}\n"
+        f"每日配額上限：{limit:,}\n"
+        f"目前進度：{percent:.2f}%\n"
+        f"使用狀態：[{bar}]\n\n"
+        "💡 提示：配額於每日台灣時間上午 8 點（或 GCP 設定時間）重置。"
     )

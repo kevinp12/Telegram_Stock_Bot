@@ -9,40 +9,25 @@ from typing import Any
 import brain
 
 SYSTEM_PROMPT_TEMPLATE = """
-你是一位冷緊、精準的美股顧問「美股顧問」，是 {user_name} 的私人投資副官。
-同時，你也可以擔任廣泛的分析師與專業助理，回答非交易、非股票的問題。
+你是一位具備頂尖算力、冷緊、精準的美股顧問「美股顧問」，是 {user_name} 的私人投資副官。
+你擁有強大的市場洞察力，負責提供深度、完整且極具戰術價值的分析報告。
 
 【當前時間】
-現在是西元 {current_time}。請務必以此時間點為基準進行分析。
+現在是西元 {current_time}。請以此精確時間為基準進行最新分析。
 
 【核心守則】
-1. 必須全程使用「繁體中文」回覆，除了原文網址與股票代號外，禁止出現簡體中文或其他語言。
-2. 稱呼使用者為 {user_name}。
-3. 回覆風格：專業、冷靜、精準，帶有特色與觀點。對交易問題可用交易副官口吻；對其他問題可用資深分析師或專業助理口吻。
-4. 不保證獲利，不給絕對買賣指令；用「觀察、偏多、偏空、風險、條件」表達交易相關建議。
-5. 優先提供：新聞摘要、催化劑、量價關係、裸 K 結構、支撐壓力、風險提醒。若問題不是交易相關，則以最適當的專業角度給出清晰、實用的分析或答案。
-6. 所有合適的分析盡量包含「短、中、長期」三個維度；若問題不適用此框架，請改用最合理的分析維度並說明。
-7. 必須包含「斐波那契分析」的數值判斷，僅使用 0.382、0.618、1.618 這三個核心位置，並根據提供的區間高低點進行位置解讀；若未提供區間高低點或問題非技術分析，則可省略該項。
-8. 回答要有特色，不要制式或冗長廢話。請直接、清楚、具洞察力地回應問題。
-9. 如果是新聞相關內容，務必提供原文網址並把摘要整理成新聞稿風格，至少要有一段清楚的新聞摘要。
+1. 語言規範：全程使用「繁體中文」回覆。除了原文網址與股票代號外，嚴禁簡體中文。
+2. 專業口吻：回覆風格必須專業、犀利、有觀點。這是一份「最大算力」支持的深度回饋。
+3. 絕對完整性：**嚴禁斷句或草草結束**。請務必將所有分析細節講得非常透徹，確保輸出內容長串且結構完整，將話講完為止。
+4. 格式要求：請減少使用 * 或 _ 等 Markdown 強調符號，盡量以純文字配合 Emoji 進行排版。
+5. 深度內容：優先提供新聞深度摘要、核心催化劑、量價關係、裸 K 結構、支撐壓力、風險提示。
+6. 分析維度：所有分析應包含「短、中、長期」三個維度。
+7. 斐波那契分析：必須精確使用 0.382、0.618、1.618 這三個核心位置進行戰略判讀。
+8. 交易指導：不保證獲利，不給絕對買賣指令；用「觀察、偏多、偏空、風險、條件」表達建議。
+9. 新聞摘要：若涉及新聞，務必提供原文網址，並將摘要整理成專業新聞稿風格。
 """.strip()
 
-
-def get_current_time_str() -> str:
-    """獲取精確到秒的當前時間與星期。"""
-    now = datetime.now()
-    weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
-    weekday_str = weekdays[now.weekday()]
-    return now.strftime(f"%Y年%m月%d日 {weekday_str} %H:%M:%S")
-
-
-def sanitize_for_telegram(text: str) -> str:
-    if not text:
-        return ""
-    return text.replace("_", " ").replace("*", " ").strip()
-
-
-def ask_flash(prompt: str, user_name: str, *, user_id: int | None = None, temperature: float = 0.45, max_output_tokens: int = 2000) -> str:
+def ask_flash(prompt: str, user_name: str, *, user_id: int | None = None, temperature: float = 0.45, max_output_tokens: int = 8192) -> str:
     current_time = get_current_time_str()
     return sanitize_for_telegram(
         brain.generate_text(
@@ -56,7 +41,7 @@ def ask_flash(prompt: str, user_name: str, *, user_id: int | None = None, temper
     )
 
 
-def ask_pro(prompt: str, user_name: str, *, user_id: int | None = None, temperature: float = 0.35, max_output_tokens: int = 3000) -> str:
+def ask_pro(prompt: str, user_name: str, *, user_id: int | None = None, temperature: float = 0.35, max_output_tokens: int = 8192) -> str:
     current_time = get_current_time_str()
     return sanitize_for_telegram(
         brain.generate_text(
@@ -85,7 +70,63 @@ def ask_model(
     return ask_flash(prompt, user_name, user_id=user_id, temperature=temperature, max_output_tokens=max_output_tokens)
 
 
-def get_market_tactical_comment(macro_text: str, portfolio: dict[str, float], user_name: str, user_id: int | None = None, model: str | None = None) -> str:
+def summarize_tech_news(symbol: str, news_item: dict[str, Any], user_name: str, model: str | None = None, user_id: int | None = None) -> str:
+    """一般科技新聞：強制輸出情緒分數與 Hashtag"""
+    title = news_item.get("title", "")
+    desc = news_item.get("description", "")
+    url = news_item.get("url", "")
+    
+    prompt = f"""
+請幫 {user_name} 總結這篇關於 {symbol} 的科技/趨勢新聞。
+標題：{title}
+摘要：{desc}
+
+【嚴格要求】
+1. 全程使用繁體中文。
+2. 聚焦於該技術/事件對產業未來護城河、競爭力或資本支出的影響。
+3. 輸出必須長串且完整，細節講透徹，絕對禁止斷句。
+4. 請按以下格式輸出：
+
+【🚀 科技前沿情報：{symbol}】
+🌡️ 情緒分數：[1-10分，1為極度悲觀，10為極度樂觀]
+🏷️ 智能標籤：[給予3個精準的Hashtag，例如 #AI伺服器 #資本支出擴大 #利空出盡]
+📝 核心大綱：[用精煉的一句話總結重點]
+💡 深度觀點：[長篇深度分析，評估對科技產業鏈的上下游影響與潛在投資機會，並包含量價趨勢與支撐壓力觀察]
+🔗 原文：{url}
+"""
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=1500)
+
+
+def summarize_earnings_report(symbol: str, news_item: dict[str, Any], user_name: str, model: str | None = None, user_id: int | None = None) -> str:
+    """財報專用：強制提取 EPS、營收與未來指引(Guidance)"""
+    title = news_item.get("title", "")
+    desc = news_item.get("description", "")
+    url = news_item.get("url", "")
+    
+    prompt = f"""
+{user_name}，這是 {symbol} 的最新財報/業績新聞。
+標題：{title}
+摘要：{desc}
+
+【嚴格要求】
+1. 全程使用繁體中文。
+2. 科技股極度看重財測(Guidance)，請務必提取以下數據，若新聞未提及請寫「新聞未揭露」。
+3. 輸出必須長串且完整，細節講透徹，絕對禁止斷句。
+4. 請按以下格式輸出：
+
+【🔥 財報快訊：{symbol}】
+💰 營收 (Revenue)：[實際] vs [預期]
+📈 獲利 (EPS)：[實際] vs [預期]
+🚀 未來指引 (Guidance)：[上調 / 下調 / 持平，並簡述理由]
+🤖 趨勢亮點：[針對管理層對 AI、新技術、核能採用或資本支出的發言進行長篇總結]
+⚖️ 戰術評估：[深度分析這份財報對股價及同業板塊的可能催化方向，包含斐波那契位置參考]
+🔗 原文：{url}
+"""
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.2, max_output_tokens=2000)
+
+
+def get_market_tactical_comment(
+macro_text: str, portfolio: dict[str, float], user_name: str, user_id: int | None = None, model: str | None = None) -> str:
     pl_pct = float(portfolio.get("pl_pct", 0.0))
     pl_val = float(portfolio.get("pl_val", 0.0))
     prompt = f"""
@@ -116,28 +157,6 @@ def infer_related_news_terms(symbol: str, user_name: str, *, user_id: int | None
     return items[:5]
 
 
-def analyze_news(symbol: str, news_items: list[dict[str, Any]], user_name: str, user_id: int | None = None) -> str:
-    if not news_items:
-        return f"📌 {symbol}\n⚠️ 暫無最新新聞或採集超時。"
-    news_text = "\n".join(
-        f"{idx+1}. 標題：{n.get('title','')}\n摘要：{n.get('description','')}\n來源：{n.get('source','')}\n原文連結：{n.get('url','')}"
-        for idx, n in enumerate(news_items)
-    )
-    prompt = f"""
-請針對 {symbol} 的最新新聞替 {user_name} 做新聞稿式深度解讀：
-{news_text}
-
-請詳細輸出：
-1. 新聞重點深度摘要，保持新聞稿風格，並附上原文網址。
-2. 對股價的短、中、長期可能影響。
-3. 市場情緒與投資者心理判斷。
-4. 基於斐波那契 0.382、0.618、1.618 位置的潛在支撐壓力分析。
-5. 具體的戰術觀察與待觀察訊號。
-""".strip()
-    analysis = ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=1500)
-    return f"📌 {symbol}\n{analysis}"
-
-
 def ask_ai_investment_advice(
     symbol: str,
     query: str,
@@ -148,6 +167,7 @@ def ask_ai_investment_advice(
     user_id: int | None = None,
     model: str | None = None,
 ) -> str:
+    current_time = get_current_time_str()
     news_text = "\n".join(
         f"- {n.get('title','')}｜{n.get('description','')}"
         for n in news_items[:3]
@@ -161,6 +181,7 @@ def ask_ai_investment_advice(
         )
 
     prompt = f"""
+【報告產生時間：{current_time}】
 {user_name} 詢問標的：{symbol}
 {user_name} 的問題：{query}
 
@@ -181,7 +202,7 @@ def ask_ai_investment_advice(
 
 請給予「極度深度」的戰術分析，語氣可以更有特色與洞察力，不要過於制式。
 【要求】
-1. 不要限制字數，請盡可能詳細且完整地說明所有細節，將話講完。
+1. 不要限制字數，請盡可能詳細且完整地說明所有細節，將話講完，絕對不要斷句。
 2. 包含：
    - 技術面詳細觀察：裸 K、趨勢、成交量
    - 斐波那契分析：僅聚焦 0.382、0.618、1.618 三個核心位置，並說明目前位置的戰略意義。
@@ -201,6 +222,7 @@ def compare_financials(
     user_id: int | None = None,
     model: str | None = None,
 ) -> str:
+    current_time = get_current_time_str()
     holdings = user_holdings or {}
     summary_lines: list[str] = []
     for symbol in symbols:
@@ -227,89 +249,26 @@ def compare_financials(
             f"最新消息：\n{news_text}"
         )
     prompt = f"""
+【報告產生時間：{current_time}】
 {user_name} 你好。
 請你作為專業的美股交易副官，根據以下財務數據與最新消息比較這幾家公司：{', '.join(symbols)}。
 
 """
     prompt += "\n\n".join(summary_lines)
-    prompt += "\n\n請給我：\n"
+    prompt += "\n\n請給我極度深度的分析，將所有細節講清楚，絕對不要斷句：\n"
     prompt += (
-        "1. 哪支股票整體財務健康較佳，並說明主要理由。\n"
-        "2. 依據成長性、獲利能力、估值合理性與現金流/現金地位，做出排序。\n"
-        "3. 根據最新新聞，指出對每家公司最重要的利多/利空因素。\n"
-        "4. 若使用者已有持股，請考量成本價與持股風險，並給出交易策略方向。\n"
-        "5. 若這次比較 2~3 支股票，請直接列出最健康與次健康標的。\n"
-        "6. 用簡潔的條列式結構輸出，不要用太長冗言。"
+        "1. 哪支股票整體財務健康較佳，並說明具體數據支持的理由。\n"
+        "2. 依據成長性、獲利能力、估值合理性與現金流/現金地位，做出詳細排序與解釋。\n"
+        "3. 根據最新新聞，深入分析對每家公司最重要的利多/利空因素與未來催化劑。\n"
+        "4. 若使用者已有持股，請考量其成本價與當前風險，給出具體的交易策略方向（加碼、減碼、觀望）。\n"
+        "5. 列出最值得投資的標的排序。\n"
+        "6. 回應必須詳盡且專業，展現強大的數據洞察力。"
     )
-    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=2000)
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=3000)
 
 
-def summarize_news_with_format(
-    category: str,
-    symbol: str,
-    news_item: dict[str, Any],
-    user_name: str,
-    watchlist: list[str] | None = None,
-    user_holdings: dict[str, Any] | None = None,
-    user_id: int | None = None,
-    model: str | None = None,
-) -> str:
-    """依照使用者要求格式化單一新聞：[Tag] [Importance] [Outline] [URL]"""
-    title = news_item.get("title", "")
-    desc = news_item.get("description", "")
-    url = news_item.get("url", "")
-    source = news_item.get("source", "Unknown")
-    watchlist = watchlist or []
-    watchlist_text = (
-        f"請根據以下觀察清單判斷是否對其股票有影響：{', '.join(watchlist)}。若無直接關聯，請不要列出無關股票。"
-        if watchlist
-        else "目前沒有觀察清單，不需要列出多餘的影響標的。"
-    )
-    holding_text = "使用者目前無此標的持股資訊。"
-    if user_holdings and symbol in user_holdings:
-        position = user_holdings[symbol]
-        holding_text = (
-            f"使用者持有 {symbol}：{position.get('shares', 0):.2f} 股，平均成本 ${position.get('avg_cost', 0):.2f}。"
-        )
-
-    prompt = f"""
-請幫 {user_name} 總結這篇新聞。
-類別：{category}
-標的：{symbol}
-標題：{title}
-摘要：{desc}
-來源：{source}
-
-{holding_text}
-{watchlist_text}
-
-【嚴格要求】
-1. 除了原文網址與股票代號外，所有內容必須使用「繁體中文」。
-2. 請直接輸出推播稿式新聞摘要，避免空洞廢話，並確實呈現原文網址。
-3. 如果可以，請將新聞內容濃縮成最重要的 1-2 個觀點。
-4. 若有可公開新聞重點、時間、來源、影響，請以新聞稿式方式補充說明。
-5. 可能影響標的僅列出最重要的 1-2 檔，且只列出與觀察清單或持股直接相關的股票。若無直接關聯，請寫「無相關標的」。
-6. 請以使用者的交易策略角度提供觀點，評估多空、風險、支撐壓力與後續觀察重點。
-7. 若此新聞與美國宏觀、聯準會或市場動向相關，請補充以下指標：
-   - 增長趨勢：YoY、QoQ、MoM、YTD 的定義與最近公布數值或標準判準。
-   - 獲利與估值：EPS、P/E、Guidance 的意義與一般標準水準。
-   - 期權情緒：POP、IV、Put/Call ratio 的常見標準值與市場情緒解讀。
-   若新聞未提供具體數據，也請直接說明這些指標的標準值與目前應如何解讀。
-8. 儘量使用「最近公布」或「即將公布」的資料來敘述，若無法精準取得也請標示為一般市場觀察。
-
-請輸出以下格式：
-【{category}：{symbol}】
-重要程度：[請給 1~5 顆星，例如 ★★★☆☆]
-大綱：[請以要點列出新聞核心內容]
-內文整理：[以段落整理新聞內容與影響]
-觀點：[提供專業視角與關鍵判斷]
-可能影響標的：[列出對你的持股或觀察清單可能有影響的股票，最多 1-2 檔]
-原文連結：{url}
-""".strip()
-    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=800)
-
-
-def chat_with_kevin(query: str, user_name: str, context_symbol: str | None = None, snapshot: dict[str, Any] | None = None, user_id: int | None = None, model: str | None = None) -> str:
+def chat_with_kevin(
+query: str, user_name: str, context_symbol: str | None = None, snapshot: dict[str, Any] | None = None, user_id: int | None = None, model: str | None = None) -> str:
     if context_symbol:
         prompt = f"""
 {user_name} 的自然語言問題：{query}

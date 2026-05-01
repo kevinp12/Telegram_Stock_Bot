@@ -7,15 +7,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from datetime import datetime
+from dotenv import load_dotenv
+
+BASE_DIR = Path(__file__).resolve().parent
+# 關鍵：強制載入專案根目錄的 .env 檔案
+load_dotenv(BASE_DIR / ".env", override=True)
 
 BOT_START_TIME = datetime.now()
-
-try:
-    from dotenv import load_dotenv
-    BASE_DIR = Path(__file__).resolve().parent
-    load_dotenv(BASE_DIR / ".env")
-except Exception:
-    BASE_DIR = Path(__file__).resolve().parent
 
 # Paths
 DB_NAME = os.getenv("DB_NAME", str(BASE_DIR / "sniper_trades.db"))
@@ -38,17 +36,19 @@ GEMINI_AUDIT_LOG_PATH = BASE_DIR / ".gemini_audit.log"
 FLASH_FALLBACK_MODELS = [
     GEMINI_FLASH_MODEL,
     "gemini-flash-latest",
-    "gemini-2.5-flash",
     "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-latest",
     "gemini-2.0-flash-lite",
 ]
 
 PRO_FALLBACK_MODELS = [
     GEMINI_PRO_MODEL,
     "gemini-pro-latest",
-    "gemini-2.5-pro",
+    "gemini-2.0-pro-exp-02-05",
+    "gemini-1.5-pro",
+    "gemini-1.5-pro-latest",
     "gemini-3.1-pro-preview",
-    "gemini-3-pro-preview",
 ]
 
 # Telegram settings

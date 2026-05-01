@@ -7,6 +7,11 @@ import logging
 import re
 from datetime import datetime
 import math
+import random
+import logging
+import re
+from datetime import datetime
+import math
 from typing import Any
 
 import psutil
@@ -398,41 +403,67 @@ def cmd_ask(text: str, user_name: str, user_id: int) -> list[str] | str:
     return [header, ai_answer]
 
 
+def process_news_item_smart(symbol: str, news_item: dict[str, Any], user_name: str, user_id: int) -> str:
+    """
+    智慧新聞路由器：取代原本單一的 summarizer。
+    自動偵測新聞內容是否包含財報關鍵字，若是則切換為財報快訊模式。
+    """
+    title = news_item.get("title", "").lower()
+    desc = news_item.get("description", "").lower()
+    model_pref = database.get_user_model_preference(user_id)
+    
+    # 財報季關鍵字池
+    earnings_keywords = ["earnings", "q1", "q2", "q3", "q4", "財報", "業績", "guidance", "revenue", "eps", "財測"]
+    
+    if any(keyword in title or keyword in desc for keyword in earnings_keywords):
+        return ai_core.summarize_earnings_report(symbol, news_item, user_name, model=model_pref, user_id=user_id)
+    else:
+        return ai_core.summarize_tech_news(symbol, news_item, user_name, model=model_pref, user_id=user_id)
+
 def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
-    """取得最相關的一則新聞，並以 /now 式詳細結構化回覆。"""
+    """取得最相關的新聞，並以智慧模式詳細結構化回饋。支持隨機推播優先級：持股 > 監控 > 宏觀。"""
+
     watchlist = database.get_watchlist(user_id)
     holdings = database.get_aggregated_portfolio(user_id)
+    portfolio_symbols = list(holdings.keys())
+    macro_targets = ["S&P 500", "Nasdaq", "Gold", "Oil", "Bitcoin", "NVDA", "AAPL", "TSLA"]
+    current_time_str = ai_core.get_current_time_str()
 
     parts = text.split()
     if len(parts) >= 2 and parts[1].lower() == "list":
         return [market_api.get_news_source_list()]
 
     raw_query = " ".join(parts[1:]).strip() if len(parts) >= 2 else ""
+    
+    is_random = False
     if raw_query == "":
-        raw_query = "S&P 500 OR Nasdaq"
+        is_random = True
+        # 優先級：持股 > 監控 > 宏觀
+        if portfolio_symbols:
+            raw_query = random.choice(portfolio_symbols)
+        elif watchlist:
+            raw_query = random.choice(watchlist)
+        else:
+            raw_query = random.choice(macro_targets)
 
-    latest_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    target = raw_query
-    note = ""
-    if raw_query != "S&P 500 OR Nasdaq":
-        target, note = resolve_news_target(raw_query)
+    target, note = resolve_news_target(raw_query)
 
     news_items = market_api.fetch_news_filtered(target, limit=1)
     if not news_items and target != raw_query:
         news_items = market_api.fetch_news_filtered(raw_query, limit=1)
 
-    if not news_items and raw_query == "S&P 500 OR Nasdaq":
-        fallback_query = "Federal Reserve OR Fed OR US economic data OR GDP OR CPI"
+    if not news_items:
+        fallback_query = "Federal Reserve OR Fed OR US economic data"
         news_items = market_api.fetch_news_filtered(fallback_query, limit=1)
         if news_items:
             target = fallback_query
-            note = "未找到標普500或納斯達克新聞，改查聯準會與美國宏觀經濟數據。"
+            note = "未找到原始目標新聞，改查聯準會與美國宏觀經濟數據。"
 
     if not news_items:
         return [
             f"📌 查詢：{raw_query}\n"
-            f"目前找不到相關新聞。\n"
-            f"最新時間：{latest_time}"
+            f"目前找不到相關新聞，可能是該標的近期無重大消息。\n"
+            f"🕒 讀取時間：{current_time_str}"
         ]
 
     item = news_items[0]
@@ -446,28 +477,9 @@ def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
 
     if _is_stock_symbol(raw_query):
         symbol = raw_query.strip().upper()
+        ai_answer = process_news_item_smart(symbol, item, user_name, user_id)
+        header = f"📰 /news {symbol} 智慧解讀" + (" (隨機推播)" if is_random else "")
         snapshot = market_api.get_stock_snapshot(symbol)
-        ai_prompt = (
-            f"請以 /now 類似的詳細回饋模式，針對這則新聞與 {symbol} 的最新行情進行分析。"
-            "請輸出完整且結構化的分析內容，包含：\n"
-            "1. 新聞摘要與關鍵催化劑\n"
-            "2. 對股價的短期、中期、長期影響判斷\n"
-            "3. 技術面與風險重點（如支撐/壓力、成交量、趨勢排列）\n"
-            "4. 若使用者已持有，請評估成本價與持股風險\n"
-            "5. 具體交易策略方向與後續觀察指標"
-        )
-        model_pref = database.get_user_model_preference(user_id)
-        ai_answer = ai_core.ask_ai_investment_advice(
-            symbol,
-            ai_prompt,
-            snapshot,
-            [item],
-            user_name,
-            user_holdings=holdings,
-            user_id=user_id,
-            model=model_pref,
-        )
-        header = f"📰 /news {symbol} 詳細回饋"
         market_line = (
             f"現價：{snapshot.get('price', 'N/A')}，"
             f"漲跌：{snapshot.get('diff', 'N/A')}，"
@@ -475,12 +487,12 @@ def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
         )
     else:
         ai_prompt = (
-            f"請以 /now 類似的詳細回饋模式，針對此新聞主題「{raw_query}」進行分析。"
-            "請輸出完整且結構化的分析內容，包含：\n"
-            "1. 新聞摘要與核心觀點\n"
-            "2. 對市場情緒與短中長期趨勢的判斷\n"
-            "3. 相關風險要點與關鍵觀察指標\n"
-            "4. 建議後續觀察重點與操作思路"
+            f"請以 /now 類似的『極度詳細』回饋模式，針對此新聞主題「{raw_query}」進行極度深度的宏觀分析。"
+            "使用者要求：輸出長串、完整且結構化的內容，細節要講清楚，絕對不要斷句。分析應包含：\n"
+            "1. 新聞大綱與核心觀點深度拆解。\n"
+            "2. 對市場情緒、大盤走勢與各產業資產的短中長期影響判斷。\n"
+            "3. 宏觀指標解讀（如利率、通膨、地緣政治等相關連動）。\n"
+            "4. 具體的投資操作思路與後續關鍵觀察指標。"
         )
         model_pref = database.get_user_model_preference(user_id)
         ai_answer = ai_core.ask_model(
@@ -489,15 +501,15 @@ def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
             model=model_pref,
             user_id=user_id,
             temperature=0.35,
-            max_output_tokens=2200,
+            max_output_tokens=3500,
         )
-        header = f"📰 /news {raw_query} 詳細回饋"
+        header = f"📰 /news {raw_query} 詳細回饋" + (" (隨機推播)" if is_random else "")
         market_line = ""
 
     header_message = (
         f"{header}\n"
-        f"讀取時間：{latest_time}\n"
-        f"查詢目標：{target} {note}\n"
+        f"🕒 讀取時間：{current_time_str}\n"
+        f"🎯 查詢目標：{target} {note}\n"
         f"━━━━━━━━━━━━━━\n"
         f"標題：{title}\n"
         f"來源：{source}\n"
@@ -508,8 +520,58 @@ def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
         f"摘要：{outline}\n"
         f"━━━━━━━━━━━━━━"
     )
-    ai_message = f"AI 回應：\n{ai_answer}"
+    ai_message = f"🤖 AI 智慧戰術分析：\n{ai_answer}"
     return [header_message, ai_message]
+
+
+def cmd_theme(text: str, user_name: str, user_id: int) -> str:
+    """處理 /theme 指令，生成指定產業的深度速報"""
+    parts = text.split()
+    available_themes = list(market_api.TECH_THEMES.keys())
+    
+    if len(parts) < 2:
+        return f"🤖 用法：/theme [主題]\n目前支援的主題：{', '.join(available_themes)}\n例如：/theme 核能"
+    
+    theme_input = parts[1].strip()
+    # 模糊匹配
+    matched_key = next((k for k in available_themes if k.upper() == theme_input.upper() or k == theme_input), None)
+    
+    if not matched_key:
+        return f"❌ 未知的趨勢主題。目前支援：{', '.join(available_themes)}"
+        
+    query = market_api.TECH_THEMES[matched_key]
+    # 先抓 RSS 看看有沒有相關的
+    rss_news = market_api.fetch_tech_rss(limit=10)
+    theme_news = [n for n in rss_news if matched_key.lower() in n['title'].lower() or matched_key.lower() in n['description'].lower()]
+    
+    # 如果 RSS 沒抓到，改抓 NewsAPI
+    if len(theme_news) < 2:
+        api_news = market_api.fetch_news_filtered(query, limit=5)
+        theme_news.extend(api_news)
+    
+    if not theme_news:
+        return f"⚠️ 目前找不到關於【{matched_key}】的最新市場情報。"
+        
+    news_text = "\n".join([f"- {n['title']}: {n['description']}" for n in theme_news[:3]])
+    prompt = f"""
+請根據以下最新新聞，為 {user_name} 撰寫一份【{matched_key} 產業趨勢速報】。
+這是一份具備「最大算力」支持的深度報告，請務必詳盡分析。
+
+要求：
+1. 評估該產業目前的總體情緒（1-10分）。
+2. 點出領頭羊公司的最新動態或技術突破。
+3. 分析潛在的投資機會與供應鏈風險。
+4. 提供具體的技術觀察方向與關鍵觀察指標。
+5. 輸出必須長串且完整，細節講透徹，絕對禁止斷句。
+
+新聞素材：
+{news_text}
+"""
+    
+    model_pref = database.get_user_model_preference(user_id)
+    report = ai_core.ask_model(prompt, user_name, model=model_pref, user_id=user_id, temperature=0.4, max_output_tokens=2500)
+    
+    return f"🚀 【{matched_key} 未來趨勢速報】\n━━━━━━━━━━━━━━\n{report}"
 
 
 def cmd_news_help() -> str:
@@ -581,9 +643,63 @@ def cmd_set_model(text: str, user_id: int) -> str:
     return f"✅ 已將回覆模型切換為：{choice}"
 
 
+def cmd_op(text: str, user_id: int) -> str:
+    """處理管理者指令 /op。"""
+    logging.info(f"cmd_op called: text='{text}', user_id={user_id}")
+    parts = text.split()
+    current_model = database.get_user_model_preference(user_id)
+    
+    if len(parts) == 1:
+        return frame.admin_op_text(current_model)
+    
+    sub = parts[1].lower()
+    if sub == "help":
+        return frame.admin_op_text(current_model)
+
+    if sub == "model":
+        if len(parts) < 3:
+            return (
+                f"🤖 AI 模型切換教學\n"
+                f"━━━━━━━━━━━━━━\n"
+                f"當前模型：`{current_model}`\n\n"
+                f"用法：`/op model [flash|pro]`\n"
+                f"• `flash`：反應速度快，適合日常查詢與初步分析。\n"
+                f"• `pro`：分析深度高，適合複雜市場情境與戰術研究。"
+            )
+        choice = parts[2].lower()
+        if choice not in {"flash", "pro"}:
+            return "❌ 錯誤：模型僅支援 `flash` 或 `pro`。範例：`/op model pro`"
+        database.set_user_model_preference(user_id, choice)
+        return f"✅ 核心模型已更新為：`{choice}`\n即刻起所有 AI 分析將採用新模型。"
+    
+    if sub == "log":
+        return "__TRIGGER_LOG__"
+    
+    if sub == "quota":
+        return cmd_quota(user_id)
+        
+    return (
+        f"❓ 未知的管理指令：`{sub}`\n\n"
+        f"請使用 `/op help` 查看完整的管理者指令清單。"
+    )
+
+
+def cmd_quota(user_id: int) -> str:
+    """獲取 Token 配額使用情況。"""
+    used_today, _ = database.get_daily_tokens(user_id)
+    from config import DAILY_TOKEN_LIMIT
+    percent = (used_today / DAILY_TOKEN_LIMIT) * 100
+    return frame.quota_text(used_today, DAILY_TOKEN_LIMIT, percent)
+
+
 def _build_comprehensive_news(user_name: str, user_id: int) -> str:
     """內部輔助：建立綜合新聞摘要。"""
     sections = ["📰 美股顧問綜合情報摘要", "━━━━━━━━━━━━━━"]
+
+    # 加入 RSS 科技新聞
+    rss_news = market_api.fetch_tech_rss(limit=1)
+    if rss_news:
+        sections.append("【🌐 全球科技即時速報】\n" + ai_core.summarize_tech_news("Global Tech", rss_news[0], user_name, user_id=user_id))
 
     watchlist = database.get_watchlist(user_id)
     holdings = database.get_aggregated_portfolio(user_id)
@@ -591,7 +707,7 @@ def _build_comprehensive_news(user_name: str, user_id: int) -> str:
     for t in macro_targets:
         news = market_api.fetch_news_filtered(t, limit=1)
         if news:
-            sections.append(ai_core.summarize_news_with_format("宏觀指數", t, news[0], user_name, watchlist, user_holdings=holdings, user_id=user_id))
+            sections.append(process_news_item_smart(t, news[0], user_name, user_id))
             break
 
     holdings = database.get_aggregated_portfolio(user_id)
@@ -600,13 +716,13 @@ def _build_comprehensive_news(user_name: str, user_id: int) -> str:
         p_sym = portfolio[0]
         news = market_api.fetch_news_filtered(p_sym, limit=1)
         if news:
-            sections.append(ai_core.summarize_news_with_format("持股清單", p_sym, news[0], user_name, watchlist, user_holdings=holdings, user_id=user_id))
+            sections.append(process_news_item_smart(p_sym, news[0], user_name, user_id))
 
     if watchlist:
         w_sym = watchlist[0]
         news = market_api.fetch_news_filtered(w_sym, limit=1)
         if news:
-            sections.append(ai_core.summarize_news_with_format("觀察清單", w_sym, news[0], user_name, watchlist, user_holdings=holdings, user_id=user_id))
+            sections.append(process_news_item_smart(w_sym, news[0], user_name, user_id))
 
     return "\n\n".join(sections)
 
@@ -652,13 +768,11 @@ def cmd_proactive_news(user_name: str = "Kevin", user_id: int | None = None) -> 
 
     # 宏觀 (20 分鐘循環在 main_bot 處理)
     macro_targets = ["標普500", "納斯達克", "黃金", "原油", "比特幣"]
-    import random
     watchlist = database.get_watchlist(user_id) if user_id is not None else []
     m_t = random.choice(macro_targets)
     news = market_api.fetch_news_filtered(m_t, limit=1)
-    holdings = database.get_aggregated_portfolio(user_id) if user_id is not None else {}
     if news:
-        sections.append(ai_core.summarize_news_with_format("宏觀指數", m_t, news[0], user_name, watchlist, user_holdings=holdings, user_id=user_id))
+        sections.append(process_news_item_smart(m_t, news[0], user_name, user_id or 0))
 
     # 持股與觀察也隨機推一個
     holdings = database.get_aggregated_portfolio(user_id) if user_id is not None else {}
@@ -667,13 +781,13 @@ def cmd_proactive_news(user_name: str = "Kevin", user_id: int | None = None) -> 
         p_sym = random.choice(portfolio)
         news = market_api.fetch_news_filtered(p_sym, limit=1)
         if news:
-            sections.append(ai_core.summarize_news_with_format("持股清單", p_sym, news[0], user_name, watchlist, user_holdings=holdings, user_id=user_id))
+            sections.append(process_news_item_smart(p_sym, news[0], user_name, user_id or 0))
 
     if watchlist:
         w_sym = random.choice(watchlist)
         news = market_api.fetch_news_filtered(w_sym, limit=1)
         if news:
-            sections.append(ai_core.summarize_news_with_format("觀察清單", w_sym, news[0], user_name, watchlist, user_holdings=holdings, user_id=user_id))
+            sections.append(process_news_item_smart(w_sym, news[0], user_name, user_id or 0))
 
     if len(sections) <= 2:
         return "💡 自動推播：目前暫無最新新聞或名單為空。"
@@ -691,12 +805,10 @@ def cmd_pre_market_report(user_name: str = "Kevin", user_id: int | None = None) 
     # 加上有幫助的新聞
     sections.append("\n🗞️ 開盤焦點新聞：")
     macro_targets = ["標普500", "納斯達克"]
-    watchlist = database.get_watchlist(user_id) if user_id is not None else []
-    holdings = database.get_aggregated_portfolio(user_id) if user_id is not None else {}
     for t in macro_targets:
         news = market_api.fetch_news_filtered(t, limit=1)
         if news:
-            sections.append(ai_core.summarize_news_with_format("開盤前瞻", t, news[0], user_name, watchlist, user_holdings=holdings, user_id=user_id))
+            sections.append(process_news_item_smart(t, news[0], user_name, user_id or 0))
     
     return "\n\n".join(sections)
 
@@ -711,12 +823,10 @@ def cmd_post_market_report(user_name: str = "Kevin", user_id: int | None = None)
     # 加上有幫助的新聞
     sections.append("\n🗞️ 今日市場關鍵總結：")
     macro_targets = ["標普500", "納斯達克"]
-    watchlist = database.get_watchlist(user_id) if user_id is not None else []
-    holdings = database.get_aggregated_portfolio(user_id) if user_id is not None else {}
     for t in macro_targets:
         news = market_api.fetch_news_filtered(t, limit=1)
         if news:
-            sections.append(ai_core.summarize_news_with_format("收盤總結", t, news[0], user_name, watchlist, user_holdings=holdings, user_id=user_id))
+            sections.append(process_news_item_smart(t, news[0], user_name, user_id or 0))
             
     return "\n\n".join(sections)
 
@@ -724,6 +834,34 @@ def cmd_post_market_report(user_name: str = "Kevin", user_id: int | None = None)
 def handle_natural_language(text: str, user_name: str, user_id: int | None = None) -> str:
     syms = STOCK_RE.findall(text or "")
     symbol = syms[0].upper() if syms else None
-    snapshot = market_api.get_stock_snapshot(symbol) if symbol else None
+    
+    if symbol:
+        # 偵測到代號，自動切換為股票深度分析模式
+        snapshot = market_api.get_stock_snapshot(symbol)
+        model_pref = database.get_user_model_preference(user_id) if user_id is not None else None
+        
+        # 抓取最新新聞
+        news = market_api.fetch_news_multi(symbol, limit=3)
+        holdings = database.get_aggregated_portfolio(user_id) if user_id is not None else {}
+        
+        prompt = f"""
+{user_name} 提到股票代號：{symbol}。
+原文內容：{text}
+
+請以「頂尖交易副官」人格，針對該標的進行自動化深度分析。
+這是一份具備「最大算力」支持的報告。
+
+分析應包含：
+1. 市場快照：現價、漲跌幅、成交量狀態。
+2. 技術面解讀：裸 K 結構、支撐壓力位、斐波那契回撤判斷 (0.382, 0.618, 1.618)。
+3. 近期催化劑：根據提供的最新新聞與行情，點出關鍵利多/利空。
+4. 持倉評估：若使用者已持股（成本：{holdings.get(symbol, {}).get('avg_cost', '未知')}），給出具體戰術建議。
+5. 長中短期展望與觀察點。
+
+絕對禁止斷句，請完整將細節講完。
+"""
+        return ai_core.ask_model(prompt, user_name, model=model_pref, user_id=user_id, temperature=0.35, max_output_tokens=3000)
+
+    # 一般日常對話
     model_pref = database.get_user_model_preference(user_id) if user_id is not None else None
-    return ai_core.chat_with_kevin(text, user_name, symbol, snapshot, user_id=user_id, model=model_pref)
+    return ai_core.chat_with_kevin(text, user_name, None, None, user_id=user_id, model=model_pref)

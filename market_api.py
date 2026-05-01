@@ -8,6 +8,7 @@ from typing import Any
 
 import requests
 import yfinance as yf
+import feedparser
 
 try:
     import finnhub
@@ -29,11 +30,85 @@ if finnhub and FINNHUB_KEY:
 if not NEWS_API_KEY:
     logging.warning("NEWS_API_KEY 未設定。部分新聞功能可能無法正常運作。請檢查 .env 檔案。")
 
-# 新增 NewsAPI 金鑰檢查
-if not NEWS_API_KEY:
-    logging.warning("NEWS_API_KEY 未設定。部分新聞功能可能無法正常運作。請檢查 .env 檔案。")
+# 擴充的科技與未來趨勢主題池 (為 NewsAPI 與搜尋引擎優化)
+TECH_THEMES = {
+    "AI": "Artificial Intelligence OR Nvidia OR OpenAI",
+    "半導體": "Semiconductor OR TSMC OR AMD",
+    "電動車": "EV OR Tesla OR Autonomous Driving",
+    "機器人": "Robotics OR Optimus OR Humanoid",
+    "火箭": "SpaceX OR Rocket Lab OR Aerospace OR Space Exploration",
+    "光電": "Solar Energy OR Optoelectronics OR Enphase OR First Solar",
+    "未來APP": "Web3 OR Decentralized App OR Spatial Computing OR AR VR",
+    "能源": "Renewable Energy OR Clean Energy OR Grid Storage",
+    "核能": "Nuclear Energy OR Uranium OR SMR OR Constellation Energy",
+    "資安": "Cybersecurity OR Palo Alto Networks OR CrowdStrike OR Fortinet"
+}
 
-def get_ticker_mapping(name: str, source: str = "finnhub") -> str:
+
+def fetch_tech_rss(limit: int = 5) -> list[dict[str, str]]:
+    """
+    抓取科技與財經權威的即時 RSS 訂閱源。
+    優化：使用 User-Agent 避免屏蔽，並強化日期解析與內容提取。
+    """
+    rss_urls = [
+        ("CNBC Tech", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19854910"),
+        ("TechCrunch", "https://techcrunch.com/feed/"),
+        ("WSJ Tech", "https://feeds.a.dj.com/rss/RSSWSJD.xml")
+    ]
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    news_list = []
+    import time
+    
+    for source_name, url in rss_urls:
+        try:
+            # 使用 requests 先抓取內容，避免被 header 屏蔽且可自定義 timeout
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code != 200:
+                continue
+                
+            feed = feedparser.parse(response.content)
+            
+            # 檢查是否有解析錯誤 (bozo 標記)
+            if feed.bozo and not feed.entries:
+                logging.warning(f"RSS 解析異常 {url}")
+                continue
+
+            for entry in feed.entries[:limit]:
+                # 日期解析：優先使用 parsed 結構進行排序
+                published_time = entry.get("published_parsed") or entry.get("updated_parsed")
+                timestamp = time.mktime(published_time) if published_time else 0
+                
+                # 內容提取：有些 feed 用 summary，有些用 description
+                content = entry.get("summary") or entry.get("description") or ""
+                # 移除 HTML 標籤（簡單處理）
+                content = re.sub(r'<[^>]+>', '', content).strip()
+
+                news_list.append({
+                    "title": entry.get("title", "無標題").strip(),
+                    "description": content[:500] + ("..." if len(content) > 500 else ""),
+                    "source": source_name,
+                    "url": entry.get("link", ""),
+                    "publishedAt": entry.get("published", ""),
+                    "_timestamp": timestamp # 內部排序用
+                })
+        except Exception as e:
+            logging.warning(f"RSS 讀取失敗 {source_name}: {e}")
+            
+    # 依據實際時間戳進行降序排序 (最新的在前面)
+    news_list.sort(key=lambda x: x.get("_timestamp", 0), reverse=True)
+    
+    # 移除內部使用的排序鍵
+    for n in news_list:
+        n.pop("_timestamp", None)
+        
+    return news_list[:limit]
+
+
+def get_ticker_mapping(symbol_name: str, source: str = "finnhub") -> str:
     if source == "yahoo":
         mapping = {
             "標普500": "^GSPC",
@@ -52,7 +127,7 @@ def get_ticker_mapping(name: str, source: str = "finnhub") -> str:
             "比特幣": "BINANCE:BTCUSDT",
             "VIX": "VIX",
         }
-    return mapping.get(name, name.upper())
+    return mapping.get(symbol_name, symbol_name.upper())
 
 
 SPECIAL_NEWS_TOPICS = {
@@ -94,14 +169,32 @@ NEWS_SOURCE_ALIASES = {
 }
 
 RELATED_NEWS_TOPICS = {
-    "TSLA": ["SpaceX", "Starlink", "XAI"],
-    "TESLA": ["SpaceX", "Starlink", "XAI"],
-    "AAPL": ["Apple", "iPhone", "Mac", "Apple Watch"],
-    "APPLE": ["iPhone", "Mac", "Apple Watch", "App Store"],
-    "NVDA": ["NVIDIA", "AI", "H100", "Data Center"],
-    "GOOG": ["Alphabet", "DeepMind", "Waymo"],
-    "MSFT": ["Microsoft", "Azure", "OpenAI"],
-    "AMZN": ["Amazon", "AWS", "Prime"],
+    "TSLA": ["SpaceX", "Starlink", "XAI", "Elon Musk"],
+    "NVDA": ["NVIDIA", "AI", "H100", "Data Center", "Jensen Huang"],
+    "AAPL": ["Apple", "iPhone", "Mac", "Apple Watch", "Tim Cook"],
+    "GOOGL": ["Alphabet", "Google", "DeepMind", "Waymo", "Sundar Pichai"],
+    "MSFT": ["Microsoft", "Azure", "OpenAI", "Satya Nadella"],
+    "AMZN": ["Amazon", "AWS", "Blue Origin", "Jeff Bezos"],
+    "META": ["Facebook", "Instagram", "WhatsApp", "Metaverse", "Mark Zuckerberg"],
+    "TSM": ["TSMC", "Semiconductor", "Foundry", "Chipmaking"],
+    "ASML": ["Lithography", "EUV", "Semiconductor Equipment"],
+    "AMD": ["Advanced Micro Devices", "CPU", "GPU", "Semiconductor"],
+    "INTC": ["Intel", "CPU", "Semiconductor", "Foundry"],
+    "NFLX": ["Netflix", "Streaming", "Original Series"],
+    "DIS": ["Disney", "Marvel", "Star Wars", "Disney Plus"],
+    "PLTR": ["Palantir", "Big Data", "Analytics", "Defense Tech"],
+    "ARM": ["ARM Holdings", "Semiconductor Architecture", "SoftBank"],
+    "RKLB": ["Rocket Lab", "Space", "Aerospace"],
+    "SMR": ["NuScale Power", "Nuclear", "SMR"],
+    "VRT": ["Vertiv", "Data Center Infrastructure"],
+    "MSTR": ["MicroStrategy", "Bitcoin", "Saylor"],
+    "S": ["SentinelOne", "Cybersecurity"],
+    "NET": ["Cloudflare", "CDN", "Edge Computing"],
+    "SNOW": ["Snowflake", "Data Warehouse", "Cloud Data"],
+    "ENPH": ["Enphase Energy", "Solar", "Microinverter"],
+    "AVGO": ["Broadcom", "Semiconductor", "Networking"],
+    "ASTS": ["AST Spacemobile", "Satellite", "Telecom"],
+    "AMSC": ["American Superconductor", "Power Grid"],
 }
 
 
