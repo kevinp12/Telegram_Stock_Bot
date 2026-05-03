@@ -64,6 +64,22 @@ def init_db() -> None:
             """
         )
         
+        # 建立詳細 Token 日誌表
+        c.execute(
+            """
+            CREATE TABLE IF NOT EXISTS token_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                model TEXT,
+                prompt_tokens INTEGER,
+                output_tokens INTEGER,
+                total_tokens INTEGER,
+                urls TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        
         # 檢查是否需要遷移舊資料 (如果 user_id 欄位不存在則新增)
         # 這裡簡單處理：如果 trades 表沒有 user_id，則嘗試新增
         try:
@@ -165,6 +181,33 @@ def update_daily_tokens(user_id: int, count: int) -> int:
             conn.execute("UPDATE stats SET value = value + ? WHERE user_id=? AND key = 'tokens_used_today'", (float(count), user_id))
         conn.commit()
     return used
+
+
+def record_token_log(user_id: int | None, model: str, prompt: int, output: int, total: int, urls: list[str] | None = None) -> None:
+    """記錄單次 AI 請求的 Token 消耗與相關網址。"""
+    import json
+    url_json = json.dumps(urls) if urls else None
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO token_logs (user_id, model, prompt_tokens, output_tokens, total_tokens, urls) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, model, prompt, output, total, url_json)
+        )
+        conn.commit()
+
+
+def get_token_stats(user_id: int | None = None) -> dict[str, float]:
+    """獲取 Token 消耗的統計資訊 (最小、最大、平均)。"""
+    query = "SELECT MIN(total_tokens), MAX(total_tokens), AVG(total_tokens) FROM token_logs"
+    params = []
+    if user_id is not None:
+        query += " WHERE user_id = ?"
+        params.append(user_id)
+    
+    with get_conn() as conn:
+        row = conn.execute(query, params).fetchone()
+        if row and row[0] is not None:
+            return {"min": float(row[0]), "max": float(row[1]), "avg": float(row[2])}
+    return {"min": 0, "max": 0, "avg": 0}
 
 
 def save_trade(user_id: int, symbol: str, price: float, quantity: float) -> None:

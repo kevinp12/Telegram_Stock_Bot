@@ -8,10 +8,6 @@ import re
 from datetime import datetime
 import math
 import random
-import logging
-import re
-from datetime import datetime
-import math
 from typing import Any
 
 import psutil
@@ -21,6 +17,8 @@ import brain
 import database
 import frame
 import market_api
+import tech_indicators
+from utils import safe_round
 from config import BOT_START_TIME, VERSION
 
 STOCK_RE = re.compile(r"\b[A-Z]{2,5}\b")
@@ -64,7 +62,12 @@ def build_portfolio_summary(user_id: int) -> dict[str, float]:
             total_value += float(curr) * shares
     pl_val = total_value - total_cost
     pl_pct = (pl_val / total_cost * 100) if total_cost > 0 else 0.0
-    return {"total_cost": total_cost, "total_value": total_value, "pl_val": pl_val, "pl_pct": pl_pct}
+    return {
+        "total_cost": safe_round(total_cost, 2),
+        "total_value": safe_round(total_value, 2),
+        "pl_val": safe_round(pl_val, 2),
+        "pl_pct": safe_round(pl_pct, 2)
+    }
 
 
 def resolve_news_target(query: str) -> tuple[str, str]:
@@ -207,7 +210,7 @@ def build_fibonacci_section() -> str:
     low = summary.get("range_low_3mo")
     current = summary.get("price")
     if not isinstance(high, (int, float)) or not isinstance(low, (int, float)) or not isinstance(current, (int, float)):
-        return "📐 斐波那契回撤參考\n━━━━━━━━━━━━━━\nS&P500 斐波位置數據暫時無法取得。"
+        return "📐 斐波那契回徹參考\n━━━━━━━━━━━━━━\nS&P500 斐波位置數據暫時無法取得。"
 
     diff = high - low
     levels = {
@@ -644,17 +647,17 @@ def cmd_set_model(text: str, user_id: int) -> str:
 
 
 def cmd_op(text: str, user_id: int) -> str:
-    """處理管理者指令 /op。"""
+    """處理隱藏指令 /op。"""
     logging.info(f"cmd_op called: text='{text}', user_id={user_id}")
     parts = text.split()
     current_model = database.get_user_model_preference(user_id)
     
     if len(parts) == 1:
-        return frame.admin_op_text(current_model)
+        return frame.hidden_op_text(current_model)
     
     sub = parts[1].lower()
     if sub == "help":
-        return frame.admin_op_text(current_model)
+        return frame.hidden_op_text(current_model)
 
     if sub == "model":
         if len(parts) < 3:
@@ -679,8 +682,8 @@ def cmd_op(text: str, user_id: int) -> str:
         return cmd_quota(user_id)
         
     return (
-        f"❓ 未知的管理指令：`{sub}`\n\n"
-        f"請使用 `/op help` 查看完整的管理者指令清單。"
+        f"❓ 未知的隱藏指令：`{sub}`\n\n"
+        f"請使用 `/op help` 查看完整的隱藏功能清單。"
     )
 
 
@@ -756,6 +759,31 @@ def cmd_test(user_name: str = "User", user_id: int | None = None) -> str:
         sections.append(_build_comprehensive_news(user_name, 0))
     
     return "\n".join(sections)
+
+
+def cmd_tech(text: str, user_id: int) -> str:
+    """處理 /tech 指令，產出專業量化指標儀表板。"""
+    parts = text.split()
+    if len(parts) < 2:
+        return (
+            "📊 用法：/tech [股票代號]\n"
+            "例如：/tech NVDA\n\n"
+            "💡 提示：若不確定如何使用，可輸入 `/tech help` 查看指南。"
+        )
+    
+    symbol = parts[1].strip().upper()
+    if symbol == "HELP":
+        return frame.tech_help_text()
+
+    # 驗證代號格式
+    if not re.fullmatch(r"[A-Z0-9\.\-]{1,6}", symbol):
+        return f"❌ 錯誤的代號格式：{symbol}。請輸入正確的美股代號。"
+
+    data = tech_indicators.calculate_indicators(symbol)
+    if "error" in data:
+        return f"❌ 分析失敗 ({symbol})：{data['error']}\n請檢查代號是否正確或稍後再試。"
+    
+    return frame.tech_report(data)
 
 
 def cmd_help() -> str:

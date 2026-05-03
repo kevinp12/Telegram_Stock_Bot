@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import html
 from typing import Any
+from utils import safe_round
 
 
 def escape_html(text: Any) -> str:
@@ -34,9 +35,96 @@ def help_text() -> str:
         "• /fin [代號] - 查詢個股財報、EPS、營收、估值與關鍵數字\n"
         "• /fin compare [股票A] [股票B] - 比較 2 到 3 支股票的財務健康與最新消息。\n"
         "• /ask [代號] [問題] - 啟動 Pro 深度戰術分析\n"
+        "• /tech [代號] - 產出專業量化指標儀表板與戰術策略\n"
         "• /status - 驗證 Gemini 配額與連線\n\n"
         "💬 自然語言\n"
         "• 直接輸入 NVDA 今天怎麼看 - 自動偵測代號並分析\n"
+    )
+
+
+def tech_help_text() -> str:
+    return (
+        "📊 量化指標儀表板指南 (/tech)\n"
+        "━━━━━━━━━━━━━━\n"
+        "提供深度的技術指標分析，協助判斷買賣點與風險控管。\n\n"
+        "**指令用法：**\n"
+        "• `/tech [股票代號]`：分析指定個股，例如 `/tech NVDA`。\n\n"
+        "**包含指標：**\n"
+        "1. EMA 均線系統 (21, 60, 200)\n"
+        "2. ATR 真實波動幅度 (動能與停損參考)\n"
+        "3. RSI 相對強弱指標 (超買超賣判斷)\n"
+        "4. MACD 趨勢動能指標\n"
+        "5. TD9 神奇九轉序列 (極端反轉偵測)\n"
+        "6. VWAP 成交量加權平均價 (機構成本參考)\n"
+        "7. 主力籌碼追蹤 (爆量與建倉偵測)\n"
+        "8. 進攻指標 (綜合多空評級)\n\n"
+        "💡 **實戰提示：**\n"
+        "建議結合 `/fin` 財報數據與 `/news` 即時消息，達到量價與基本面共振的最高勝率。"
+    )
+
+
+def tech_report(data: dict[str, Any]) -> str:
+    symbol = data.get("symbol", "N/A")
+    price = data.get("last_price", 0)
+    atr = data.get("atr", 0)
+    vwap = data.get("vwap", 0)
+    attack = data.get("attack_status", "觀察")
+    whale = data.get("whale_status", "中立")
+    vol_ratio = data.get("vol_ratio", 1.0)
+    macd = data.get("macd_status", "N/A")
+    rsi = data.get("rsi", "N/A")
+    td = data.get("td_status", "N/A")
+    ema = data.get("ema_status", "N/A")
+    sup = data.get("support", "N/A")
+    res = data.get("resistance", "N/A")
+    
+    # 動態圖示
+    def get_status_icon(status: str) -> str:
+        if "大買" in status: return "🔥"
+        if "中買" in status or "小買" in status: return "✅"
+        if "大賣" in status: return "💀"
+        if "中賣" in status or "小賣" in status: return "⚠️"
+        return "⚪"
+
+    attack_icon = get_status_icon(attack)
+    whale_icon = "🐋" if "買" in whale else ("🦈" if "賣" in whale else "⚪")
+    
+    # 策略總結生成
+    strategy_title = "💡 戰術執行建議"
+    strategy_body = "指標顯示趨勢不明，建議空手觀望，等待方向表態。"
+    
+    if "買" in attack:
+        stop_loss_1 = safe_round(price - 1.5 * atr, 2)
+        strategy_body = (
+            f"進攻指標顯示 {attack}，且主力籌碼 {whale}。\n"
+            f"🎯 **建倉位**：建議於 VWAP ({vwap}) 附近分批佈局。\n"
+            f"🛡️ **防守位**：設於 {stop_loss_1} (現價 - 1.5 ATR)。"
+        )
+    elif "賣" in attack:
+        strategy_body = (
+            f"進攻指標顯示 {attack}，技術面顯著轉弱。\n"
+            f"📉 **減碼位**：建議分批減碼或嚴格執行停損。\n"
+            f"🔭 **觀察位**：防守觀察位設於 {vwap}。"
+        )
+
+    return (
+        f"📊 **【量化作戰儀表板：{symbol}】**\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"⚔️ **核心評級**：{attack_icon} `{attack}`\n"
+        f"🌊 **主力籌碼**：{whale_icon} `{whale}` (爆量 {vol_ratio}x)\n"
+        f"🧬 **趨勢結構**：{ema}\n\n"
+        f"📐 **關鍵點位參考**\n"
+        f"• 錨定成本 (VWAP)：`{vwap}`\n"
+        f"• 波動風險 (ATR) ：`{atr}`\n"
+        f"• 建議停損參考 ：`{safe_round(price - 2*atr, 2)}` - `{safe_round(price - 1.5*atr, 2)}`\n"
+        f"• 支撐 / 壓力位 ：`{sup}` / `{res}`\n\n"
+        f"🌪️ **動能與背離**\n"
+        f"• MACD 狀態：{macd}\n"
+        f"• RSI 強弱 ：{rsi}\n"
+        f"• TD9 序列 ：{td}\n\n"
+        f"**{strategy_title}**\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"{strategy_body}"
     )
 
 
@@ -99,12 +187,15 @@ def watch_list(symbols: list[str]) -> str:
 
 
 def buy_success(symbol: str, price: float, qty: float) -> str:
-    return f"✅ 已記錄買入\n{symbol.upper()} | {qty:g} 股 | 成本 ${price:.2f}"
+    p_val = safe_round(price, 2)
+    return f"✅ 已記錄買入\n{symbol.upper()} | {qty:g} 股 | 成本 ${p_val:.2f}"
 
 
 def sell_success(symbol: str, price: float, qty: float, profit: float, rem: float) -> str:
-    sign = "+" if profit >= 0 else ""
-    msg = f"✅ 已記錄賣出\n{symbol.upper()} | {qty - rem:g} 股 | 賣出 ${price:.2f}\n已實現損益：{sign}${profit:.2f} USD"
+    p_val = safe_round(profit, 2)
+    pr_val = safe_round(price, 2)
+    sign = "+" if p_val >= 0 else ""
+    msg = f"✅ 已記錄賣出\n{symbol.upper()} | {qty - rem:g} 股 | 賣出 ${pr_val:.2f}\n已實現損益：{sign}${p_val:.2f} USD"
     if rem > 0:
         msg += f"\n⚠️ 庫存不足，尚有 {rem:g} 股未能賣出。"
     return msg
@@ -125,20 +216,22 @@ def portfolio_list(rows: list[dict[str, Any]], realized_profit: float = 0.0, pag
         avg_cost = float(r["avg_cost"])
         curr = r.get("current_price", "N/A")
         if isinstance(curr, (int, float)):
-            market_value = float(curr) * qty
-            profit = (float(curr) - avg_cost) * qty
-            pct = (profit / (avg_cost * qty) * 100) if avg_cost * qty else 0.0
+            market_value = safe_round(float(curr) * qty, 2)
+            profit = safe_round((float(curr) - avg_cost) * qty, 2)
+            pct = safe_round((profit / (avg_cost * qty) * 100), 2) if avg_cost * qty else 0.0
             sign = "+" if profit >= 0 else ""
             total_value += market_value
             total_profit += profit
             lines.append(
                 f"{symbol} | {qty:g} 股 | 市值 ${market_value:,.2f}\n"
-                f"成本：${avg_cost:.2f} | 現價：${float(curr):.2f}\n"
+                f"成本：${safe_round(avg_cost, 2):.2f} | 現價：${safe_round(float(curr), 2):.2f}\n"
                 f"獲利：{sign}${profit:,.2f} ({sign}{pct:.2f}%)\n"
             )
         else:
-            lines.append(f"{symbol} | {qty:g} 股\n成本：${avg_cost:.2f} | 現價：N/A\n")
+            lines.append(f"{symbol} | {qty:g} 股\n成本：${safe_round(avg_cost, 2):.2f} | 現價：N/A\n")
     
+    total_profit = safe_round(total_profit, 2)
+    realized_profit = safe_round(realized_profit, 2)
     sign_total = "+" if total_profit >= 0 else ""
     sign_realized = "+" if realized_profit >= 0 else ""
     lines.append("━━━━━━━━━━━━━━")
@@ -173,18 +266,24 @@ def fin_report(data: dict[str, Any]) -> str:
     )
 
 
-def admin_op_text(current_model: str) -> str:
+def hidden_op_text(current_model: str) -> str:
     return (
-        "🛠️ 管理者專用指令集 (Hidden)\n"
+        "🕵️ 隱藏功能指令集 (Hidden Features)\n"
         "━━━━━━━━━━━━━━\n"
-        f"• 當前 AI 模型：`{current_model}`\n\n"
-        "📌 指令清單：\n"
-        "• `/op model flash` - 切換至 Gemini Flash (快速、經濟)\n"
-        "• `/op model pro`   - 切換至 Gemini Pro (深度、分析)\n"
-        "• `/op log`         - 查看系統最近 40 筆運行日誌\n"
-        "• `/op quota`       - 查詢今日 Gemini 配額使用量\n"
+        "這些指令專為進階玩家設計，不會出現在選單中。\n\n"
+        f"• 當前 AI 核心：`{current_model}`\n\n"
+        "📌 指令清單與說明：\n"
+        "• `/op model flash` - 切換至 Gemini Flash\n"
+        "  (反應極快，適合日常行情與簡單分析)\n\n"
+        "• `/op model pro` - 切換至 Gemini Pro\n"
+        "  (具備最強算力，適合深度戰術與複雜比較)\n\n"
+        "• `/op log` - 查看系統運行實時日誌\n"
+        "  (直接將伺服器最近 40 筆審計日誌傳送到此)\n\n"
+        "• `/op quota` - 查詢今日 API 配額進度\n"
+        "  (視覺化展示 Token 剩餘空間與使用比例)\n"
         "━━━━━━━━━━━━━━\n"
-        "⚠️ 此選單僅管理員可見，且不會出現在選單按鈕中。"
+        "💡 提示：指令需完整輸入，例如 `/op model pro`。\n"
+        "若只輸入 `/op model` 系統會給予詳細切換教學。"
     )
 
 

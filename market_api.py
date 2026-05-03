@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import requests
@@ -253,7 +254,10 @@ def format_quote(q: dict[str, Any]) -> str:
     diff = float(q.get("diff", 0))
     pct = float(q.get("pct", 0))
     sign = "+" if diff >= 0 else ""
-    return f"{price:.2f} USD ({sign}{diff:.2f}) ({sign}{pct:.2f}%)"
+    p_val = safe_round(price, 2)
+    d_val = safe_round(diff, 2)
+    pct_val = safe_round(pct, 2)
+    return f"{p_val:.2f} USD ({sign}{d_val:.2f}) ({sign}{pct_val:.2f}%)"
 
 
 def get_macro_status(symbol_name: str) -> str:
@@ -270,6 +274,9 @@ def get_fast_price(symbol_name: str):
             return float(status.split()[0])
         except Exception:
             return "N/A"
+
+
+from utils import safe_round
 
 
 def get_stock_history_summary(symbol: str) -> dict[str, Any]:
@@ -289,19 +296,20 @@ def get_stock_history_summary(symbol: str) -> dict[str, Any]:
         if hist.empty:
             return out
         close = hist["Close"]
-        out["price"] = float(close.iloc[-1])
-        out["support"] = round(float(close.tail(20).min()), 2)
-        out["resistance"] = round(float(close.tail(20).max()), 2)
+        out["price"] = safe_round(close.iloc[-1])
+        out["support"] = safe_round(close.tail(20).min())
+        out["resistance"] = safe_round(close.tail(20).max())
         
         # 斐波那契回撤需要的區間高低點
-        out["range_high_3mo"] = round(float(hist["High"].max()), 2)
-        out["range_low_3mo"] = round(float(hist["Low"].min()), 2)
+        out["range_high_3mo"] = safe_round(hist["High"].max())
+        out["range_low_3mo"] = safe_round(hist["Low"].min())
 
         ma5 = float(close.tail(5).mean())
         ma20 = float(close.tail(20).mean())
-        if out["price"] > ma5 > ma20:
+        curr_price = out["price"] if isinstance(out["price"], (int, float)) else 0
+        if curr_price > ma5 > ma20:
             out["trend_note"] = "短線偏多排列"
-        elif out["price"] < ma5 < ma20:
+        elif curr_price < ma5 < ma20:
             out["trend_note"] = "短線偏空排列"
         else:
             out["trend_note"] = "震盪整理"
@@ -319,11 +327,16 @@ def get_stock_snapshot(symbol: str) -> dict[str, Any]:
     symbol = symbol.upper()
     quote = quote_from_yahoo(symbol)
     history = get_stock_history_summary(symbol)
-    return {**history, "price": quote.get("price", history.get("price")), "diff": quote.get("diff", 0), "pct": quote.get("pct", 0)}
+    return {
+        **history, 
+        "price": safe_round(quote.get("price", history.get("price"))), 
+        "diff": safe_round(quote.get("diff", 0)), 
+        "pct": safe_round(quote.get("pct", 0))
+    }
 
 
 def format_number(value: Any) -> str:
-    if value is None:
+    if value is None or value == "N/A":
         return "N/A"
     try:
         num = float(value)
@@ -331,12 +344,16 @@ def format_number(value: Any) -> str:
         return str(value)
     abs_num = abs(num)
     if abs_num >= 1_000_000_000_000:
-        return f"${num / 1_000_000_000_000:.2f}T"
+        val = safe_round(num / 1_000_000_000_000, 2)
+        return f"${val:.2f}T"
     if abs_num >= 1_000_000_000:
-        return f"${num / 1_000_000_000:.2f}B"
+        val = safe_round(num / 1_000_000_000, 2)
+        return f"${val:.2f}B"
     if abs_num >= 1_000_000:
-        return f"${num / 1_000_000:.2f}M"
-    return f"${num:,.0f}"
+        val = safe_round(num / 1_000_000, 2)
+        return f"${val:.2f}M"
+    val = safe_round(num, 2)
+    return f"${val:,.2f}"
 
 
 def resolve_news_topic(query: str) -> dict[str, str]:
@@ -427,18 +444,18 @@ def get_stock_fundamentals(symbol: str) -> dict[str, Any]:
         "sector": info.get("sector", "N/A"),
         "industry": info.get("industry", "N/A"),
         "country": info.get("country", "N/A"),
-        "current_price": info.get("regularMarketPrice") or info.get("previousClose") or "N/A",
-        "trailing_eps": info.get("trailingEps", "N/A"),
-        "forward_eps": info.get("forwardEps", "N/A"),
-        "trailing_pe": info.get("trailingPE", "N/A"),
-        "forward_pe": info.get("forwardPE", "N/A"),
+        "current_price": safe_round(info.get("regularMarketPrice") or info.get("previousClose")),
+        "trailing_eps": safe_round(info.get("trailingEps")),
+        "forward_eps": safe_round(info.get("forwardEps")),
+        "trailing_pe": safe_round(info.get("trailingPE")),
+        "forward_pe": safe_round(info.get("forwardPE")),
         "market_cap": format_number(info.get("marketCap")),
         "revenue_ttm": format_number(info.get("totalRevenue") or info.get("revenueTTM")),
         "net_income": format_number(info.get("netIncomeToCommon")),
-        "profit_margin": f"{info.get('profitMargins', 'N/A'):.2%}" if isinstance(info.get("profitMargins"), (int, float)) else "N/A",
-        "gross_margin": f"{info.get('grossMargins', 'N/A'):.2%}" if isinstance(info.get("grossMargins"), (int, float)) else "N/A",
-        "year_high": info.get("fiftyTwoWeekHigh", "N/A"),
-        "year_low": info.get("fiftyTwoWeekLow", "N/A"),
+        "profit_margin": f"{safe_round(info.get('profitMargins', 0)*100, 2)}%" if isinstance(info.get("profitMargins"), (int, float)) else "N/A",
+        "gross_margin": f"{safe_round(info.get('grossMargins', 0)*100, 2)}%" if isinstance(info.get("grossMargins"), (int, float)) else "N/A",
+        "year_high": safe_round(info.get("fiftyTwoWeekHigh")),
+        "year_low": safe_round(info.get("fiftyTwoWeekLow")),
     }
 
     try:
@@ -446,7 +463,7 @@ def get_stock_fundamentals(symbol: str) -> dict[str, Any]:
         if hasattr(quarterly_earnings, "empty") and not quarterly_earnings.empty:
             last_row = quarterly_earnings.iloc[-1]
             data["latest_quarter"] = str(last_row.name)
-            data["latest_quarter_eps"] = last_row.get("Earnings", "N/A")
+            data["latest_quarter_eps"] = safe_round(last_row.get("Earnings"))
             data["latest_quarter_revenue"] = format_number(last_row.get("Revenue", "N/A"))
     except Exception:
         pass

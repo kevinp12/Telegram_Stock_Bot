@@ -181,6 +181,7 @@ def setup_bot_commands() -> None:
         telebot.types.BotCommand("news", "📰 即時新聞與完整市場報告"),
         telebot.types.BotCommand("news_help", "📖 新聞功能指南"),
         telebot.types.BotCommand("fin", "📊 個股財報與 EPS 查詢"),
+        telebot.types.BotCommand("tech", "📊 專業量化指標儀表板"),
         telebot.types.BotCommand("quota", "💳 查詢今日 API 使用配額"),
         telebot.types.BotCommand("status", "🔍 AI 連線狀態驗證"),
         telebot.types.BotCommand("help", "🎯 查看指揮手冊"),
@@ -293,6 +294,13 @@ def market_report_job() -> None:
         except Exception as exc:
             logging.warning("market_report_job error: %s", exc)
         time.sleep(30)
+
+
+@bot.message_handler(commands=["tech"])
+@bot.channel_post_handler(commands=["tech"])
+def on_tech(m):
+    user_id, _ = register_user(m)
+    safe_send(m.chat.id, command.cmd_tech(m.text or "", user_id))
 
 
 @bot.message_handler(commands=["help"])
@@ -445,12 +453,6 @@ def on_model(m):
 def on_op(m):
     logging.info(f"Received /op command from user {m.from_user.id if m.from_user else 'None'}: {m.text}")
     user_id = get_user_id(m)
-    admin_check = is_admin_user(user_id)
-    logging.info(f"Admin check for user {user_id}: {admin_check}")
-    
-    if not admin_check:
-        logging.warning(f"Unauthorized /op attempt from user {user_id}")
-        return
     
     bot.send_chat_action(m.chat.id, "typing")
     text = m.text or ""
@@ -482,8 +484,6 @@ def on_op(m):
 @bot.channel_post_handler(commands=["log"])
 def on_log(m):
     user_id = get_user_id(m)
-    if not is_admin_user(user_id):
-        return
     log_lines = read_hidden_log_lines(40)
     if not log_lines:
         reply(m, "🔒 系統日誌目前為空或尚未產生。")

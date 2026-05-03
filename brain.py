@@ -85,30 +85,40 @@ def _audit_gemini_entry(
     usage_info: dict[str, int | None] | None = None,
     error: str | None = None,
     max_output_tokens: int | None = None,
+    urls: list[str] | None = None,
 ) -> None:
-    if response_text is not None:
-        cleaned_text = response_text.replace("\n", "\\n").strip()
-        if len(cleaned_text) > 1000:
-            cleaned_text = cleaned_text[:1000] + "..."
-    else:
-        cleaned_text = "<NO_RETURN_TEXT>"
-
-    usage_info = usage_info or {"prompt": None, "output": None, "total": None, "lost": None}
-    line = (
-        f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-        f"user_id={user_id or 0} model={model} success={success} "
-        f"return_text={cleaned_text!r} "
-        f"prompt_tokens={usage_info.get('prompt')} output_tokens={usage_info.get('output')} "
-        f"total_tokens={usage_info.get('total')} lost_tokens={usage_info.get('lost')}"
-    )
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    status = "✅ SUCCESS" if success else "❌ FAILED"
+    
+    usage_info = usage_info or {"prompt": 0, "output": 0, "total": 0, "lost": 0}
+    p = usage_info.get("prompt") or 0
+    o = usage_info.get("output") or 0
+    t = usage_info.get("total") or 0
+    
+    line = f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    line += f"🕒 {timestamp} | {status} | User:{user_id or 0} | Model:{model}\n"
+    line += f"📊 Tokens: Prompt:{p} | Output:{o} | Total:{t}\n"
+    
+    if urls:
+        line += f"🌐 Research URLs:\n"
+        for url in urls:
+            line += f"   - {url}\n"
+            
     if error:
-        line += f" error={error!r}"
-    if success and max_output_tokens is not None and response_text is None:
-        line += f" computed_lost_max_output={max_output_tokens}"
+        line += f"⚠️ Error: {error}\n"
+        
+    if response_text:
+        # 僅保留開頭一段預覽，避免 Log 爆炸
+        preview = response_text.replace("\n", " ")[:200]
+        line += f"📝 Response Preview: {preview}...\n"
+        
     _append_audit_line(line)
+    
+    if success:
+        database.record_token_log(user_id, model, p, o, t, urls)
 
 
-def log_gemini_error(user_id: int | None, model: str, exc: Exception) -> None:
+def log_gemini_error(user_id: int | None, model: str, exc: Exception, urls: list[str] | None = None) -> None:
     msg = str(exc).replace("\n", " ").strip()
     _audit_gemini_entry(
         user_id=user_id,
@@ -117,10 +127,11 @@ def log_gemini_error(user_id: int | None, model: str, exc: Exception) -> None:
         response_text=None,
         usage_info=None,
         error=msg[:500],
+        urls=urls,
     )
 
 
-def log_gemini_success(user_id: int | None, model: str, response: object, response_text: str | None, max_output_tokens: int) -> None:
+def log_gemini_success(user_id: int | None, model: str, response: object, response_text: str | None, max_output_tokens: int, urls: list[str] | None = None) -> None:
     usage_info = _format_usage(response)
     _audit_gemini_entry(
         user_id=user_id,
@@ -129,6 +140,7 @@ def log_gemini_success(user_id: int | None, model: str, response: object, respon
         response_text=response_text,
         usage_info=usage_info,
         max_output_tokens=max_output_tokens,
+        urls=urls,
     )
 
 
@@ -206,6 +218,7 @@ def generate_text(
     max_output_tokens: int = 1200,
     priority_model: str | None = None,
     user_id: int | None = None,
+    urls: list[str] | None = None,
 ) -> str:
     """呼叫 Gemini 產生文字。"""
     client = get_client()
@@ -256,13 +269,13 @@ def generate_text(
             stats.last_model = clean_model
             stats.last_mode = mode
             stats.last_error = "N/A"
-            log_gemini_success(user_id, clean_model, response, text, max_output_tokens)
+            log_gemini_success(user_id, clean_model, response, text, max_output_tokens, urls=urls)
             return text.strip()
         except Exception as exc:
             last_exc = exc
             msg = str(exc)
             stats.last_error = msg[:500]
-            log_gemini_error(user_id, clean_model, exc)
+            log_gemini_error(user_id, clean_model, exc, urls=urls)
             
             # 若為配額耗盡錯誤
             if "429" in msg or "ResourceExhausted" in msg:
@@ -281,12 +294,13 @@ def generate_text(
     return f"❌ 顧問大腦連線失敗。原因：{reason}"
 
 
-def ping() -> bool:
+def ping(user_id: int | None = None) -> bool:
     result = generate_text(
         "請只回覆 OK",
         mode="flash",
         temperature=0,
         max_output_tokens=10,
+        user_id=user_id,
     )
     return "OK" in result.upper()
 
@@ -307,9 +321,12 @@ def get_status_text(user_id: int) -> str:
 
     used_today, _ = database.get_daily_tokens(user_id)
     percent = (used_today / DAILY_TOKEN_LIMIT) * 100
+    
+    t_stats = database.get_token_stats(user_id)
 
     return (
         f"• 今日流量: {used_today:,} / {DAILY_TOKEN_LIMIT:,} ({percent:.1f}%)\n"
+        f"• 消耗統計: Min:{t_stats['min']:.0f} | Max:{t_stats['max']:.0f} | Avg:{t_stats['avg']:.1f}\n"
         f"• 目前使用模型: `{current_model}`\n"
         f"• Flash 備援清單: {', '.join(flash_ready[:3])}\n"
         f"• Pro 備援清單: {', '.join(pro_ready[:3])}\n"
