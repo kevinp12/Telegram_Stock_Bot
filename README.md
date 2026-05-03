@@ -4,12 +4,17 @@
 ---
 > **您專屬的機構級 SMC & MTF 量化交易 AI 副官**
 
-<img src="https://images.unsplash.com/photo-1611974715853-2b8ef9d1d37d?q=80&w=2070&auto=format&fit=crop" width="100%" alt="Banner" style="border-radius: 15px; margin: 20px 0;">
-
-[![Status](https://img.shields.io/badge/系統狀態-運行中-brightgreen?style=for-the-badge&logo=statuspage)]()
-[![AI Engine](https://img.shields.io/badge/AI_引擎-Gemini_Flash/Pro-orange?style=for-the-badge&logo=google-gemini)]()
-[![Strategy](https://img.shields.io/badge/策略-SMC_MTF_POC-blueviolet?style=for-the-badge)]()
-[![Cost](https://img.shields.io/badge/運行成本-極低消耗-blue?style=for-the-badge)]()
+<div align="center">
+  <p align="center">
+    <img src="https://img.shields.io/badge/AI_ENGINE-GEMINI_PRO-orange?style=for-the-badge&logo=google-gemini&logoColor=white" alt="Gemini">
+    <img src="https://img.shields.io/badge/STRATEGY-SMC_%7C_MTF_%7C_POC-blueviolet?style=for-the-badge" alt="Strategy">
+    <img src="https://img.shields.io/badge/STATUS-ACTIVE-brightgreen?style=for-the-badge" alt="Status">
+  </p>
+  <p align="center">
+    <b>量化。智能。極速。</b><br>
+    <i>「用 AI 為您的資產護航，在波動中尋找必然。」</i>
+  </p>
+</div>
 
 ---
 
@@ -22,18 +27,43 @@
 ## 🏛️ 核心技術架構 (Core Architecture)
 
 ```mermaid
-graph LR
-    A[使用者指令] --> B{路由解析器}
-    B -->|技術面| C[SMC 運算引擎]
-    B -->|基本面| D[AI 智慧路由器]
-    B -->|監控| E[演算法狙擊手]
+graph TB
+    subgraph TG_Interface [終端交互層]
+        User([使用者]) <--> |Telegram 指令/回報| BOT[Main Bot Core]
+    end
+
+    subgraph Logic_Center [業務邏輯中心]
+        BOT <--> CMD[Command Router]
+        CMD --> SMC[SMC 運算模組]
+        CMD --> AI[Gemini AI 決策引擎]
+        CMD --> SNP[狙擊監控系統]
+        
+        SMC --> TECH[技術指標: FVG/POC/ATR/TD9]
+        AI --> ANAL[深度戰術報表 / 財報分析]
+        SNP --> ALG[0-Token 演算法實時盯盤]
+    end
+
+    subgraph Data_Service [數據供應層]
+        API_FIN[Finnhub Market Data] --> Logic_Center
+        API_GEM[Gemini Pro API] --> Logic_Center
+        API_NEWS[News & Trends API] --> Logic_Center
+    end
+
+    subgraph Persistence [數據持久化]
+        DB[(Local SQLite)] <--> Logic_Center
+        CACHE[(Market Snapshot Cache)] <--> Logic_Center
+    end
+
+    %% Style definitions
+    classDef interface fill:#e3f2fd,stroke:#1565c0,stroke-width:2px;
+    classDef logic fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+    classDef data fill:#fff3e0,stroke:#e65100,stroke-width:2px;
+    classDef storage fill:#f1f8e9,stroke:#33691e,stroke-width:2px;
     
-    C --> F[POC/FVG/Sweep/TP]
-    D --> G[財報/趨勢/新聞]
-    E --> H[24/7 0-Token 盯盤]
-    
-    F & G & H --> I[Gemini Pro 深度分析]
-    I --> J[Telegram 戰術報告]
+    class TG_Interface,BOT interface;
+    class CMD,SMC,AI,SNP,TECH,ANAL,ALG logic;
+    class API_FIN,API_GEM,API_NEWS data;
+    class DB,CACHE storage;
 ```
 
 ---
@@ -42,9 +72,9 @@ graph LR
 
 ### 🧲 SMC 聰明錢分析引擎
 本系統核心基於「聰明錢」邏輯，自動識別機構建倉與洗盤行為：
-> **[ FVG 偵測 ]** 自動識別 K 線失衡區域，鎖定價格回踩的「磁鐵位」。  
-> **[ 流動性掃蕩 ]** 監控主力刻意跌破前低或突破前高行為，捕捉高勝率反轉訊號。  
-> **[ MTF 協同 ]** 1D 定向、4H 找結構、1H 抓觸發，完成多時區共振。
+*   **[ FVG 偵測 ]** 自動識別 K 線失衡區域，鎖定價格回踩的「磁鐵位」。
+*   **[ 流動性掃蕩 ]** 監控主力刻意跌破前低或突破前高行為，捕捉高勝率反轉訊號。
+*   **[ MTF 協同 ]** 1D 定向、4H 找結構、1H 抓觸發，完成多時區共振。
 
 ### 📍 量化戰術指標
 *   **POC (Point of Control)**：精準定位「機構成本中心」。
@@ -64,16 +94,14 @@ graph LR
 
 ## 🎯 狙擊監控系統 (Sniper System)
 
-<div align="center">
-<img src="https://images.unsplash.com/photo-1551288049-bbbda5366392?q=80&w=2070&auto=format&fit=crop" width="80%" style="border-radius: 10px; margin: 10px 0;">
-</div>
-
-### 🛡️ 降維打擊：0 Token 背景盯盤
-我們不使用 AI 進行無意義的迴圈消耗。採用**「演算法監控 + AI 觸發」**架構：
-1.  **一次性計算**：計算 FVG/Sweep 監控區間。
-2.  **演算法盯盤**：Python 純演算法比對現價，**Token 消耗為 0**。
-3.  **命中報警**：命中區間時才呼叫 AI 產出正式狙擊報表。
-4.  **API 安全**：批次請求 + Header 偽裝，防範 IP 封鎖。
+> [!TIP]
+> ### 🛡️ 核心競爭力：0-Token 背景盯盤
+> 我們不使用 AI 進行無意義的迴圈消耗。採用**「演算法監控 + AI 觸發」**架構，確保系統在極低成本下維持最高頻率的監控：
+> 
+> 1.  **動態預算**：系統啟動時精確計算 FVG/Sweep 監控區間。
+> 2.  **純量運算**：使用 Python 純演算法比對現價，**Token 消耗為 0**。
+> 3.  **精準打擊**：僅在價格命中關鍵流動性區間時，才呼叫 Gemini Pro 進行戰術分析。
+> 4.  **連線韌性**：具備自動重試機制與 Header 偽裝，防範 API 頻率限制。
 
 ---
 
