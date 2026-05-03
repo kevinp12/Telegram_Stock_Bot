@@ -1,5 +1,5 @@
 """tech_indicators.py
-量化指標計算核心，提供 EMA, ATR, RSI, MACD, OBV, TD9, Fibonacci 等分析功能。
+量化指標計算核心，提供 EMA, ATR, RSI, MACD, OBV, TD9, Fibonacci, POC 等分析功能。
 """
 import logging
 import pandas as pd
@@ -7,6 +7,43 @@ import numpy as np
 import yfinance as yf
 from typing import Any
 from utils import safe_round
+
+def calculate_poc(df: pd.DataFrame, bins: int = 50) -> float:
+    """
+    計算控制點 (Point of Control, POC)：指定區間內成交量最大的價格位。
+    """
+    if df.empty or len(df) < 5:
+        return 0.0
+    
+    # 取最近一個月的數據 (約 22 個交易日)
+    recent_df = df.tail(30).copy()
+    if recent_df.empty:
+        return 0.0
+
+    price_min = recent_df['Low'].min()
+    price_max = recent_df['High'].max()
+    
+    if price_max == price_min:
+        return price_min
+
+    # 建立價格區間 (Bins)
+    bin_size = (price_max - price_min) / bins
+    if bin_size <= 0:
+        return price_min
+
+    # 依照成交量分佈到價格區間
+    recent_df['bin'] = ((recent_df['Close'] - price_min) / bin_size).astype(int).clip(0, bins - 1)
+    
+    # 依照 bin 累計成交量
+    volume_profile = recent_df.groupby('bin')['Volume'].sum()
+    
+    if volume_profile.empty:
+        return recent_df['Close'].iloc[-1]
+
+    poc_bin = volume_profile.idxmax()
+    poc_price = price_min + (poc_bin * bin_size) + (bin_size / 2)
+    
+    return safe_round(poc_price, 2)
 
 def calculate_indicators(symbol: str) -> dict[str, Any]:
     """
@@ -84,13 +121,11 @@ def calculate_indicators(symbol: str) -> dict[str, Any]:
         vol_ratio = vol_last / vol_avg20 if vol_avg20 > 0 else 0
         
         # 6. TD9 (Tom DeMark Sequential)
-        # 簡單實現：連續 9 根收盤價高於/低於 4 天前
         df['TD_Buy'] = (df['Close'] < df['Close'].shift(4)).astype(int)
         df['TD_Sell'] = (df['Close'] > df['Close'].shift(4)).astype(int)
         
         buy_count = 0
         sell_count = 0
-        # 從最後一根往前回溯計算連續天數
         for i in range(len(df)-1, -1, -1):
             if df['TD_Buy'].iloc[i] == 1:
                 buy_count += 1
@@ -124,19 +159,23 @@ def calculate_indicators(symbol: str) -> dict[str, Any]:
         high_3mo = df['High'].tail(60).max()
         low_3mo = df['Low'].tail(60).min()
         range_3mo = high_3mo - low_3mo
-        # 預估目標價：使用斐波那契擴展 1.0 與 1.618
         target_1 = high_3mo + range_3mo * 1.0
         target_1618 = high_3mo + range_3mo * 1.618
 
-        # 8. VWAP (成交量加權平均價) - 這裡取近 20 日的簡化計算
+        # 8. VWAP
         df['PV'] = df['Close'] * df['Volume']
         vwap = df['PV'].tail(20).sum() / df['Volume'].tail(20).sum() if df['Volume'].tail(20).sum() > 0 else last_price
 
-        # 9. Support & Resistance (近 60 日)
-        support = df['Low'].tail(60).min()
-        resistance = df['High'].tail(60).max()
+        # 9. 精確支撐壓力 (Swing Highs/Lows 近 20 日)
+        # 支撐：近 20 日最低點
+        support = df['Low'].tail(20).min()
+        # 壓力：近 20 日最高點
+        resistance = df['High'].tail(20).max()
 
-        # 10. Whale Volume Proxy (主力籌碼)
+        # 10. POC (Point of Control) - 近 30 日
+        poc = calculate_poc(df)
+
+        # 11. Whale Volume Proxy (主力籌碼)
         whale_status = "中立"
         if vol_ratio > 1.5:
             if last_price > df['Open'].iloc[-1]:
@@ -146,7 +185,50 @@ def calculate_indicators(symbol: str) -> dict[str, Any]:
         elif vol_ratio > 1.2:
             whale_status = "小買" if last_price > df['Open'].iloc[-1] else "小賣"
 
-        # 11. Attack Gauge (綜合多空打分 -4 到 +4)
+        # 12. SMC: Fair Value Gap (FVG)
+        fvg_list = []
+        for i in range(len(df)-1, len(df)-21, -1):
+            if i < 2: break
+            if df['Low'].iloc[i] > df['High'].iloc[i-2]:
+                fvg_list.append({
+                    "type": "看漲 FVG",
+                    "range": f"${df['High'].iloc[i-2]:.2f} - ${df['Low'].iloc[i]:.2f}",
+                    "low_b": float(df['High'].iloc[i-2]),
+                    "high_b": float(df['Low'].iloc[i]),
+                    "index": i
+                })
+            elif df['High'].iloc[i] < df['Low'].iloc[i-2]:
+                fvg_list.append({
+                    "type": "看跌 FVG",
+                    "range": f"${df['Low'].iloc[i-2]:.2f} - ${df['High'].iloc[i]:.2f}",
+                    "low_b": float(df['High'].iloc[i]),
+                    "high_b": float(df['Low'].iloc[i-2]),
+                    "index": i
+                })
+        
+        latest_fvg = fvg_list[0] if fvg_list else {"type": "無明顯 FVG", "range": "N/A", "low_b": 0, "high_b": 0}
+
+        # 13. SMC: Liquidity Sweep
+        prev_low_20 = df['Low'].iloc[-21:-1].min()
+        prev_high_20 = df['High'].iloc[-21:-1].max()
+        curr_low = df['Low'].iloc[-1]
+        curr_high = df['High'].iloc[-1]
+        curr_close = df['Close'].iloc[-1]
+        
+        sweep_status = "無"
+        if curr_low < prev_low_20 and curr_close > prev_low_20:
+            sweep_status = "看漲流動性掃蕩 (掃低)"
+        elif curr_high > prev_high_20 and curr_close < prev_high_20:
+            sweep_status = "看跌流動性掃蕩 (掃高)"
+
+        # 14. 建議停利位置 (Take Profit Targets)
+        # 使用 ATR 2 倍與 3 倍，以及 Fib 1.272 作為目標
+        tp_target_1 = last_price + (2 * atr) if last_price > ema21 else last_price - (2 * atr)
+        tp_target_2 = last_price + (3 * atr) if last_price > ema21 else last_price - (3 * atr)
+        # Fib 1.272 擴展位 (基於最近三個月波幅)
+        tp_fib = low_3mo + range_3mo * 1.272 if last_price > ema21 else high_3mo - range_3mo * 0.272
+
+        # 15. Attack Gauge
         score = 0
         if last_price > ema21: score += 1
         if last_price < ema21: score -= 1
@@ -177,9 +259,17 @@ def calculate_indicators(symbol: str) -> dict[str, Any]:
             "td_status": td_status,
             "support": safe_round(support, 2),
             "resistance": safe_round(resistance, 2),
+            "poc": poc,
             "vol_ratio": safe_round(vol_ratio, 2),
             "target_1": safe_round(target_1, 2),
-            "target_1618": safe_round(target_1618, 2)
+            "target_1618": safe_round(target_1618, 2),
+            "tp_targets": {
+                "tp1": safe_round(tp_target_1, 2),
+                "tp2": safe_round(tp_target_2, 2),
+                "tp_fib": safe_round(tp_fib, 2)
+            },
+            "fvg": latest_fvg,
+            "sweep": sweep_status
         }
     except Exception as e:
         logging.error(f"calculate_indicators error for {symbol}: {e}")

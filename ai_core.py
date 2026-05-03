@@ -11,23 +11,65 @@ import brain
 from utils import safe_round
 
 SYSTEM_PROMPT_TEMPLATE = """
-你是一位具備頂尖算力、冷靜、精準的美股顧問「美股顧問」，是 {user_name} 的私人投資副官。
-你擁有強大的市場洞察力，負責提供深度、完整且極具戰術價值的分析報告。
+# 角色：機構級 SMC (Smart Money Concepts) 與多時間框架 (MTF) 量化交易 AI 副官
+你是 {user_name} 的私人投資副官，具備頂尖算力、冷靜、精準。
 
 【當前時間】
 現在是西元 {current_time}。請以此精確時間為基準進行最新分析。
 
-【核心守則】
+=========================================
+【核心處理原則與輸出限制】
+=========================================
 1. 語言規範：全程使用「繁體中文」回覆。除了原文網址與股票代號外，嚴禁簡體中文。
-2. 專業口吻：回覆風格必須專業、犀利、有觀點。這是一份「最大算力」支持的深度回饋。
-3. 絕對完整性：**嚴禁斷句或草草結束**。請務必將所有分析細節講得非常透徹，確保輸出內容長串且結構完整，將話講完為止。
-4. 格式要求：請減少使用 * 或 _ 等 Markdown 強調符號，盡量以純文字配合 Emoji 進行排版。
-5. 數值精確度：所有數值（如 EPS、P/E、股價、百分比、財測預期等）請務必統一抓取到「小數點後兩位」，並使用「四捨五入法」進行計算。
-6. 深度內容：優先提供新聞深度摘要、核心催化劑、量價關係、裸 K 結構、支撐壓力、風險提示。
-7. 分析維度：所有分析應包含「短、中、長期」三個維度。
-8. 斐波那契分析：必須精確使用 0.382、0.618、1.618 這三個核心位置進行戰略判讀。
-9. 交易指導：不保證獲利，不給絕對買賣指令；用「觀察、偏多、偏空、風險、條件」表達建議。
-10. 新聞摘要：若涉及新聞，務必提供原文網址，並將摘要整理成專業新聞稿風格。
+2. 嚴格遵守格式：禁止使用 Markdown 表格或產生任何圖片。只能使用符號與縮排。
+3. 原子化輸出 (Atomic Output)：情報與分析必須精煉、直接給出重點。嚴禁任何起承轉合的廢話。
+4. 資訊不重複原則：在【戰術決策】中，嚴禁再次覆述上方儀表板已存在的數字。必須直接將這些數據轉化為「具體行動計畫」。
+5. 趨勢結構標籤：必須嚴格且僅能使用以下三種標籤之一：/上升趨勢/、/下跌趨勢/、/盤整區間/。
+6. 絕對完整性：請務必將所有分析細節講得非常透徹，確保輸出內容結構完整，將話講完為止。
+7. 深度內容：優先提供新聞深度摘要、核心催化劑、領頭羊公司動態、供應鏈風險、長中短期展望。
+
+=========================================
+【指標定義與 AI 推論邏輯庫】
+=========================================
+1. 多時間框架 (MTF) 協同邏輯：
+   - 1D (日 K)：決定宏觀大方向。
+   - 4H (四小時 K)：尋找關鍵結構支撐/壓力與大級別 FVG。
+   - 1H (小時 K)：尋找短線流動性掃蕩作為進場點。
+2. SMC 聰明錢核心概念：
+   - FVG (公允價值缺口)：標註 /看漲 FVG/ 或 /看跌 FVG/。
+   - 流動性掃蕩 (Liquidity Sweep)：主力刻意跌破前低或突破前高。
+   - POC (Point of Control)：成交量最大的價格位。若回踩 POC + FVG 為強共振進場點。
+3. 核心量化指標：
+   - 主力籌碼量 (Whale Volume)：大買/大賣 (>2倍)、中買/中賣 (1.5-2倍)、小買/小賣 (1.2-1.5倍)。
+   - 進攻指標 (Attack Gauge)：綜合 EMA、MACD、RSI、VWAP 評分。
+4. 🛡️ 恐慌指數濾網 (VIX Filter)：
+   - 若 VIX > 25，強制將「大買」降級為「觀察」，並嚴格縮小建議進場區間，警惕系統性風險。
+
+=========================================
+【標準輸出模板】
+=========================================
+📰 【市場情報速遞】
+* 🌡️ 情緒分數：[1-10 分]
+* 💡 核心驅動：[1-2 句話精煉總結目前影響價格的最核心基本面、財報或新聞事件]
+* 📌 關鍵快訊：
+  - [快訊 1：直接陳述事實與對盤面的影響]
+  - [快訊 2：直接陳述事實與對盤面的影響]
+
+📊 【多時區量化與 SMC 儀表板】
+* ⏱️ 趨勢結構：日線 [填入標籤]｜4H [填入標籤]｜1H [填入標籤]
+* ⚔️ 進攻指標：[大買 / 中買 / 小買 / 觀察 / 小賣 / 中賣 / 大賣]
+* 🐋 主力籌碼：[大買 / 中買 / 小買 / 中立 / 小賣 / 中賣 / 大賣]
+* 🛡️ 波幅風險：ATR = [數值] (VIX 狀態：[正常/恐慌])
+* 📍 控制點參考：POC = [數值]
+* 🧲 SMC 結構：[標註最近的關鍵 FVG 屬於 /看漲 FVG/ 或 /看跌 FVG/，價格區間]
+* 🎯 建議入場區間：[基於 SMC 結構與流動性，給出具體價格區間]
+
+💡 【戰術決策】
+[請在此給出 3-4 句精煉的戰略計畫。
+1. 說明目前大級別趨勢與小級別回檔的關係。
+2. 說明如何利用「流動性掃蕩」結合上述 FVG/POC 區間進行進場佈局。
+3. 必須給出基於 ATR 計算的明確防守 (停損) 價格。
+4. 若 VIX 高於 25，必須在最後加註風險警語。]
 """.strip()
 
 def get_current_time_str() -> str:
@@ -40,7 +82,7 @@ def get_current_time_str() -> str:
 def sanitize_for_telegram(text: str) -> str:
     if not text:
         return ""
-    return text.replace("_", " ").replace("*", " ").strip()
+    return text.strip()
 
 def ask_flash(prompt: str, user_name: str, *, user_id: int | None = None, temperature: float = 0.45, max_output_tokens: int = 4000, urls: list[str] | None = None) -> str:
     current_time = get_current_time_str()
@@ -91,7 +133,6 @@ def summarize_tech_news(symbol: str, news_item: dict[str, Any], user_name: str, 
     desc = news_item.get("description", "")
     url = news_item.get("url", "")
     
-    # 獲取即時股價供 AI 參考（若有的話）
     import market_api
     price_info = market_api.get_fast_price(symbol)
     price_str = f"（當前股價：{price_info} USD）" if price_info != "N/A" else ""
@@ -102,19 +143,9 @@ def summarize_tech_news(symbol: str, news_item: dict[str, Any], user_name: str, 
 摘要：{desc}
 
 【嚴格要求】
-1. 全程使用繁體中文。
-2. 聚焦於該技術/事件對產業未來護城河、競爭力或資本支出的影響。
-3. 輸出必須長串且完整，細節講透徹，絕對禁止斷句。
-4. 請按以下格式輸出：
-
-【🚀 科技前沿情報：{symbol}】
-💰 當前價位：{price_info} USD
-🌡️ 市場情緒：[1-10分，1=市場不熱絡，10=市場熱絡]
-⭐ 重要程度：[1-5顆星，例如 ⭐⭐⭐⭐⭐]
-🏷️ 智能標籤：[給予3個精準的Hashtag，例如 #AI伺服器 #資本支出擴大 #利空出盡]
-📝 核心大綱：[用精煉的一句話總結重點]
-💡 深度觀點：[長篇深度分析，評估對科技產業鏈的上下游影響與潛在投資機會，並包含量價趨勢與支撐壓力觀察]
-🔗 原文：{url}
+1. 分析對領頭羊公司地位、產業上下游供應鏈及技術護城河的影響。
+2. 結合 SMC 邏輯，評估此利多/利空是否可能觸發流動性掃蕩或回踩 FVG。
+3. 輸出必須詳細，講透徹，絕對禁止斷句。
 """
     return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=2500, urls=[url] if url else None)
 
@@ -135,20 +166,9 @@ def summarize_earnings_report(symbol: str, news_item: dict[str, Any], user_name:
 摘要：{desc}
 
 【嚴格要求】
-1. 全程使用繁體中文。
-2. 科技股極度看重財測(Guidance)，請務必提取以下數據，若新聞未提及請寫「新聞未揭露」。
-3. 數值規範：所有數字（EPS、營收、預期值等）請務必抓取到小數點後兩位，並以「四捨五入法」計算。
-4. 輸出必須長串且完整，細節講透徹，絕對禁止斷句。
-5. 請按以下格式輸出：
-
-【🔥 財報快訊：{symbol}】
-💰 當前價位：{price_info} USD
-💰 營收 (Revenue)：[實際] vs [預期]
-📈 獲利 (EPS)：[實際] vs [預期]
-🚀 未來指引 (Guidance)：[上調 / 下調 / 持平，並簡述理由]
-🤖 趨勢亮點：[針對管理層對 AI、新技術、核能採用或資本支出的發言進行長篇總結]
-⚖️ 戰術評估：[深度分析這份財報對股價及同業板塊的可能催化方向，包含斐波那契位置參考]
-🔗 原文：{url}
+1. 提取 EPS、營收與 Guidance。
+2. 評估財測對大級別趨勢結構的衝擊，以及是否會產生新的 FVG 缺口。
+3. 輸出必須長串且完整，細節講透徹，絕對禁止斷句。
 """
     return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.2, max_output_tokens=2500, urls=[url] if url else None)
 
@@ -156,15 +176,13 @@ def analyze_tech_comparison(data_list: list[dict[str, Any]], user_name: str, mod
     """提供 AI 戰術評析：比較多支股票的量價與行業關聯。"""
     
     prompt = f"""
-{user_name}，請對以下幾支股票進行橫向技術對比分析：
+{user_name}，請對以下幾支股票進行橫向 SMC 與量化技術對比分析：
 {data_list}
 
 【要求】
-1. 判斷它們是否屬於同行業，若為同行業，比較其市場地位。
-2. 根據這些股票的 Attack Gauge（綜合評級）、Volume Ratio（籌碼狀況）與技術指標進行量價關係分析。
-3. 根據目前量價趨勢與技術結構，給出你的推薦判斷（買入、觀望、避險）。
-4. 請以「簡述、精準、鋒利」的語氣，將話講完，絕對不要斷句。
-5. 包含對技術指標的戰術判斷，如斐波那契目標與當前價位的距離。
+1. 判斷它們在 SMC 結構上的優劣（誰在掃蕩低點，誰在填補 FVG）。
+2. 根據 Attack Gauge 與 Whale Volume 給出買入、觀望、避險建議。
+3. 若 VIX 高於 25，需特別強調保守策略。
 """
     return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=2000)
 
@@ -210,35 +228,35 @@ def ask_ai_investment_advice(
             return f"{res:.2f}"
         return res
 
+    # 獲取 VIX 數值
+    import market_api
+    vix_data = market_api.get_macro_quote("VIX")
+    vix_val = vix_data.get("price", 0)
+    vix_str = f"{vix_val:.2f} ({'恐慌' if vix_val > 25 else '正常'})"
+
     prompt = f"""
 【報告產生時間：{current_time}】
 {user_name} 詢問標的：{symbol}
-{user_name} 的問題：{query}
+問題：{query}
 
 {holding_info}
 
-市場快照：
-- 現價：{_f(snapshot.get('price'))}
-- 今日漲跌：{_f(snapshot.get('diff'))} ({_f(snapshot.get('pct'))}%)
-- 20 日支撐參考：{_f(snapshot.get('support'))}
-- 20 日壓力參考：{_f(snapshot.get('resistance'))}
-- 3個月區間高點：{_f(snapshot.get('range_high_3mo'))}
-- 3個月區間低點：{_f(snapshot.get('range_low_3mo'))}
-- 趨勢狀態：{snapshot.get('trend_note', 'N/A')}
-- 量能狀態：{snapshot.get('volume_note', 'N/A')}
+市場快照與量化指標：
+- 現價：{_f(snapshot.get('last_price', snapshot.get('price')))}
+- 今日漲跌：{_f(snapshot.get('diff', 0))} ({_f(snapshot.get('pct', 0))}%)
+- 支撐/壓力：{_f(snapshot.get('support'))} / {_f(snapshot.get('resistance'))}
+- 進攻指標：{snapshot.get('attack_status', '觀察')}
+- 主力籌碼：{snapshot.get('whale_status', '中立')} (倍率: {snapshot.get('vol_ratio', 1)})
+- SMC 結構：{snapshot.get('fvg', {}).get('type', 'N/A')} ({snapshot.get('fvg', {}).get('range', 'N/A')})
+- 流動性掃蕩：{snapshot.get('sweep', '無')}
+- POC 控制點：{_f(snapshot.get('poc', 0))}
+- ATR 波幅：{_f(snapshot.get('atr', 0))}
+- 🛡️ VIX 指數：{vix_str}
 
 近期新聞：
 {news_text}
 
-請給予「極度深度」的戰術分析，語氣可以更有特色與洞察力，不要過於制式。
-【要求】
-1. 不要限制字數，請盡可能詳細且完整地說明所有細節，將話講完，絕對不要斷句。
-2. 包含：
-   - 技術面詳細觀察：裸 K、趨勢、成交量
-   - 斐波那契分析：僅聚焦 0.382、0.618、1.618 三個核心位置，並說明目前位置的戰略意義。
-   - 催化劑深度分析：新聞、財報、產業趨勢
-   - 短、中、長期展望分析
-   - 風險評估與具體戰術建議
+請嚴格套用【標準輸出模板】進行深度分析，並特別注意 VIX 濾網規則。
 """.strip()
     return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=4000, urls=urls)
 
@@ -291,18 +309,16 @@ def compare_financials(
     prompt = f"""
 【報告產生時間：{current_time}】
 {user_name} 你好。
-請你作為專業的美股交易副官，根據以下財務數據與最新消息比較這幾家公司：{', '.join(symbols)}。
+請你作為專業的美股交易副官，根據以下財務數據、產業領頭羊動態與供應鏈風險比較這幾家公司：{', '.join(symbols)}。
 
 """
     prompt += "\n\n".join(summary_lines)
     prompt += "\n\n請給我極度深度的分析，將所有細節講清楚，絕對不要斷句：\n"
     prompt += (
-        "1. 哪支股票整體財務健康較佳，並說明具體數據支持的理由。\n"
-        "2. 依據成長性、獲利能力、估值合理性與現金流/現金地位，做出詳細排序與解釋。\n"
-        "3. 根據最新新聞，深入分析對每家公司最重要的利多/利空因素與未來催化劑。\n"
-        "4. 若使用者已有持股，請考量其成本價與當前風險，給出具體的交易策略方向（加碼、減碼、觀望）。\n"
-        "5. 列出最值得投資的標的排序。\n"
-        "6. 回應必須詳盡且專業，展現強大的數據洞察力。"
+        "1. 哪支股票整體財務健康與技術護城河較佳，並說明具體理由。\n"
+        "2. 依據成長性、供應鏈穩定性與估值合理性做出詳細解釋。\n"
+        "3. 根據最新新聞與未來催化劑，給出戰略排序。\n"
+        "4. 回應必須詳盡且專業，展現強大的數據洞察力。"
     )
     return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=4000, urls=all_urls)
 
@@ -316,19 +332,18 @@ query: str, user_name: str, context_symbol: str | None = None, snapshot: dict[st
 
 請轉為個股「簡述模式」。
 【要求】
-1. 使用大綱或條列式簡述。
-2. 包含短中長期展望與核心技術位（含斐波那契 0.382、0.618、1.618）。
+1. 使用條列式簡述。
+2. 包含 SMC 核心位、POC 參考。
 3. 內容精確，不需要過度展開，但要將話講完，絕對不要斷句。
 """.strip()
         return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.38, max_output_tokens=4000)
 
     prompt = f"""
 {user_name} 說：{query}
-請以專業分析師／顧問身份回答。如果這是一般問題，請直接以最適合的角度給出清晰、專業且務實的回覆，不必強行套用交易術語。
-回答要有特色，語氣可以更有個性與觀點，但保持精準。
+請以「機構級 AI 副官」身份回答。如果這是一般問題，請直接以最適合的角度給出清晰、專業且務實的回覆。
+回答要有特色，語氣冷靜且精準。
 【要求】
-1. 若問題與投資或金融相關，可提供有洞察力的觀察與分析；若問題屬於其他領域，請用通用的專業分析方式回答。
-2. 絕對完整性：**嚴禁斷句或草草結束**。請務必將所有分析細節講得非常透徹，確保輸出內容長串且結構完整，將話講完為止。
-3. 保持簡練且完整，必要時可用條列式呈現。
+1. 絕對完整性：嚴禁斷句或草草結束。
+2. 保持簡練且完整，必要時可用符號與縮排排版。
 """.strip()
     return ask_model(prompt, user_name, model=model, temperature=0.5, max_output_tokens=4000)

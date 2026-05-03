@@ -10,6 +10,7 @@ from typing import Any
 import requests
 import yfinance as yf
 import feedparser
+import numpy as np
 
 try:
     import finnhub
@@ -27,11 +28,55 @@ if finnhub and FINNHUB_KEY:
     except Exception as exc:
         logging.warning("Finnhub 初始化失敗: %s", exc)
 
-# 新增 NewsAPI 金鑰檢查
-if not NEWS_API_KEY:
-    logging.warning("NEWS_API_KEY 未設定。部分新聞功能可能無法正常運作。請檢查 .env 檔案。")
+# 全局 Session 偽裝，避免被 yfinance/yahoo 封鎖
+session = requests.Session()
+session.headers.update({
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+})
 
-# 擴充的科技與未來趨勢主題池 (為 NewsAPI 與搜尋引擎優化)
+def fetch_batch_quotes(symbols: list[str]) -> dict[str, float]:
+    """
+    批次打包請求：一次下載所有標的報價，大幅降低 API 被封鎖機率。
+    """
+    if not symbols:
+        return {}
+    
+    ticker_map = {s: get_ticker_mapping(s, "yahoo") for s in symbols}
+    target_tickers = list(ticker_map.values())
+    
+    try:
+        data = yf.download(
+            tickers=" ".join(target_tickers),
+            period="1d",
+            interval="1m",
+            group_by='ticker',
+            auto_adjust=True,
+            prepost=True,
+            session=session,
+            progress=False
+        )
+        
+        if data.empty:
+            return {}
+            
+        results = {}
+        for original_sym, yf_sym in ticker_map.items():
+            try:
+                if len(target_tickers) > 1:
+                    price = data[yf_sym]['Close'].iloc[-1]
+                else:
+                    price = data['Close'].iloc[-1]
+                
+                if not np.isnan(price):
+                    results[original_sym] = float(price)
+            except Exception:
+                continue
+        return results
+    except Exception as e:
+        logging.warning(f"fetch_batch_quotes failed: {e}")
+        return {}
+
+# 擴充的科技與未來趨勢主題池
 TECH_THEMES = {
     "AI": "Artificial Intelligence OR Nvidia OR OpenAI",
     "半導體": "Semiconductor OR TSMC OR AMD",
@@ -47,10 +92,6 @@ TECH_THEMES = {
 
 
 def fetch_tech_rss(limit: int = 5) -> list[dict[str, str]]:
-    """
-    抓取科技與財經權威的即時 RSS 訂閱源。
-    優化：使用 User-Agent 避免屏蔽，並強化日期解析與內容提取。
-    """
     rss_urls = [
         ("CNBC Tech", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19854910"),
         ("TechCrunch", "https://techcrunch.com/feed/"),
@@ -66,26 +107,17 @@ def fetch_tech_rss(limit: int = 5) -> list[dict[str, str]]:
     
     for source_name, url in rss_urls:
         try:
-            # 使用 requests 先抓取內容，避免被 header 屏蔽且可自定義 timeout
             response = requests.get(url, headers=headers, timeout=10)
             if response.status_code != 200:
                 continue
-                
             feed = feedparser.parse(response.content)
-            
-            # 檢查是否有解析錯誤 (bozo 標記)
             if feed.bozo and not feed.entries:
-                logging.warning(f"RSS 解析異常 {url}")
                 continue
 
             for entry in feed.entries[:limit]:
-                # 日期解析：優先使用 parsed 結構進行排序
                 published_time = entry.get("published_parsed") or entry.get("updated_parsed")
                 timestamp = time.mktime(published_time) if published_time else 0
-                
-                # 內容提取：有些 feed 用 summary，有些用 description
                 content = entry.get("summary") or entry.get("description") or ""
-                # 移除 HTML 標籤（簡單處理）
                 content = re.sub(r'<[^>]+>', '', content).strip()
 
                 news_list.append({
@@ -94,18 +126,14 @@ def fetch_tech_rss(limit: int = 5) -> list[dict[str, str]]:
                     "source": source_name,
                     "url": entry.get("link", ""),
                     "publishedAt": entry.get("published", ""),
-                    "_timestamp": timestamp # 內部排序用
+                    "_timestamp": timestamp
                 })
         except Exception as e:
             logging.warning(f"RSS 讀取失敗 {source_name}: {e}")
             
-    # 依據實際時間戳進行降序排序 (最新的在前面)
     news_list.sort(key=lambda x: x.get("_timestamp", 0), reverse=True)
-    
-    # 移除內部使用的排序鍵
     for n in news_list:
         n.pop("_timestamp", None)
-        
     return news_list[:limit]
 
 
@@ -209,7 +237,6 @@ def quote_from_yahoo(symbol: str) -> dict[str, Any]:
     prev = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else curr
     diff = curr - prev
     pct = (diff / prev * 100) if prev else 0.0
-
     volume_note = "N/A"
     try:
         vol = float(hist["Volume"].iloc[-1])
@@ -218,12 +245,10 @@ def quote_from_yahoo(symbol: str) -> dict[str, Any]:
             volume_note = "放量" if vol > avg_vol * 1.15 else "量縮" if vol < avg_vol * 0.85 else "量能持平"
     except Exception:
         pass
-
     return {"symbol": symbol, "price": curr, "diff": diff, "pct": pct, "volume_note": volume_note}
 
 
 def get_macro_quote(symbol_name: str) -> dict[str, Any]:
-    # 1. Finnhub first
     if finnhub_client:
         try:
             target = get_ticker_mapping(symbol_name, "finnhub")
@@ -238,8 +263,6 @@ def get_macro_quote(symbol_name: str) -> dict[str, Any]:
                 }
         except Exception:
             pass
-
-    # 2. Yahoo fallback
     try:
         return quote_from_yahoo(symbol_name)
     except Exception as exc:
@@ -299,8 +322,6 @@ def get_stock_history_summary(symbol: str) -> dict[str, Any]:
         out["price"] = safe_round(close.iloc[-1])
         out["support"] = safe_round(close.tail(20).min())
         out["resistance"] = safe_round(close.tail(20).max())
-        
-        # 斐波那契回撤需要的區間高低點
         out["range_high_3mo"] = safe_round(hist["High"].max())
         out["range_low_3mo"] = safe_round(hist["Low"].min())
 
@@ -373,7 +394,8 @@ def resolve_news_topic(query: str) -> dict[str, str]:
             topic_tokens.append(token)
 
     topic_text = " ".join(topic_tokens).strip()
-    normalized_topic = "".join(ch for ch in topic_text.upper() if ch.isalnum())
+    # 支援代號包含數字與點 (e.g. 2330.TW, BTC-USD)
+    normalized_topic = topic_text.upper().replace(" ", "")
     target = raw
     note = "使用原始查詢字詞進行新聞搜尋。"
 
@@ -385,58 +407,45 @@ def resolve_news_topic(query: str) -> dict[str, str]:
         note = f"自動判斷為 {target}。"
     elif any(k in topic_text.upper() for k in ["黃金", "GOLD"]):
         target = "黃金"
-        note = "自動判斷為 黃金 商品新聞。"
     elif any(k in topic_text.upper() for k in ["原油", "OIL", "CRUDE"]):
         target = "原油"
-        note = "自動判斷為 原油 商品新聞。"
     elif any(k in topic_text.upper() for k in ["比特", "BTC", "BITCOIN"]):
         target = "比特幣"
-        note = "自動判斷為 比特幣 市場新聞。"
-    elif normalized_topic.isalpha() and len(normalized_topic) <= 5:
+    elif 1 <= len(normalized_topic) <= 12: # 擴展代號長度
         try:
+            # 檢查是否像股票代號
             ticker = yf.Ticker(normalized_topic)
             info = getattr(ticker, "info", {}) or {}
-            if info.get("regularMarketPrice") is not None or info.get("longName"):
+            # yfinance info 有時會拋錯或為空，這裡做簡單驗證
+            if info.get("regularMarketPrice") is not None or info.get("symbol"):
                 target = normalized_topic
                 note = f"已判斷為股票代號 {normalized_topic}。"
                 related = RELATED_NEWS_TOPICS.get(normalized_topic, [])
-                if not related:
+                if not related and normalized_topic.isalpha():
                     related = ai_core.infer_related_news_terms(normalized_topic, "User")
                 if related:
                     unique_related = []
                     for item in [normalized_topic] + related:
-                        if item not in unique_related:
-                            unique_related.append(item)
+                        if item not in unique_related: unique_related.append(item)
                     target = " OR ".join(unique_related)
-                    note = f"已判斷為股票代號 {normalized_topic}，同時擴展相關搜尋：{', '.join(related)}。"
-            else:
-                target = topic_text
-                note = "使用原始查詢字詞進行新聞搜尋。"
+                    note = f"已判斷為股票代號 {normalized_topic}，擴展搜尋：{', '.join(related)}。"
         except Exception:
-            target = topic_text
-            note = "使用原始查詢字詞進行新聞搜尋。"
-    else:
-        target = topic_text
-        note = "使用原始查詢字詞進行新聞搜尋。"
+            pass
 
     if source_tokens:
-        target = f"{target} {' '.join(source_tokens)}"
+        target = f"({target}) {' '.join(source_tokens)}"
         note = f"{note} 同時搜尋來源：{', '.join(source_tokens)}。"
-
     return {"target": target, "note": note}
 
 
 def get_stock_fundamentals(symbol: str) -> dict[str, Any]:
     symbol = symbol.upper().strip()
     ticker = yf.Ticker(symbol)
-    info = {}
     try:
         info = getattr(ticker, "info", {}) or {}
     except Exception:
         info = {}
-
-    if not info:
-        return {}
+    if not info: return {}
 
     data: dict[str, Any] = {
         "symbol": symbol,
@@ -463,33 +472,15 @@ def get_stock_fundamentals(symbol: str) -> dict[str, Any]:
         if hasattr(quarterly_earnings, "empty") and not quarterly_earnings.empty and len(quarterly_earnings) >= 2:
             last_row = quarterly_earnings.iloc[-1]
             prev_row = quarterly_earnings.iloc[-2]
-            
             data["latest_quarter"] = str(last_row.name)
             data["latest_quarter_eps"] = safe_round(last_row.get("Earnings"))
             data["latest_quarter_revenue"] = format_number(last_row.get("Revenue", "N/A"))
-            
-            # 計算 QoQ 增長
             last_rev = last_row.get("Revenue")
             prev_rev = prev_row.get("Revenue")
             if isinstance(last_rev, (int, float)) and isinstance(prev_rev, (int, float)) and prev_rev != 0:
                 growth = (last_rev - prev_rev) / prev_rev * 100
                 data["revenue_growth_qoq"] = f"{'+' if growth >= 0 else ''}{safe_round(growth, 2)}%"
-            
-            last_eps = last_row.get("Earnings")
-            prev_eps = prev_row.get("Earnings")
-            if isinstance(last_eps, (int, float)) and isinstance(prev_eps, (int, float)) and prev_eps != 0:
-                growth = (last_eps - prev_eps) / abs(prev_eps) * 100 # 使用 abs 處理負 EPS 情況
-                data["eps_growth_qoq"] = f"{'+' if growth >= 0 else ''}{safe_round(growth, 2)}%"
-    except Exception:
-        pass
-
-    try:
-        qfin = ticker.quarterly_financials
-        if hasattr(qfin, "empty") and not qfin.empty and "Total Revenue" in qfin.index:
-            data["quarterly_financial_revenue"] = format_number(qfin.loc["Total Revenue"].iloc[0])
-    except Exception:
-        pass
-
+    except Exception: pass
     return data
 
 
@@ -499,13 +490,8 @@ def fetch_news_multi(symbol: str, limit: int = 3) -> list[dict[str, str]]:
 
     if NEWS_API_KEY:
         try:
-            params = {
-                "q": symbol,
-                "sortBy": "publishedAt",
-                "language": "en",
-                "apiKey": NEWS_API_KEY,
-                "pageSize": limit,
-            }
+            # 移除 language="en" 限制，增加搜尋廣度
+            params = {"q": symbol, "sortBy": "publishedAt", "apiKey": NEWS_API_KEY, "pageSize": limit}
             r = requests.get("https://newsapi.org/v2/everything", params=params, timeout=8)
             data = r.json()
             if data.get("status") == "ok":
@@ -520,58 +506,40 @@ def fetch_news_multi(symbol: str, limit: int = 3) -> list[dict[str, str]]:
         except Exception as exc:
             logging.warning("NewsAPI failed for %s: %s", symbol, exc)
 
-    if not news_list:
-        try:
-            yf_news = yf.Ticker(symbol).news or []
-            for n in yf_news[:limit]:
-                news_list.append({
-                    "title": n.get("title", ""),
-                    "description": n.get("summary", "") or n.get("publisher", ""),
-                    "source": n.get("publisher", "Yahoo Finance"),
-                    "url": n.get("link", ""),
-                    "publishedAt": n.get("providerPublishTime", ""),
-                })
-        except Exception as exc:
-            logging.warning("Yahoo news failed for %s: %s", symbol, exc)
+    # 無論 NewsAPI 是否成功，都嘗試從 Yahoo 補充（Yahoo 通常有更及時的個股消息）
+    try:
+        yf_news = yf.Ticker(symbol).news or []
+        for n in yf_news[:limit]:
+            # 避免重複 (比對標題)
+            if any(n.get("title") == existing.get("title") for existing in news_list): continue
+            news_list.append({
+                "title": n.get("title", ""),
+                "description": n.get("summary", "") or n.get("publisher", ""),
+                "source": n.get("publisher", "Yahoo Finance"),
+                "url": n.get("link", ""),
+                "publishedAt": n.get("providerPublishTime", ""),
+            })
+    except Exception as exc:
+        logging.warning("Yahoo news failed for %s: %s", symbol, exc)
 
-    # 優先時間排序，最新的優先
     news_list.sort(key=lambda x: x.get("publishedAt") or "", reverse=True)
-    return news_list
+    return news_list[:limit]
 
 
 def get_news_source_list() -> str:
-    sources = [
-        "Reuters（路透）",
-        "Bloomberg（彭博）",
-        "WSJ（華爾街日報）",
-        "Seeking Alpha",
-        "TradingView",
-        "MarketWatch",
-        "金十（jin10）",
-    ]
-    return (
-        "📌 可搜尋新聞來源清單：\n"
-        + "━━━━━━━━━━━━━━\n"
-        + "\n".join([f"• {s}" for s in sources])
-        + "\n\n可用縮寫：tv=TradingView, reuters=bloomberg, wsj=WSJ, sa=SeekingAlpha, jin10=金十。"
-    )
+    sources = ["Reuters", "Bloomberg", "WSJ", "Seeking Alpha", "TradingView", "MarketWatch", "金十"]
+    return "📌 可搜尋新聞來源清單：\n" + "━━━━━━━━━━━━━━\n" + "\n".join([f"• {s}" for s in sources])
 
 
 def fetch_news_filtered(query: str, limit: int = 5) -> list[dict[str, str]]:
-    """從指定來源抓取新聞 (金十, Reuters, Bloomberg, WSJ, Seeking Alpha, TradingView, MarketWatch)"""
+    """從指定來源抓取新聞，若無結果則自動降級搜尋"""
     domains = ",".join(NEWS_SEARCH_SOURCES)
     news_list: list[dict[str, str]] = []
 
     if NEWS_API_KEY:
         try:
-            params = {
-                "q": query,
-                "domains": domains,
-                "sortBy": "publishedAt",
-                "language": "en",
-                "apiKey": NEWS_API_KEY,
-                "pageSize": limit,
-            }
+            # 優先搜尋高品質 Domain
+            params = {"q": query, "domains": domains, "sortBy": "publishedAt", "apiKey": NEWS_API_KEY, "pageSize": limit}
             r = requests.get("https://newsapi.org/v2/everything", params=params, timeout=10)
             data = r.json()
             if data.get("status") == "ok":
@@ -583,35 +551,11 @@ def fetch_news_filtered(query: str, limit: int = 5) -> list[dict[str, str]]:
                         "url": n.get("url") or "",
                         "publishedAt": n.get("publishedAt") or "",
                     })
-        except Exception as exc:
-            logging.warning("fetch_news_filtered NewsAPI failed for %s: %s", query, exc)
+        except Exception: pass
 
-    if not news_list and NEWS_API_KEY:
-        try:
-            params = {
-                "q": query,
-                "sortBy": "publishedAt",
-                "language": "en",
-                "apiKey": NEWS_API_KEY,
-                "pageSize": max(limit * 2, limit),
-            }
-            r = requests.get("https://newsapi.org/v2/everything", params=params, timeout=10)
-            data = r.json()
-            if data.get("status") == "ok":
-                for n in data.get("articles", []):
-                    news_list.append({
-                        "title": n.get("title") or "",
-                        "description": n.get("description") or "",
-                        "source": (n.get("source") or {}).get("name", "NewsAPI"),
-                        "url": n.get("url") or "",
-                        "publishedAt": n.get("publishedAt") or "",
-                    })
-        except Exception as exc:
-            logging.warning("fetch_news_filtered NewsAPI fallback failed for %s: %s", query, exc)
+    # 如果 Domain 限制找不到，或者 NEWS_API_KEY 不存在，走全網/Yahoo 降級搜尋
+    if not news_list:
+        return fetch_news_multi(query, limit=limit)
 
-    if news_list:
-        news_list.sort(key=lambda x: x.get("publishedAt") or "", reverse=True)
-        return news_list[:limit]
-
-    # Fallback to general search if filtered search yields nothing
-    return fetch_news_multi(query, limit=limit)
+    news_list.sort(key=lambda x: x.get("publishedAt") or "", reverse=True)
+    return news_list[:limit]

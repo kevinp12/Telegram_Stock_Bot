@@ -56,6 +56,7 @@ MAX_TELEGRAM_MESSAGE_LENGTH = int(os.getenv("MAX_TELEGRAM_MESSAGE_LENGTH", "3500
 POLLING_TIMEOUT = int(os.getenv("POLLING_TIMEOUT", "40"))
 LONG_POLLING_TIMEOUT = int(os.getenv("LONG_POLLING_TIMEOUT", "15"))
 AUTO_NEWS_INTERVAL_SECONDS = int(os.getenv("AUTO_NEWS_INTERVAL_SECONDS", "28800"))
+SNIPER_CHECK_INTERVAL = 300 # 5分鐘檢查一次，符合 Yahoo API 頻率限制
 
 # 自動更新版本資訊 (格式: v.YY.M.D)
 _now = datetime.now()

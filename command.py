@@ -271,12 +271,14 @@ def build_now_dashboard(user_name: str, user_id: int, with_ai: bool = True) -> l
     if with_ai:
         try:
             model_pref = database.get_user_model_preference(user_id)
-            tactical = ai_core.get_market_tactical_comment(
-                "\n".join(q.get("symbol", "") + ": " + market_api.format_quote(q) for q in quotes),
-                portfolio,
+            # /now 指令也嘗試套用 SMC 風格
+            tactical = ai_core.ask_model(
+                f"根據以下宏觀數據與損益狀況給出副官戰術點評：\n{macro_section}\n\n斐波位置：\n{fib_section}\n\n損益狀況：{portfolio}",
                 user_name,
-                user_id=user_id,
                 model=model_pref,
+                user_id=user_id,
+                temperature=0.35,
+                max_output_tokens=3000
             )
         except Exception as exc:
             logging.warning("AI tactical failed: %s", exc)
@@ -371,13 +373,37 @@ def cmd_watch(text: str, user_id: int) -> str:
     return frame.watch_guide()
 
 
+def cmd_sweep(text: str, user_id: int) -> str:
+    """處理 /sweep 指令。"""
+    parts = text.split()
+    if len(parts) < 2:
+        return frame.sweep_guide()
+    action = parts[1].lower()
+    if action == "list":
+        return frame.sweep_list(database.get_sniper_list(user_id))
+    if action in {"add", "del"} and len(parts) > 2:
+        symbols = [p.upper() for p in parts[2:] if p.strip()]
+        for s in symbols:
+            if action == "add":
+                database.add_sniper(user_id, s)
+            else:
+                database.del_sniper(user_id, s)
+        return f"✅ 狙擊監控已{'新增' if action == 'add' else '移除'}：{', '.join(symbols)}"
+    return frame.sweep_guide()
+
+
 def cmd_ask(text: str, user_name: str, user_id: int) -> list[str] | str:
     parts = text.split(maxsplit=2)
     if len(parts) < 3:
         return "🤖 用法：/ask [代號] [問題]\n例如：/ask NVDA 現在是否過熱？"
     symbol = parts[1].upper().strip()
     query = parts[2].strip()
-    snapshot = market_api.get_stock_snapshot(symbol)
+    
+    # 使用完整的量化分析作為快照
+    snapshot = tech_indicators.calculate_indicators(symbol)
+    if "error" in snapshot:
+        snapshot = market_api.get_stock_snapshot(symbol)
+    
     news = market_api.fetch_news_multi(symbol, limit=3)
     holdings = database.get_aggregated_portfolio(user_id) if user_id is not None else {}
 
@@ -397,10 +423,7 @@ def cmd_ask(text: str, user_name: str, user_id: int) -> list[str] | str:
         f"🤖 AI 深度戰術分析：{symbol}\n"
         f"━━━━━━━━━━━━━━\n"
         f"問題：{query}\n"
-        f"當前價位：{snapshot.get('price', 'N/A')}，"
-        f"漲跌：{snapshot.get('diff', 'N/A')}，"
-        f"漲幅：{snapshot.get('pct', 'N/A')}%\n"
-        f"新聞摘要：{news[0].get('description','暫無新聞摘要。') if news else '暫無新聞摘要。'}\n"
+        f"當前價位：{snapshot.get('last_price', snapshot.get('price', 'N/A'))}\n"
         f"━━━━━━━━━━━━━━"
     )
     return [header, ai_answer]
@@ -451,10 +474,22 @@ def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
 
     target, note = resolve_news_target(raw_query)
 
+    # 1. 嘗試高品質過濾搜尋 (NewsAPI + Domains)
     news_items = market_api.fetch_news_filtered(target, limit=1)
+    
+    # 2. 如果沒結果，且有擴展過搜尋詞，嘗試原始輸入的過濾搜尋
     if not news_items and target != raw_query:
         news_items = market_api.fetch_news_filtered(raw_query, limit=1)
 
+    # 3. 如果還是沒結果，走最後底線：強制直接抓取 Yahoo Finance 個股新聞 (不經過 NewsAPI 與過濾)
+    if not news_items and _is_stock_symbol(raw_query):
+        try:
+            symbol = raw_query.strip().upper()
+            news_items = market_api.fetch_news_multi(symbol, limit=1)
+            if news_items: note = "NewsAPI 暫無結果，已由 Yahoo Finance 取得即時消息。"
+        except Exception: pass
+
+    # 4. 宏觀兜底
     if not news_items:
         fallback_query = "Federal Reserve OR Fed OR US economic data"
         news_items = market_api.fetch_news_filtered(fallback_query, limit=1)
@@ -490,12 +525,8 @@ def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
         )
     else:
         ai_prompt = (
-            f"請以 /now 類似的『極度詳細』回饋模式，針對此新聞主題「{raw_query}」進行極度深度的宏觀分析。"
-            "使用者要求：輸出長串、完整且結構化的內容，細節要講清楚，絕對不要斷句。分析應包含：\n"
-            "1. 新聞大綱與核心觀點深度拆解。\n"
-            "2. 對市場情緒、大盤走勢與各產業資產的短中長期影響判斷。\n"
-            "3. 宏觀指標解讀（如利率、通膨、地緣政治等相關連動）。\n"
-            "4. 具體的投資操作思路與後續關鍵觀察指標。"
+            f"請以副官身分針對此新聞主題「{raw_query}」進行 SMC 結構影響分析。"
+            "使用者要求：輸出精煉且具備戰術價值的內容，細節要講清楚，嚴格遵守副官人格與標籤規範。"
         )
         model_pref = database.get_user_model_preference(user_id)
         ai_answer = ai_core.ask_model(
@@ -558,14 +589,12 @@ def cmd_theme(text: str, user_name: str, user_id: int) -> str:
     news_text = "\n".join([f"- {n['title']}: {n['description']}" for n in theme_news[:3]])
     prompt = f"""
 請根據以下最新新聞，為 {user_name} 撰寫一份【{matched_key} 產業趨勢速報】。
-這是一份具備「最大算力」支持的深度報告，請務必詳盡分析。
+你必須套用副官人格，並評估該趨勢對 SMC 大級別結構的潛在影響。
 
 要求：
 1. 評估該產業目前的總體情緒（1-10分）。
-2. 點出領頭羊公司的最新動態或技術突破。
-3. 分析潛在的投資機會與供應鏈風險。
-4. 提供具體的技術觀察方向與關鍵觀察指標。
-5. 輸出必須長串且完整，細節講透徹，絕對禁止斷句。
+2. 分析技術突破對產業護城河的影響。
+3. 輸出必須完整，細節講透徹，絕對禁止斷句。
 
 新聞素材：
 {news_text}
@@ -906,7 +935,11 @@ def handle_natural_language(text: str, user_name: str, user_id: int | None = Non
     
     if symbol:
         # 偵測到代號，自動切換為股票深度分析模式
-        snapshot = market_api.get_stock_snapshot(symbol)
+        # 使用量化分析作為快照
+        snapshot = tech_indicators.calculate_indicators(symbol)
+        if "error" in snapshot:
+            snapshot = market_api.get_stock_snapshot(symbol)
+
         model_pref = database.get_user_model_preference(user_id) if user_id is not None else None
         
         # 抓取最新新聞
@@ -918,16 +951,12 @@ def handle_natural_language(text: str, user_name: str, user_id: int | None = Non
 原文內容：{text}
 
 請以「頂尖交易副官」人格，針對該標的進行自動化深度分析。
-這是一份具備「最大算力」支持的報告。
+分析應嚴格遵循 SMC 邏輯與輸出模板。
 
-分析應包含：
-1. 市場快照：現價、漲跌幅、成交量狀態。
-2. 技術面解讀：裸 K 結構、支撐壓力位、斐波那契回撤判斷 (0.382, 0.618, 1.618)。
-3. 近期催化劑：根據提供的最新新聞與行情，點出關鍵利多/利空。
-4. 持倉評估：若使用者已持股（成本：{holdings.get(symbol, {}).get('avg_cost', '未知')}），給出具體戰術建議。
-5. 長中短期展望與觀察點。
+指標摘要：
+{snapshot}
 
-絕對禁止斷句，請完整將細節講完。
+持倉評估：若使用者已持股（成本：{holdings.get(symbol, {}).get('avg_cost', '未知')}），給出具體戰術建議。
 """
         return ai_core.ask_model(prompt, user_name, model=model_pref, user_id=user_id, temperature=0.35, max_output_tokens=3000)
 

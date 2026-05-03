@@ -52,6 +52,17 @@ def init_db() -> None:
             )
             """
         )
+        # 建立狙擊名單表
+        c.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sniper_list (
+                user_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, symbol)
+            )
+            """
+        )
         # 建立統計表，增加 user_id
         c.execute(
             """
@@ -81,7 +92,6 @@ def init_db() -> None:
         )
         
         # 檢查是否需要遷移舊資料 (如果 user_id 欄位不存在則新增)
-        # 這裡簡單處理：如果 trades 表沒有 user_id，則嘗試新增
         try:
             c.execute("SELECT user_id FROM trades LIMIT 1")
         except sqlite3.OperationalError:
@@ -307,3 +317,21 @@ def clear_watchlist_db(user_id: int) -> None:
     with get_conn() as conn:
         conn.execute("DELETE FROM watchlist WHERE user_id=?", (user_id,))
         conn.commit()
+
+def get_sniper_list(user_id: int) -> list[str]:
+    with get_conn() as conn:
+        return [r[0] for r in conn.execute("SELECT symbol FROM sniper_list WHERE user_id=? ORDER BY added_date ASC", (user_id,)).fetchall()]
+
+def add_sniper(user_id: int, symbol: str) -> None:
+    with get_conn() as conn:
+        conn.execute("INSERT OR IGNORE INTO sniper_list (user_id, symbol) VALUES (?, ?)", (user_id, symbol.upper(),))
+        conn.commit()
+
+def del_sniper(user_id: int, symbol: str) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM sniper_list WHERE user_id=? AND symbol=?", (user_id, symbol.upper(),))
+        conn.commit()
+
+def get_all_sniper_targets() -> list[tuple[int, str]]:
+    with get_conn() as conn:
+        return conn.execute("SELECT user_id, symbol FROM sniper_list").fetchall()

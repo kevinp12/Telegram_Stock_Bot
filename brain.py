@@ -158,7 +158,7 @@ def normalize_model_name(name: str) -> str:
 
 
 def list_available_models(force_refresh: bool = False) -> list[str]:
-    """列出目前 API key 可用的 Gemini 模型。"""
+    """列出目前 API key 可用且支援 generateContent 的 Gemini 模型。"""
     if stats.available_models and not force_refresh:
         return stats.available_models
 
@@ -166,6 +166,11 @@ def list_available_models(force_refresh: bool = False) -> list[str]:
     try:
         client = get_client()
         for m in client.models.list():
+            # 過濾掉不支援生成內容的模型 (例如只有 TTS 的模型)
+            methods = getattr(m, 'supported_generation_methods', []) or []
+            if 'generateContent' not in methods:
+                continue
+
             name = normalize_model_name(getattr(m, "name", ""))
             if "gemini" in name.lower():
                 models.append(name)
