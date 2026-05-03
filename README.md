@@ -81,7 +81,44 @@ graph TD
 
 ---
 
-## ⚙️ 維護與自動化
+## 🚀 環境安裝 (Environment Setup)
+
+在開始前，請確保您的系統已安裝 **Python 3.10+**。
+
+### 1. 準備工作
+建議使用虛擬環境來安裝依賴：
+```bash
+# 建立虛擬環境
+python -m venv .venv
+# 啟用虛擬環境 (macOS/Linux)
+source .venv/bin/activate
+
+# 安裝所需插件 (Dependencies)
+pip install -r requirements.txt
+```
+
+### 2. 設定環境變數
+請建立 `.env` 檔案並填入必要的 API Keys：
+```bash
+cp .env.example .env
+# 請編輯 .env 填入以下內容：
+# TELEGRAM_BOT_TOKEN=...
+# GOOGLE_API_KEY=...
+# FINNHUB_API_KEY=...
+```
+
+### 🛠️ 使用的插件 (Libraries)
+本專案使用以下 Python 模組：
+*   **pyTelegramBotAPI**: Telegram Bot 框架
+*   **google-genai**: Gemini AI 介面
+*   **yfinance / finnhub-python**: 財務數據獲取
+*   **pandas**: 資料處理與分析
+*   **python-dotenv**: 環境變數管理
+*   **requests / feedparser**: 網路請求與新聞解析
+*   **psutil**: 系統資源監控
+
+---
+
 
 > 🤖 **智能自動推播**：每 **1 小時** 自動推送情報 (開盤時間 `09:30-16:00 ET` 暫停)。
 > 🧹 **系統自癒**：每 **4 天** 自動執行日誌清理，確保效能。
