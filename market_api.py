@@ -460,11 +460,26 @@ def get_stock_fundamentals(symbol: str) -> dict[str, Any]:
 
     try:
         quarterly_earnings = ticker.quarterly_earnings
-        if hasattr(quarterly_earnings, "empty") and not quarterly_earnings.empty:
+        if hasattr(quarterly_earnings, "empty") and not quarterly_earnings.empty and len(quarterly_earnings) >= 2:
             last_row = quarterly_earnings.iloc[-1]
+            prev_row = quarterly_earnings.iloc[-2]
+            
             data["latest_quarter"] = str(last_row.name)
             data["latest_quarter_eps"] = safe_round(last_row.get("Earnings"))
             data["latest_quarter_revenue"] = format_number(last_row.get("Revenue", "N/A"))
+            
+            # 計算 QoQ 增長
+            last_rev = last_row.get("Revenue")
+            prev_rev = prev_row.get("Revenue")
+            if isinstance(last_rev, (int, float)) and isinstance(prev_rev, (int, float)) and prev_rev != 0:
+                growth = (last_rev - prev_rev) / prev_rev * 100
+                data["revenue_growth_qoq"] = f"{'+' if growth >= 0 else ''}{safe_round(growth, 2)}%"
+            
+            last_eps = last_row.get("Earnings")
+            prev_eps = prev_row.get("Earnings")
+            if isinstance(last_eps, (int, float)) and isinstance(prev_eps, (int, float)) and prev_eps != 0:
+                growth = (last_eps - prev_eps) / abs(prev_eps) * 100 # 使用 abs 處理負 EPS 情況
+                data["eps_growth_qoq"] = f"{'+' if growth >= 0 else ''}{safe_round(growth, 2)}%"
     except Exception:
         pass
 

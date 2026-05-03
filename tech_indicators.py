@@ -90,6 +90,7 @@ def calculate_indicators(symbol: str) -> dict[str, Any]:
         
         buy_count = 0
         sell_count = 0
+        # 從最後一根往前回溯計算連續天數
         for i in range(len(df)-1, -1, -1):
             if df['TD_Buy'].iloc[i] == 1:
                 buy_count += 1
@@ -102,17 +103,30 @@ def calculate_indicators(symbol: str) -> dict[str, Any]:
                 break
         
         td_status = "序列進行中"
-        if buy_count >= 9:
-            td_status = f"買入結構 TD{buy_count}"
-        elif sell_count >= 9:
-            td_status = f"賣出結構 TD{sell_count}"
+        if buy_count > 0:
+            if buy_count == 9:
+                td_status = "🔥 買入結構 TD9 (強反轉預期)"
+            elif buy_count > 9:
+                td_status = f"買入結構 TD9+ ({buy_count})"
+            else:
+                td_status = f"買入結構 TD{buy_count}"
+        elif sell_count > 0:
+            if sell_count == 9:
+                td_status = "💀 賣出結構 TD9 (強反轉預期)"
+            elif sell_count > 9:
+                td_status = f"賣出結構 TD9+ ({sell_count})"
+            else:
+                td_status = f"賣出結構 TD{sell_count}"
         else:
-            td_status = f"TD{max(buy_count, sell_count)}"
+            td_status = "TD 序列中立"
 
         # 7. Fibonacci (這裡簡化為最近一季的高低點)
         high_3mo = df['High'].tail(60).max()
         low_3mo = df['Low'].tail(60).min()
-        # 實戰用法提到的 0.382 和 0.618 可以在策略總結中使用
+        range_3mo = high_3mo - low_3mo
+        # 預估目標價：使用斐波那契擴展 1.0 與 1.618
+        target_1 = high_3mo + range_3mo * 1.0
+        target_1618 = high_3mo + range_3mo * 1.618
 
         # 8. VWAP (成交量加權平均價) - 這裡取近 20 日的簡化計算
         df['PV'] = df['Close'] * df['Volume']
@@ -163,7 +177,9 @@ def calculate_indicators(symbol: str) -> dict[str, Any]:
             "td_status": td_status,
             "support": safe_round(support, 2),
             "resistance": safe_round(resistance, 2),
-            "vol_ratio": safe_round(vol_ratio, 2)
+            "vol_ratio": safe_round(vol_ratio, 2),
+            "target_1": safe_round(target_1, 2),
+            "target_1618": safe_round(target_1618, 2)
         }
     except Exception as e:
         logging.error(f"calculate_indicators error for {symbol}: {e}")

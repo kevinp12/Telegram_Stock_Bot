@@ -676,6 +676,16 @@ def cmd_op(text: str, user_id: int) -> str:
         return f"✅ 核心模型已更新為：`{choice}`\n即刻起所有 AI 分析將採用新模型。"
     
     if sub == "log":
+        if len(parts) > 2 and parts[2].lower() == "clear":
+            try:
+                import os
+                from config import GEMINI_AUDIT_LOG_PATH
+                if os.path.exists(GEMINI_AUDIT_LOG_PATH):
+                    os.remove(GEMINI_AUDIT_LOG_PATH)
+                    return "🧹 系統審計日誌已成功清除。"
+                return "ℹ️ 系統日誌檔案不存在。"
+            except Exception as e:
+                return f"❌ 清除日誌失敗：{e}"
         return "__TRIGGER_LOG__"
     
     if sub == "quota":
@@ -762,28 +772,59 @@ def cmd_test(user_name: str = "User", user_id: int | None = None) -> str:
 
 
 def cmd_tech(text: str, user_id: int) -> str:
-    """處理 /tech 指令，產出專業量化指標儀表板。"""
+    """處理 /tech 指令，產出專業量化指標儀表板或對比報告。"""
     parts = text.split()
     if len(parts) < 2:
-        return (
-            "📊 用法：/tech [股票代號]\n"
-            "例如：/tech NVDA\n\n"
-            "💡 提示：若不確定如何使用，可輸入 `/tech help` 查看指南。"
-        )
-    
-    symbol = parts[1].strip().upper()
-    if symbol == "HELP":
         return frame.tech_help_text()
-
-    # 驗證代號格式
-    if not re.fullmatch(r"[A-Z0-9\.\-]{1,6}", symbol):
-        return f"❌ 錯誤的代號格式：{symbol}。請輸入正確的美股代號。"
-
-    data = tech_indicators.calculate_indicators(symbol)
-    if "error" in data:
-        return f"❌ 分析失敗 ({symbol})：{data['error']}\n請檢查代號是否正確或稍後再試。"
     
-    return frame.tech_report(data)
+    # 子指令判斷
+    subcmd = parts[1].upper()
+    
+    if subcmd == "HELP":
+        return frame.tech_help_text()
+    
+    if subcmd == "COMPARE":
+        symbols = [s.strip().upper() for s in parts[2:5]] # 上限 3 隻
+        if not symbols:
+            return "❌ 請輸入要比較的股票代號，例如：`/tech compare AAPL NVDA`"
+        
+        data_list = []
+        for sym in symbols:
+            data = tech_indicators.calculate_indicators(sym)
+            data_list.append(data)
+        
+        # AI 戰術分析整合
+        user_name = database.get_user_display_name(user_id)
+        report = frame.tech_compare_report(data_list)
+        ai_insight = ai_core.analyze_tech_comparison(data_list, user_name, user_id=user_id)
+        
+        return f"{report}\n\n🤖 AI 戰術評析：\n{ai_insight}"
+
+    # 處理批量查詢 (最多 3 隻)
+    symbols = [s.strip().upper() for s in parts[1:4]]
+    
+    # 如果只有一隻，走詳細報告
+    if len(symbols) == 1:
+        symbol = symbols[0]
+        if not re.fullmatch(r"[A-Z0-9\.\-]{1,6}", symbol):
+            return f"❌ 錯誤的代號格式：{symbol}。請輸入正確的美股代號。"
+
+        data = tech_indicators.calculate_indicators(symbol)
+        if "error" in data:
+            return f"❌ 分析失敗 ({symbol})：{data['error']}\n請檢查代號是否正確或稍後再試。"
+        
+        return frame.tech_report(data)
+    
+    # 如果有多隻，走批量詳細報告 (串接起來)
+    reports = []
+    for sym in symbols:
+        data = tech_indicators.calculate_indicators(sym)
+        if "error" in data:
+            reports.append(f"❌ 分析失敗 ({sym})：{data['error']}")
+        else:
+            reports.append(frame.tech_report(data))
+    
+    return "\n\n".join(reports)
 
 
 def cmd_help() -> str:

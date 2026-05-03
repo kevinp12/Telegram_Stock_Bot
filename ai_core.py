@@ -86,13 +86,18 @@ def ask_model(
     return ask_flash(prompt, user_name, user_id=user_id, temperature=temperature, max_output_tokens=max_output_tokens, urls=urls)
 
 def summarize_tech_news(symbol: str, news_item: dict[str, Any], user_name: str, model: str | None = None, user_id: int | None = None) -> str:
-    """一般科技新聞：強制輸出情緒分數與 Hashtag"""
+    """一般科技新聞：強制輸出情緒分數、重要程度與 Hashtag"""
     title = news_item.get("title", "")
     desc = news_item.get("description", "")
     url = news_item.get("url", "")
     
+    # 獲取即時股價供 AI 參考（若有的話）
+    import market_api
+    price_info = market_api.get_fast_price(symbol)
+    price_str = f"（當前股價：{price_info} USD）" if price_info != "N/A" else ""
+
     prompt = f"""
-請幫 {user_name} 總結這篇關於 {symbol} 的科技/趨勢新聞。
+請幫 {user_name} 總結這篇關於 {symbol} {price_str} 的科技/趨勢新聞。
 標題：{title}
 摘要：{desc}
 
@@ -103,7 +108,9 @@ def summarize_tech_news(symbol: str, news_item: dict[str, Any], user_name: str, 
 4. 請按以下格式輸出：
 
 【🚀 科技前沿情報：{symbol}】
-🌡️ 情緒分數：[1-10分，1為極度悲觀，10為極度樂觀]
+💰 當前價位：{price_info} USD
+🌡️ 市場情緒：[1-10分，1=市場不熱絡，10=市場熱絡]
+⭐ 重要程度：[1-5顆星，例如 ⭐⭐⭐⭐⭐]
 🏷️ 智能標籤：[給予3個精準的Hashtag，例如 #AI伺服器 #資本支出擴大 #利空出盡]
 📝 核心大綱：[用精煉的一句話總結重點]
 💡 深度觀點：[長篇深度分析，評估對科技產業鏈的上下游影響與潛在投資機會，並包含量價趨勢與支撐壓力觀察]
@@ -111,14 +118,19 @@ def summarize_tech_news(symbol: str, news_item: dict[str, Any], user_name: str, 
 """
     return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=2500, urls=[url] if url else None)
 
+
 def summarize_earnings_report(symbol: str, news_item: dict[str, Any], user_name: str, model: str | None = None, user_id: int | None = None) -> str:
     """財報專用：強制提取 EPS、營收與未來指引(Guidance)"""
     title = news_item.get("title", "")
     desc = news_item.get("description", "")
     url = news_item.get("url", "")
     
+    import market_api
+    price_info = market_api.get_fast_price(symbol)
+    price_str = f"（當前股價：{price_info} USD）" if price_info != "N/A" else ""
+
     prompt = f"""
-{user_name}，這是 {symbol} 的最新財報/業績新聞。
+{user_name}，這是 {symbol} {price_str} 的最新財報/業績新聞。
 標題：{title}
 摘要：{desc}
 
@@ -130,6 +142,7 @@ def summarize_earnings_report(symbol: str, news_item: dict[str, Any], user_name:
 5. 請按以下格式輸出：
 
 【🔥 財報快訊：{symbol}】
+💰 當前價位：{price_info} USD
 💰 營收 (Revenue)：[實際] vs [預期]
 📈 獲利 (EPS)：[實際] vs [預期]
 🚀 未來指引 (Guidance)：[上調 / 下調 / 持平，並簡述理由]
@@ -139,24 +152,21 @@ def summarize_earnings_report(symbol: str, news_item: dict[str, Any], user_name:
 """
     return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.2, max_output_tokens=2500, urls=[url] if url else None)
 
-def get_market_tactical_comment(
-macro_text: str, portfolio: dict[str, float], user_name: str, user_id: int | None = None, model: str | None = None) -> str:
-    pl_pct = float(portfolio.get("pl_pct", 0.0))
-    pl_val = float(portfolio.get("pl_val", 0.0))
+def analyze_tech_comparison(data_list: list[dict[str, Any]], user_name: str, model: str | None = None, user_id: int | None = None) -> str:
+    """提供 AI 戰術評析：比較多支股票的量價與行業關聯。"""
+    
     prompt = f"""
-以下是目前大盤、商品與風險資產即時數據：
-{macro_text}
+{user_name}，請對以下幾支股票進行橫向技術對比分析：
+{data_list}
 
-{user_name} 目前帳戶總損益：{pl_pct:.2f}% ({pl_val:.2f} USD)
-
-請做一段交易副官式戰術評語。
-請以精簡段落輸出，避免冗長，重點突顯量價關係與風險判斷。
-包含：
-1. 市場情緒與趨勢（短中長期展望）
-2. VIX 與風險資產的連動解讀
-3. 具體的交易戰術建議（追價、分批、或等待）
-""".strip()
-    return ask_model(prompt, user_name, model=model, temperature=0.5, max_output_tokens=1500)
+【要求】
+1. 判斷它們是否屬於同行業，若為同行業，比較其市場地位。
+2. 根據這些股票的 Attack Gauge（綜合評級）、Volume Ratio（籌碼狀況）與技術指標進行量價關係分析。
+3. 根據目前量價趨勢與技術結構，給出你的推薦判斷（買入、觀望、避險）。
+4. 請以「簡述、精準、鋒利」的語氣，將話講完，絕對不要斷句。
+5. 包含對技術指標的戰術判斷，如斐波那契目標與當前價位的距離。
+"""
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=2000)
 
 def infer_related_news_terms(symbol: str, user_name: str, *, user_id: int | None = None) -> list[str]:
     prompt = f"""

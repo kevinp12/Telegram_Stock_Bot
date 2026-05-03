@@ -35,10 +35,21 @@ from config import (
     TELEGRAM_TOKEN,
 )
 
-# 使用者要求最多 20 分鐘給一篇宏觀新聞
-AUTO_NEWS_INTERVAL_SECONDS = 1200
+# 使用者要求每小時發送一次
+AUTO_NEWS_INTERVAL_SECONDS = 3600
 # 重大新聞即時推送，最小輪詢間隔
-ALERT_NEWS_INTERVAL_SECONDS = 300
+ALERT_NEWS_INTERVAL_SECONDS = 600
+
+def is_market_open() -> bool:
+    """檢查美股是否正在交易 (09:30 - 16:00 ET)"""
+    tz = ZoneInfo("America/New_York")
+    now_et = datetime.now(tz)
+    # 星期一到星期五
+    if 0 <= now_et.weekday() <= 4:
+        market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+        return market_open <= now_et <= market_close
+    return False
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - [%(levelname)s] - %(message)s")
 
@@ -181,7 +192,7 @@ def setup_bot_commands() -> None:
         telebot.types.BotCommand("news", "📰 即時新聞與完整市場報告"),
         telebot.types.BotCommand("news_help", "📖 新聞功能指南"),
         telebot.types.BotCommand("fin", "📊 個股財報與 EPS 查詢"),
-        telebot.types.BotCommand("tech", "📊 專業量化指標儀表板"),
+        telebot.types.BotCommand("tech", "📊 Tech Help / 專業量化分析"),
         telebot.types.BotCommand("quota", "💳 查詢今日 API 使用配額"),
         telebot.types.BotCommand("status", "🔍 AI 連線狀態驗證"),
         telebot.types.BotCommand("help", "🎯 查看指揮手冊"),
@@ -296,6 +307,20 @@ def market_report_job() -> None:
         time.sleep(30)
 
 
+def log_cleanup_job() -> None:
+    """每 4 天自動清除一次日誌。"""
+    import os
+    from config import GEMINI_AUDIT_LOG_PATH
+    while True:
+        time.sleep(4 * 24 * 3600)
+        try:
+            if os.path.exists(GEMINI_AUDIT_LOG_PATH):
+                os.remove(GEMINI_AUDIT_LOG_PATH)
+                logging.info("🧹 系統審計日誌已自動清除。")
+        except Exception as e:
+            logging.error(f"自動清除日誌失敗：{e}")
+
+
 @bot.message_handler(commands=["tech"])
 @bot.channel_post_handler(commands=["tech"])
 def on_tech(m):
@@ -306,7 +331,9 @@ def on_tech(m):
 @bot.message_handler(commands=["help"])
 @bot.channel_post_handler(commands=["help"])
 def on_help(m):
-    reply(m, command.cmd_help())
+    help_parts = command.frame.help_text()
+    for part in help_parts:
+        reply(m, part)
 
 
 @bot.message_handler(commands=["now"])
@@ -527,6 +554,7 @@ if __name__ == "__main__":
     threading.Thread(target=auto_news_job, daemon=True).start()
     threading.Thread(target=major_news_alert_job, daemon=True).start()
     threading.Thread(target=market_report_job, daemon=True).start()
+    threading.Thread(target=log_cleanup_job, daemon=True).start()
     notify_status("online")
 
     while True:
