@@ -1,104 +1,102 @@
-# 🎯 美股顧問・百萬作戰指揮室 (Millionaire Command Center)
+<div align="center">
 
-[![Stock Bot](https://img.shields.io/badge/美股顧問-百萬作戰-blue?style=for-the-badge&logo=telegram)]()
-[![Version](https://img.shields.io/badge/Version-v.26.5.3-green?style=for-the-badge)](https://github.com/kevinp12/Telegram_Stock_Bot)
-[![Python](https://img.shields.io/badge/Python-3.9+-yellow?style=for-the-badge&logo=python)](https://www.python.org/)
+# 🎯 Gemini Stock Bot | 百萬作戰指揮室
+---
+> *您的專屬 AI 投資副官*
 
-這是一個專為美股投資者量身打造的 **Telegram 私人投資副官**。具備頂尖 AI 算力支持，結合即時市場數據、量化指標、智慧新聞分析與自動化匯報功能。
+[![Status](https://img.shields.io/badge/系統狀態-運行中-brightgreen?style=for-the-badge&logo=appveyor)]()
+[![AI](https://img.shields.io/badge/AI_引擎-Gemini_Flash/Pro-orange?style=for-the-badge&logo=google-gemini)]()
+[![Architecture](https://img.shields.io/badge/架構-模組化設計-blue?style=for-the-badge&logo=python)]()
+
+</div>
 
 ---
 
-## 🚀 核心戰術功能
-
-### 📊 1. 全景儀表板 (`/now`)
-*   **宏觀即時觀測**：標普500、納斯達克、黃金、原油、比特幣與 VIX 恐慌指數。
-*   **帳戶總損益**：整合持股市值，計算未實現損益與百分比。
-*   **AI 戰術短評**：由 Gemini 深度分析當前量價關係，給出具體交易建議。
-
-### 📉 2. 專業量化分析 (`/tech`) `NEW`
-*   **核心儀表板**：EMA 均線系統、ATR 波動風險、RSI 強弱、MACD 動能、TD9 反轉序列、VWAP 機構成本。
-*   **主力籌碼追蹤**：偵測爆量與機構建倉/倒貨訊號。
-*   **進攻指標**：綜合多空評級（大買 / 觀察 / 大賣）。
-*   **自動化策略**：生成包含進場位、停損位與防守位的完整交易計畫。
-
-### 📋 3. 資產與雷達管理 (`/list`, `/buy`, `/sell`, `/watch`)
-*   **FIFO 會計系統**：自動計算分批買入成本與已實現損益。
-*   **雷達監控**：批量新增/移除監控標的，系統將優先推送相關情報。
-*   **分頁顯示**：持股明細支持翻頁功能，應對大量持股需求。
-
-### 📰 4. 智慧情報系統 (`/news`, `/theme`, `/ask`)
-*   **智慧路由**：自動識別個股、財報或宏觀新聞，切換至最合適的分析人格。
-*   **產業趨勢 (`/theme`)**：針對 AI、半導體、核能等主題生成深度產業速報。
-*   **Pro 深度諮詢 (`/ask`)**：針對特定個股問題，啟動最大算力的戰術判讀。
-*   **自動推播**：每 20 分鐘隨機推播持股、監控或宏觀的重要情報。
-
-### 💹 5. 數值精確規範 `OPTIMIZED`
-*   **精確四捨五入**：所有數值（EPS、P/E、股價、百分比）均採用 `ROUND_HALF_UP` 邏輯計算。
-*   **統一格式**：所有財務數據抓取至小數點後兩位，確保報告嚴謹與美觀。
+> 🚀 **系統使命**：為美股投資者提供最冷靜的 AI 戰術分析、即時量化指標與精準的市場情報決策。
 
 ---
 
-## 🛠️ 系統監控與維護
+## 🛰️ 系統架構流向 (Architectural Flow)
 
-### 🔍 狀態報告 (`/status`)
-*   **AI 流量統計**：顯示今日 Token 消耗、配額上限與預警進度。
-*   **消耗統計**：自動計算平均、最小與最大 Token 消耗量。
-*   **大腦狀態**：顯示當前主模型、備援模型清單與成功調用次數。
-*   **硬體資源**：即時顯示 CPU、RAM、硬碟與系統運行時間。
-
-### 🔒 管理者選單 (`/op`)
-*   **模型切換**：`/op model [flash|pro]` 即時切換 AI 核心。
-*   **日誌審計**：`/op log` 讀取最近運行的美觀結構化日誌（含 Token 細項與研究網址）。
-*   **配額查詢**：`/op quota` 視覺化 Token 使用進度。
-
----
-
-## 📦 專案結構
-
-```text
-├── main_bot.py      # Telegram 入口、指令註冊與背景任務
-├── command.py       # 業務邏輯流程、報表生成
-├── ai_core.py       # AI 思考層、人格設定、Prompt 模板
-├── brain.py         # Gemini API 串接、Fallback 機制、審計日誌
-├── tech_indicators.py # 量化指標計算核心 (EMA, ATR, TD9...)
-├── market_api.py    # Yahoo Finance, Finnhub, NewsAPI 採集
-├── database.py      # SQLite 持久化、持股紀錄、Token 計數
-├── frame.py         # 視覺排版與 Emoji 格式集中管理
-├── utils.py         # 核心工具類 (精確四捨五入、數值格式化)
-└── config.py        # 環境變數與全局設定
+```mermaid
+graph TD
+    User((使用者)) -->|輸入指令| Bot[main_bot.py]
+    Bot -->|路由解析| Command[command.py]
+    
+    subgraph 分析引擎
+    Command --> Indicators[tech_indicators.py]
+    Command --> MarketAPI[market_api.py]
+    Command --> AICore[ai_core.py]
+    end
+    
+    AICore --> Brain[brain.py]
+    Brain -->|呼叫| AI((Google Gemini AI))
+    
+    Command --> DB[(database.py - SQLite)]
+    Command --> Frame[frame.py]
+    
+    Bot -->|顯示回報| User
 ```
 
 ---
 
-## ⚙️ 快速部署
+## 🛠️ 模組結構 (Modules Overview)
 
-### 1. 環境準備
-```bash
-git clone https://github.com/your_repo/gemini_stock_bot.git
-cd gemini_stock_bot
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
+<details>
+<summary><b>📂 點擊查看核心架構邏輯</b></summary>
 
-### 2. 配置環境變數 (`.env`)
-```env
-TELEGRAM_TOKEN=123456789:ABCDEF...
-CHAT_ID=你的_Telegram_Chat_ID
-NEWS_API_KEY=你的_NewsAPI_Key
-FINNHUB_KEY=你的_Finnhub_Key
-GEMINI_API_KEY=你的_Gemini_API_Key
-DAILY_TOKEN_LIMIT=500000
-```
+| 模組 | 職責 |
+| :--- | :--- |
+| `main_bot.py` | 系統入口，Telegram API 對接、自動化任務排程。 |
+| `command.py` | 業務邏輯樞紐，處理所有指令行為與報表生成。 |
+| `ai_core.py` | AI 決策核心，轉換原始資料為戰術分析與投資建議。 |
+| `brain.py` | Gemini API 底層通訊，處理自動 Fallback、Token 統計與日誌。 |
+| `tech_indicators.py` | 量化分析運算 (均線、動能、TD9、斐波那契)。 |
+| `market_api.py` | 市場資訊採集 (Yahoo Finance, Finnhub, NewsAPI)。 |
+| `database.py` | 資料持久化，記錄持股、帳務與 Token 使用。 |
+| `frame.py` | 排版與視覺格式中心，優化 Telegram 介面體驗。 |
 
-### 3. 啟動與維護
-使用 systemd 確保 24/7 運行：
-```bash
-sudo systemctl enable gemini-bot
-sudo systemctl start gemini-bot
-```
+</details>
 
 ---
 
-## ⚖️ 免責聲明
-本工具僅供資訊參考與學術研究，**不構成任何投資建議**。投資美股具有高度風險，請在交易前諮詢專業金融顧問。AI 產生的所有內容可能存在偏差，請務必搭配原文網址查證。
+## 📟 指令速查表 (Command Cheat Sheet)
+
+### 📈 技術分析與戰術
+*   `/tech [代號]` — 產出專業量化儀表板 (EMA, MACD, TD9, VWAP)。
+*   `/tech compare [A] [B]` — 橫向對比分析，給出 AI 交易建議。
+*   `/fin [代號]` — 個股財報、EPS 與核心估值。
+*   `/fin compare [A] [B]` — QoQ 季增長對比，判斷財報基本面。
+*   `/ask [代號] [問題]` — Pro 級 AI 深度戰術諮詢。
+
+### 📰 市場情報
+*   `/news` — 執行全市場新聞摘要。
+*   `/now` — 即時盤勢全景、總損益與 AI 短評。
+*   `/theme [主題]` — 產業趨勢速報 (AI, 半導體, 核能)。
+
+### 📋 資產管理
+*   `/list` — 持股明細與盈虧分析。
+*   `/buy /sell` — 交易紀錄 (FIFO 自動結算)。
+*   `/watch [add/del/list]` — 管理關注雷達名單。
+
+---
+
+## ⚙️ 維護與自動化
+
+> 🤖 **智能自動推播**：每 **1 小時** 自動推送情報 (開盤時間 `09:30-16:00 ET` 暫停)。
+> 🧹 **系統自癒**：每 **4 天** 自動執行日誌清理，確保效能。
+> 💎 **配額警報**：Token 消耗達到 80%/90%/100% 時，自動推送預警。
+
+### 🕵️ 隱藏功能指令 (`/op`)
+*   `/op model [flash\|pro]` — 切換 AI 模型核心。
+*   `/op log` — 查看最近 40 筆審計日誌。
+*   `/op log clear` — 手動清除日誌。
+*   `/op quota` — 查詢今日 Token 使用進度。
+
+---
+
+<div align="center">
+
+**⚖️ 免責聲明**：本工具僅供學術研究，**不構成任何投資建議**。投資美股具有高度風險。
+
+</div>
