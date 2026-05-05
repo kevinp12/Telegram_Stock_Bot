@@ -130,28 +130,62 @@ def cmd_bc(text: str, user_id: int) -> str:
     active, timer, _ = database.get_bc_settings(user_id)
 
     if len(parts) == 1:
-        return frame.bc_settings_status(enabled=bool(active), interval=int(timer))
+        return (
+            "📘 /bc 指令教學\n"
+            "━━━━━━━━━━━━━━\n"
+            f"{frame.bc_settings_status(enabled=bool(active), interval=int(timer))}\n\n"
+            "✅ 可用操作：\n"
+            "• `/bc on`：開啟自動推播\n"
+            "• `/bc off`：關閉自動推播\n"
+            "• `/bc timer 120`：設定推播間隔（最少 30 分鐘）"
+        )
 
     sub = parts[1].lower()
     if sub == "on":
         database.update_bc_settings(user_id, active=1)
-        return frame.bc_settings_status(enabled=True, interval=int(timer))
+        return (
+            "✅ 自動推播已開啟\n"
+            "━━━━━━━━━━━━━━\n"
+            f"{frame.bc_settings_status(enabled=True, interval=int(timer))}"
+        )
     if sub == "off":
         database.update_bc_settings(user_id, active=0)
-        return frame.bc_settings_status(enabled=False, interval=int(timer))
+        return (
+            "✅ 自動推播已關閉\n"
+            "━━━━━━━━━━━━━━\n"
+            f"{frame.bc_settings_status(enabled=False, interval=int(timer))}"
+        )
     if sub == "timer":
         if len(parts) < 3:
-            return "⏱️ 用法：`/bc timer 120`（最少 30 分鐘）"
+            return (
+                "❌ 缺少分鐘數\n"
+                "━━━━━━━━━━━━━━\n"
+                "⏱️ 正確用法：`/bc timer 120`\n"
+                "ℹ️ 最少 30 分鐘，預設 120 分鐘。"
+            )
         try:
             mins = int(parts[2])
         except Exception:
-            return "❌ 請輸入有效分鐘數。例如：`/bc timer 120`"
+            return (
+                "❌ 分鐘格式錯誤\n"
+                "━━━━━━━━━━━━━━\n"
+                "請輸入有效整數分鐘數，例如：`/bc timer 120`"
+            )
         if mins < 30:
-            return "❌ 推播間隔最少 30 分鐘。"
+            return "❌ 推播間隔最少 30 分鐘。請重新設定，例如：`/bc timer 60`"
         database.update_bc_settings(user_id, timer=mins)
-        return frame.bc_settings_status(enabled=bool(active), interval=mins)
+        return (
+            f"✅ 推播間隔已更新為 {mins} 分鐘\n"
+            "━━━━━━━━━━━━━━\n"
+            f"{frame.bc_settings_status(enabled=bool(active), interval=mins)}"
+        )
 
-    return frame.bc_settings_status(enabled=bool(active), interval=int(timer))
+    return (
+        f"❌ 未知的 /bc 子指令：`{sub}`\n"
+        "━━━━━━━━━━━━━━\n"
+        "📘 可用指令：`/bc on`、`/bc off`、`/bc timer 120`\n\n"
+        f"{frame.bc_settings_status(enabled=bool(active), interval=int(timer))}"
+    )
 
 
 def get_system_status() -> str:
@@ -227,7 +261,7 @@ def _is_stock_symbol(query: str) -> bool:
     return isinstance(snapshot.get("price"), (int, float)) and snapshot.get("price") != 0
 
 
-def _build_fin_compare_message(symbols: list[str], user_id: int) -> str:
+def _build_fin_compare_message(symbols: list[str], user_id: int) -> list[str] | str:
     user_name = database.get_user_display_name(user_id)
     holdings = database.get_aggregated_portfolio(user_id)
     fundamentals_map: dict[str, dict[str, Any]] = {}
@@ -245,43 +279,59 @@ def _build_fin_compare_message(symbols: list[str], user_id: int) -> str:
     if missing:
         return f"❌ 無法取得以下代號的財務資料：{', '.join(missing)}。請確認代號是否正確。"
 
-    sections: list[str] = [f"📊 財務比較：{' vs '.join(symbols)}", "━━━━━━━━━━━━━━"]
+    report_sections: list[str] = [
+        f"📊 **財報比較報告（1/3）：{' vs '.join(symbols)}**",
+        "━━━━━━━━━━━━━━",
+        "💡 本頁整理估值、營收、EPS、獲利率與近期財報重點。",
+    ]
     for symbol in symbols:
         data = fundamentals_map[symbol]
-        sections.append(
-            f"【{symbol}】\n"
-            f"公司：{data.get('company_name', data.get('symbol', symbol))}\n"
-            f"現價：{data.get('current_price', 'N/A')} | 市值：{data.get('market_cap', 'N/A')}\n"
-            f"TTM 營收：{data.get('revenue_ttm', 'N/A')} | TTM 淨利：{data.get('net_income', 'N/A')}\n"
-            f"EPS：{data.get('trailing_eps', 'N/A')} / {data.get('forward_eps', 'N/A')}\n"
-            f"P/E：{data.get('trailing_pe', 'N/A')} / {data.get('forward_pe', 'N/A')}\n"
-            f"毛利率：{data.get('gross_margin', 'N/A')} | 淨利率：{data.get('profit_margin', 'N/A')}\n"
-            f"52 週：{data.get('year_low', 'N/A')} - {data.get('year_high', 'N/A')}\n"
+        report_sections.append(
+            f"\n🏢 **{symbol}｜{data.get('company_name', data.get('symbol', symbol))}**\n"
+            f"├ 💵 現價：`{data.get('current_price', 'N/A')}`｜💎 市值：`{data.get('market_cap', 'N/A')}`\n"
+            f"├ 📢 TTM 營收：`{data.get('revenue_ttm', 'N/A')}`｜💰 TTM 淨利：`{data.get('net_income', 'N/A')}`\n"
+            f"├ 🧾 EPS：`{data.get('trailing_eps', 'N/A')}` / Forward `{data.get('forward_eps', 'N/A')}`\n"
+            f"├ 📐 P/E：`{data.get('trailing_pe', 'N/A')}` / Forward `{data.get('forward_pe', 'N/A')}`\n"
+            f"├ 🏭 毛利率：`{data.get('gross_margin', 'N/A')}`｜淨利率：`{data.get('profit_margin', 'N/A')}`\n"
+            f"└ 📏 52 週區間：`{data.get('year_low', 'N/A')} - {data.get('year_high', 'N/A')}`\n"
             + (
-                f"最新季：{data.get('latest_quarter')}，EPS：{data.get('latest_quarter_eps', 'N/A')}，營收：{data.get('latest_quarter_revenue', 'N/A')}\n"
+                f"📅 最新季：`{data.get('latest_quarter')}`｜EPS：`{data.get('latest_quarter_eps', 'N/A')}`｜營收：`{data.get('latest_quarter_revenue', 'N/A')}`\n"
                 if data.get('latest_quarter')
                 else ""
             )
         )
         if symbol in holdings:
             position = holdings[symbol]
-            sections.append(
-                f"持股：{position.get('shares', 0):.2f} 股，成本 ${position.get('avg_cost', 0):.2f}\n"
+            report_sections.append(
+                f"📦 持股：`{position.get('shares', 0):.2f}` 股｜成本：`${position.get('avg_cost', 0):.2f}`"
             )
+
+    news_sections: list[str] = [
+        f"📰 **深度分析素材（3/3）：{' vs '.join(symbols)}**",
+        "━━━━━━━━━━━━━━",
+        "📌 最新消息與持股背景，用於輔助判斷催化劑與風險。",
+    ]
+    for symbol in symbols:
+        news_sections.append(f"\n🧩 **{symbol} 最新消息**")
         if news_map[symbol]:
             news_lines = []
             for idx, item in enumerate(news_map[symbol], start=1):
                 title = item.get('title', '無標題').strip()
                 source = item.get('source', '未知')
                 url = item.get('url', '')
-                news_lines.append(f"{idx}. {title} ({source})\n   {url}")
-            sections.append("最新消息：\n" + "\n".join(news_lines))
-        sections.append("━━━━━━━━━━━━━━")
+                news_lines.append(f"{idx}. 🗞️ {title}（{source}）\n   🔗 {url}")
+            news_sections.append("\n".join(news_lines))
+        else:
+            news_sections.append("⚪ 暫無可用新聞。")
 
     ai_analysis = ai_core.compare_financials(symbols, fundamentals_map, news_map, user_name, holdings, user_id=user_id)
-    sections.append("AI 評析：")
-    sections.append(ai_analysis)
-    return "\n".join(sections)
+    ai_page = "\n".join([
+        f"🤖 **AI 評析（2/3）：{' vs '.join(symbols)}**",
+        "━━━━━━━━━━━━━━",
+        "🧠 綜合估值、成長性、獲利品質、新聞催化與持股狀態：",
+        ai_analysis,
+    ])
+    return ["\n".join(report_sections), ai_page, "\n".join(news_sections)]
 
 
 def get_price_volume_signal(quote: dict[str, Any]) -> str:
@@ -425,7 +475,7 @@ def cmd_list(user_id: int, page: int = 1) -> tuple[str, int]:
     portfolio = database.get_aggregated_portfolio(user_id)
     all_symbols = sorted(list(portfolio.keys()))
     total_items = len(all_symbols)
-    page_size = 6
+    page_size = 4
     total_pages = math.ceil(total_items / page_size) if total_items > 0 else 1
     
     if page < 1: page = 1
@@ -509,16 +559,27 @@ def cmd_sweep(text: str, user_id: int) -> str:
     """處理 /sweep 指令。"""
     parts = text.split()
     if len(parts) < 2:
-        return frame.sweep_guide()
+        return (
+            "📘 /sweep 指令教學\n"
+            "━━━━━━━━━━━━━━\n"
+            f"{frame.sweep_guide()}"
+        )
     
     action = parts[1].lower()
     
     if action == "list":
-        return frame.sweep_list(database.get_sniper_list(user_id))
+        return (
+            "📋 /sweep 監控清單\n"
+            "━━━━━━━━━━━━━━\n"
+            f"{frame.sweep_list(database.get_sniper_list(user_id))}"
+        )
     
     if action == "clear":
         database.clear_sniper_list(user_id)
-        return "✅ 狙擊監控清單已全數清空。"
+        return (
+            "✅ 狙擊監控清單已全數清空。\n"
+            "💡 你可以使用 `/sweep add NVDA` 重新建立監控。"
+        )
     
     if action in {"add", "del"}:
         if len(parts) < 3:
@@ -816,7 +877,17 @@ def cmd_status(user_id: int) -> str:
         ok = False
     brain_status = brain.get_status_text(user_id)
     model_pref = database.get_user_model_preference(user_id)
-    brain_status = f"{brain_status}\n• 模型偏好：{model_pref}"
+    bc_active, bc_timer, _ = database.get_bc_settings(user_id)
+    sweep_count = len(database.get_sniper_list(user_id))
+    watch_count = len(database.get_watchlist(user_id))
+    brain_status = (
+        f"{brain_status}\n"
+        f"• 🤖 目前模型偏好：`{model_pref}`\n"
+        "• ⚡ Flash：速度快，適合日常查詢、新聞摘要、快速問答。\n"
+        "• 🧠 Pro：推理深，適合複雜比較、策略拆解、深度研究。\n"
+        f"• 📢 自動推播：{'✅ 開啟' if bc_active else '❌ 關閉'}（每 {bc_timer} 分鐘，可用 `/bc on/off/timer`）\n"
+        f"• 👀 Watch 監控數：`{watch_count}`｜🎯 Sweep 狙擊數：`{sweep_count}`"
+    )
     return frame.status_text(VERSION, brain_status, get_system_status(), ok)
 
 

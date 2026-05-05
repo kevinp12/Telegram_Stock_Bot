@@ -181,7 +181,11 @@ def get_all_active_bc_users() -> list[dict]:
 def add_or_update_user(user_id: int, display_name: str = "", username: str | None = None) -> None:
     with get_conn() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO users (user_id, username, display_name) VALUES (?, ?, ?)",
+            """
+            INSERT OR IGNORE INTO users
+            (user_id, username, display_name, bc_active, bc_timer, last_bc_ts)
+            VALUES (?, ?, ?, 0, 120, 0)
+            """,
             (user_id, username or "", display_name),
         )
         conn.execute(

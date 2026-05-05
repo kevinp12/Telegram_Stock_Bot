@@ -59,35 +59,33 @@ def help_text() -> list[str]:
     return [part1, part2]
 
 
-def tech_help_text() -> str:
-    return (
-        "📊 **量化指標儀表板指南 (/tech)**\n"
+def tech_help_text() -> list[str]:
+    part1 = (
+        "📊 **量化指標儀表板指南（1/2）：指令用法**\n"
         "━━━━━━━━━━━━━━\n"
-        "本功能結合多重趨勢系統與動能指標，為您提供專業級的量化分析報告。\n\n"
-        "**指令用法：**\n"
+        "本功能結合多重趨勢系統與動能指標，提供專業級量化分析報告。\n\n"
+        "🧭 **常用指令**\n"
         "• `/tech [股票代號]`：分析單一股票，例如 `/tech NVDA`。\n"
-        "• `/tech [代號1] [代號2] [代號3]`：同時分析多隻股票 (上限 3 隻)。\n"
-        "• `/tech compare [代號1] [代號2]`：橫向對比多隻股票的量化數據。\n\n"
-        "**📊 指標深度解析：**\n"
-        "1. **核心評級 (Attack Gauge)**：\n"
-        "   - 綜合 EMA、MACD、RSI、VWAP 的多空力道。\n"
-        "   - `大買`：強勢多頭；`觀察`：趨勢不明；`大賣`：強勢空頭。\n"
-        "2. **主力籌碼 (Whale Tracking)**：\n"
-        "   - 觀察成交量相對於 20 日均量的倍率。\n"
-        "   - 爆量且收紅為主力建倉；爆量且收黑為大戶撤離。\n"
-        "3. **趨勢結構 (EMA System)**：\n"
-        "   - 使用 21/60/200 EMA 判斷。均線多頭排列 (21>60>200) 為最強趨勢。\n"
-        "4. **VWAP (成交量加權平均價)**：\n"
-        "   - 當日機構的平均持有成本。價在 VWAP 之上偏多，之下偏空。\n"
-        "5. **ATR (真實波動幅度)**：\n"
-        "   - 衡量股價波動劇烈程度，數值越高表示風險/波動越大，常用於設定停損。\n"
-        "6. **斐波那契擴展 (Fibonacci Targets)**：\n"
-        "   - 基於 3 個月高低點計算。1.0 與 1.618 為常見的獲利了結或強壓力位。\n"
-        "7. **TD9 序列 (TD Sequential)**：\n"
-        "   - 連續 9 根 K 線的價格衰竭偵測。TD9 出現通常預示短期趨勢可能反轉。\n\n"
-        "💡 **實戰提示：**\n"
-        "建議結合 `/fin` 財報數據與 `/news` 即時消息，達到量價與基本面共振的最高勝率。"
+        "• `/tech [代號1] [代號2] [代號3]`：同時分析多隻股票，上限 3 隻。\n"
+        "• `/tech compare [代號1] [代號2]`：橫向對比量化數據。\n\n"
+        "💡 **搭配建議**\n"
+        "• `/fin [代號]`：確認財報與估值。\n"
+        "• `/news [代號]`：追蹤最新催化劑。\n"
+        "• `/sweep add [代號]`：加入 FVG/Sweep 狙擊監控。"
     )
+    part2 = (
+        "📚 **量化指標儀表板指南（2/2）：指標深度解析**\n"
+        "━━━━━━━━━━━━━━\n"
+        "1. ⚔️ **核心評級 (Attack Gauge)**：整合 EMA、MACD、RSI、VWAP 的多空力道。\n"
+        "2. 🐋 **主力籌碼 (Whale Tracking)**：觀察成交量倍率，辨識建倉或撤離。\n"
+        "3. 🧬 **趨勢結構 (EMA System)**：21/60/200 EMA 判斷多空排列。\n"
+        "4. 🧲 **VWAP**：機構平均持有成本，判斷價格強弱位置。\n"
+        "5. 🛡️ **ATR**：波動與停損參考，避免停損過緊或過鬆。\n"
+        "6. 📐 **Fibonacci Targets**：以 3 個月高低點估算延伸目標。\n"
+        "7. ⏳ **TD9 序列**：偵測短期衰竭與可能反轉。\n\n"
+        "🎯 **實戰提示**：量化訊號不是單點答案，建議與 `/fin`、`/news`、`/now` 綜合判斷。"
+    )
+    return [part1, part2]
 
 
 def tech_report(data: dict[str, Any]) -> str:
@@ -205,10 +203,11 @@ def status_text(version: str, brain_status: str, system_status: str, ping_ok: bo
     return (
         f"🔍 **顧問系統狀態報告 ({version})**\n"
         "━━━━━━━━━━━━━━\n"
-        f"核心連線：{icon} {'運行中' if ping_ok else '連線異常'}\n\n"
-        "📊 **伺服器資源：**\n"
+        f"🧠 核心連線：{icon} {'運行中' if ping_ok else '連線異常'}\n"
+        "✅ 重要資訊：模型、推播、監控、伺服器資源如下。\n\n"
+        "🖥️ **伺服器資源**\n"
         f"{system_status}\n\n"
-        "🧠 **AI 模型與配額：**\n"
+        "🤖 **AI 模型、配額與個人設定**\n"
         f"{brain_status}"
     )
 
@@ -292,6 +291,8 @@ def portfolio_total_report(
                 pct = perf["pct"]
                 s = "+" if diff >= 0 else ""
                 lines.append(f"├ {label}：`{s}${diff:,.2f}` ({s}{pct:.2f}%)")
+            else:
+                lines.append(f"├ {label}：`N/A` (`N/A`)" )
         lines.append("━━━━━━━━━━━━━━")
     
     return "\n".join(lines)

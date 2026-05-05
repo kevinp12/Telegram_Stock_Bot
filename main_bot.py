@@ -60,6 +60,7 @@ if not TELEGRAM_TOKEN or len(TELEGRAM_TOKEN) < 10:
     sys.exit(1)
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=True)
+PAGED_MESSAGE_CACHE: dict[str, list[str]] = {}
 
 
 def get_user_display_name(m) -> str:
@@ -78,6 +79,31 @@ def get_user_id(m) -> int:
     if user and getattr(user, "id", None) is not None:
         return int(user.id)
     return int(m.chat.id)
+
+
+def normalize_loose_command_text(text: str) -> str:
+    """把 ./bc、/ bc、./ sweep 這類寬鬆輸入統一成標準 /bc、/sweep 格式。"""
+    normalized = " ".join((text or "").strip().split())
+    if not normalized:
+        return ""
+
+    lower = normalized.lower()
+
+    # / bc on  -> /bc on
+    if lower.startswith("/"):
+        after = normalized[1:].lstrip()
+        if after:
+            return "/" + after
+
+    # ./bc on / ./ bc on / .bc on -> /bc on
+    dot_cmd_prefixes = ("./", ".")
+    for prefix in dot_cmd_prefixes:
+        if lower.startswith(prefix):
+            after = normalized[len(prefix):].lstrip()
+            if after:
+                return "/" + after
+
+    return normalized
 
 
 def is_admin_user(user_id: int) -> bool:
@@ -170,6 +196,35 @@ def get_pagination_markup(prefix: str, current_page: int, total_pages: int, toke
     if current_page < total_pages: buttons.append(InlineKeyboardButton("下一頁 ➡️", callback_data=f"{prefix}_{token}_{current_page+1}"))
     if buttons: markup.row(*buttons)
     return markup
+
+
+def get_cached_page_markup(token: str, current_page: int, total_pages: int) -> InlineKeyboardMarkup | None:
+    if total_pages <= 1:
+        return None
+    markup = InlineKeyboardMarkup()
+    buttons = []
+    if current_page > 1:
+        buttons.append(InlineKeyboardButton("⬅️ 上一頁", callback_data=f"page_{token}_{current_page-1}"))
+    buttons.append(InlineKeyboardButton(f"📄 {current_page}/{total_pages}", callback_data=f"page_{token}_{current_page}"))
+    if current_page < total_pages:
+        buttons.append(InlineKeyboardButton("下一頁 ➡️", callback_data=f"page_{token}_{current_page+1}"))
+    markup.row(*buttons)
+    return markup
+
+
+def send_paged_message(chat_id, pages: list[str] | tuple[str, ...], parse_mode: str | None = None) -> None:
+    clean_pages = [str(p).strip() for p in pages if str(p).strip()]
+    if not clean_pages:
+        safe_send(chat_id, "⚠️ 沒有可顯示的內容。", parse_mode=parse_mode)
+        return
+    token = f"{int(time.time() * 1000000) % 10**12:x}"
+    PAGED_MESSAGE_CACHE[token] = clean_pages
+    safe_send(
+        chat_id,
+        clean_pages[0],
+        parse_mode=parse_mode,
+        reply_markup=get_cached_page_markup(token, 1, len(clean_pages)),
+    )
 
 
 def notify_status(status_type: str) -> None:
@@ -351,14 +406,18 @@ def log_cleanup_job() -> None:
 @bot.channel_post_handler(commands=["tech"])
 def on_tech(m):
     user_id, _ = register_user(m)
-    safe_send(m.chat.id, command.cmd_tech(m.text or "", user_id))
+    result = command.cmd_tech(m.text or "", user_id)
+    if isinstance(result, (list, tuple)):
+        send_paged_message(m.chat.id, result)
+    else:
+        safe_send(m.chat.id, result)
 
 
 @bot.message_handler(commands=["help"])
 @bot.channel_post_handler(commands=["help"])
 def on_help(m):
     help_parts = command.frame.help_text()
-    for part in help_parts: reply(m, part)
+    send_paged_message(m.chat.id, help_parts)
 
 
 @bot.message_handler(commands=["now"])
@@ -371,7 +430,7 @@ def on_now(m):
         sections = command.cmd_now(user_id, user_name)
         if loading_message: bot.delete_message(m.chat.id, loading_message.message_id)
         if isinstance(sections, (list, tuple)):
-            for s in sections: reply(m, s)
+            send_paged_message(m.chat.id, sections)
         else: reply(m, sections)
     except Exception as exc:
         if loading_message: bot.delete_message(m.chat.id, loading_message.message_id)
@@ -426,7 +485,14 @@ def on_sweep(m):
 @bot.channel_post_handler(commands=["theme"])
 def on_theme(m):
     user_id, user_name = register_user(m)
-    reply(m, command.cmd_theme(m.text or "", user_name, user_id))
+    loading = reply(m, "🚀 正在整理產業趨勢速報，請稍候...")
+    try:
+        result = command.cmd_theme(m.text or "", user_name, user_id)
+        if loading: bot.delete_message(m.chat.id, loading.message_id)
+        reply(m, result)
+    except Exception as exc:
+        if loading: bot.delete_message(m.chat.id, loading.message_id)
+        reply(m, f"⚠️ 產業趨勢速報產生失敗：{exc}")
 
 
 @bot.message_handler(commands=["news"])
@@ -447,7 +513,19 @@ def on_news(m):
 @bot.channel_post_handler(commands=["fin"])
 def on_fin(m):
     user_id, _ = register_user(m)
-    reply(m, command.cmd_fin(m.text or "", user_id))
+    text = m.text or ""
+    is_compare = len(text.split()) >= 2 and text.split()[1].lower() == "compare"
+    loading = reply(m, "📊 正在整理財報比較與 AI 評析，請稍候...") if is_compare else None
+    try:
+        result = command.cmd_fin(text, user_id)
+        if loading: bot.delete_message(m.chat.id, loading.message_id)
+        if isinstance(result, (list, tuple)):
+            send_paged_message(m.chat.id, result)
+        else:
+            reply(m, result)
+    except Exception as exc:
+        if loading: bot.delete_message(m.chat.id, loading.message_id)
+        reply(m, f"⚠️ 財報查詢失敗：{exc}")
 
 
 @bot.message_handler(commands=["quota"])
@@ -514,11 +592,62 @@ def on_list_callback(call):
     except Exception: pass
 
 
+@bot.callback_query_handler(func=lambda call: call.data.startswith("page_"))
+def on_cached_page_callback(call):
+    try:
+        parts = call.data.split("_")
+        page = int(parts[-1])
+        token = parts[1]
+        pages = PAGED_MESSAGE_CACHE.get(token, [])
+        if not pages:
+            bot.answer_callback_query(call.id, "⚠️ 這份分頁內容已過期，請重新輸入指令。")
+            return
+        total_pages = len(pages)
+        if page < 1 or page > total_pages:
+            bot.answer_callback_query(call.id, "已在頁面邊界。")
+            return
+        bot.edit_message_text(
+            pages[page - 1],
+            call.message.chat.id,
+            call.message.message_id,
+            reply_markup=get_cached_page_markup(token, page, total_pages),
+        )
+    except Exception as exc:
+        logging.warning("cached page callback failed: %s", exc)
+
+
 @bot.message_handler(func=lambda m: True)
 @bot.channel_post_handler(func=lambda m: True)
 def on_text(m):
-    text = getattr(m, "text", "") or ""
-    if not text or text.startswith("/"): return
+    text_raw = getattr(m, "text", "") or ""
+    text = normalize_loose_command_text(text_raw)
+    if not text:
+        return
+
+    # 補強：讓 ./bc、/ bc、./sweep 等輸入也可正常觸發
+    if text.startswith("/"):
+        user_id, _ = register_user(m)
+        lowered = text.lower()
+
+        if lowered.startswith("/bc"):
+            reply(m, command.cmd_bc(text, user_id))
+            return
+        if lowered.startswith("/total"):
+            reply(m, command.cmd_total(user_id))
+            return
+        if lowered.startswith("/sweep"):
+            reply(m, command.cmd_sweep(text, user_id))
+            return
+        if lowered.startswith("/data") or lowered == "/data clear":
+            reply(m, command.cmd_data_clear(text, user_id))
+            return
+        if lowered.startswith("/help"):
+            send_paged_message(m.chat.id, command.frame.help_text())
+            return
+
+        # 其他斜線指令交由既有 command handler，這裡直接略過
+        return
+
     user_id, user_name = register_user(m)
     if " ".join(text.strip().split()).lower() == "data clear":
         reply(m, command.cmd_data_clear(text, user_id))
