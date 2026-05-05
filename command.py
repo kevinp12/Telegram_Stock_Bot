@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import math
 import random
 from typing import Any
 
 import psutil
+import yfinance as yf
 
 import ai_core
 import brain
@@ -23,6 +24,134 @@ from config import BOT_START_TIME, VERSION
 
 STOCK_RE = re.compile(r"\b[A-Z]{2,5}\b")
 FIN_COMPARE_STATE: dict[int, list[str]] = {}
+DATA_CLEAR_CONFIRM_STATE: dict[int, datetime] = {}
+
+
+def _portfolio_snapshot_from_ledger(ledger: list[dict]) -> dict[str, dict[str, float]]:
+    portfolio: dict[str, dict[str, float]] = {}
+    for row in ledger:
+        symbol = str(row.get("symbol", "")).upper()
+        price = float(row.get("buy_price", 0.0) or 0.0)
+        qty = float(row.get("quantity", 0.0) or 0.0)
+        if not symbol or qty <= 0:
+            continue
+        item = portfolio.setdefault(symbol, {"shares": 0.0, "total_cost": 0.0})
+        item["shares"] += qty
+        item["total_cost"] += price * qty
+    return portfolio
+
+
+def _compute_total_history_perf(user_id: int) -> dict[str, dict[str, float]]:
+    """以目前庫存 + 歷史價格回看各週期損益（不含已賣出部位回補）。"""
+    portfolio = database.get_aggregated_portfolio(user_id)
+    if not portfolio:
+        return {}
+
+    symbols = list(portfolio.keys())
+    hist = market_api.fetch_portfolio_history(symbols)
+    periods = ["7d", "1mo", "6mo", "ytd", "1y"]
+    out: dict[str, dict[str, float]] = {}
+
+    for period in periods:
+        current_value = 0.0
+        past_value = 0.0
+        valid = False
+        for symbol, item in portfolio.items():
+            shares = float(item.get("shares", 0.0) or 0.0)
+            if shares <= 0:
+                continue
+            curr = market_api.get_fast_price(symbol)
+            past = (hist.get(symbol) or {}).get(period)
+            if isinstance(curr, (int, float)) and isinstance(past, (int, float)) and past > 0:
+                current_value += float(curr) * shares
+                past_value += float(past) * shares
+                valid = True
+        if valid and past_value > 0:
+            diff = current_value - past_value
+            pct = diff / past_value * 100
+            out[period] = {"diff": safe_round(diff, 2), "pct": safe_round(pct, 2)}
+    return out
+
+
+def cmd_total(user_id: int) -> str:
+    portfolio = database.get_aggregated_portfolio(user_id)
+    if not portfolio:
+        return "📭 您沒有購買任何股票，沒有任何損益資料。"
+
+    total_cost = 0.0
+    total_value = 0.0
+    for symbol, item in portfolio.items():
+        shares = float(item.get("shares", 0.0) or 0.0)
+        total_cost += float(item.get("total_cost", 0.0) or 0.0)
+        curr = market_api.get_fast_price(symbol)
+        if isinstance(curr, (int, float)):
+            total_value += float(curr) * shares
+
+    unrealized = total_value - total_cost
+    realized = database.get_realized_profit(user_id)
+    history_perf = _compute_total_history_perf(user_id)
+    max_diff = unrealized + realized
+    max_pct = (max_diff / total_cost * 100) if total_cost > 0 else 0.0
+    history_perf["max"] = {"diff": safe_round(max_diff, 2), "pct": safe_round(max_pct, 2)}
+
+    return frame.portfolio_total_report(
+        total_cost=safe_round(total_cost, 2),
+        total_value=safe_round(total_value, 2),
+        unrealized_profit=safe_round(unrealized, 2),
+        realized_profit=safe_round(realized, 2),
+        history_perf=history_perf,
+    )
+
+
+def cmd_data_clear(text: str, user_id: int) -> str:
+    """雙重確認刪除：第一次警告，60秒內再次輸入 data clear 才執行。"""
+    normalized = " ".join((text or "").strip().split()).lower()
+    if normalized not in {"data clear", "/data clear"}:
+        return (
+            "🧹 資料清除說明\n"
+            "━━━━━━━━━━━━━━\n"
+            "請輸入：`data clear`\n"
+            "⚠️ 需連續輸入兩次才會真的刪除。"
+        )
+
+    now = datetime.now()
+    prev = DATA_CLEAR_CONFIRM_STATE.get(user_id)
+    if not prev or (now - prev).total_seconds() > 60:
+        DATA_CLEAR_CONFIRM_STATE[user_id] = now
+        return frame.data_clear_confirm_text()
+
+    DATA_CLEAR_CONFIRM_STATE.pop(user_id, None)
+    database.clear_user_all_data(user_id)
+    return frame.data_clear_done_text()
+
+
+def cmd_bc(text: str, user_id: int) -> str:
+    parts = (text or "").split()
+    active, timer, _ = database.get_bc_settings(user_id)
+
+    if len(parts) == 1:
+        return frame.bc_settings_status(enabled=bool(active), interval=int(timer))
+
+    sub = parts[1].lower()
+    if sub == "on":
+        database.update_bc_settings(user_id, active=1)
+        return frame.bc_settings_status(enabled=True, interval=int(timer))
+    if sub == "off":
+        database.update_bc_settings(user_id, active=0)
+        return frame.bc_settings_status(enabled=False, interval=int(timer))
+    if sub == "timer":
+        if len(parts) < 3:
+            return "⏱️ 用法：`/bc timer 120`（最少 30 分鐘）"
+        try:
+            mins = int(parts[2])
+        except Exception:
+            return "❌ 請輸入有效分鐘數。例如：`/bc timer 120`"
+        if mins < 30:
+            return "❌ 推播間隔最少 30 分鐘。"
+        database.update_bc_settings(user_id, timer=mins)
+        return frame.bc_settings_status(enabled=bool(active), interval=mins)
+
+    return frame.bc_settings_status(enabled=bool(active), interval=int(timer))
 
 
 def get_system_status() -> str:
@@ -296,7 +425,7 @@ def cmd_list(user_id: int, page: int = 1) -> tuple[str, int]:
     portfolio = database.get_aggregated_portfolio(user_id)
     all_symbols = sorted(list(portfolio.keys()))
     total_items = len(all_symbols)
-    page_size = 10
+    page_size = 6
     total_pages = math.ceil(total_items / page_size) if total_items > 0 else 1
     
     if page < 1: page = 1
@@ -309,11 +438,14 @@ def cmd_list(user_id: int, page: int = 1) -> tuple[str, int]:
     rows = []
     for symbol in page_symbols:
         item = portfolio[symbol]
+        quote = market_api.get_macro_quote(symbol)
         rows.append({
             "symbol": symbol,
             "quantity": item["shares"],
             "avg_cost": item["avg_cost"],
-            "current_price": market_api.get_fast_price(symbol),
+            "current_price": quote.get("price", "N/A"),
+            "day_diff": quote.get("diff", 0.0),
+            "day_pct": quote.get("pct", 0.0),
         })
     
     text = frame.portfolio_list(rows, database.get_realized_profit(user_id), page, total_pages)
@@ -378,18 +510,44 @@ def cmd_sweep(text: str, user_id: int) -> str:
     parts = text.split()
     if len(parts) < 2:
         return frame.sweep_guide()
+    
     action = parts[1].lower()
+    
     if action == "list":
         return frame.sweep_list(database.get_sniper_list(user_id))
-    if action in {"add", "del"} and len(parts) > 2:
+    
+    if action == "clear":
+        database.clear_sniper_list(user_id)
+        return "✅ 狙擊監控清單已全數清空。"
+    
+    if action in {"add", "del"}:
+        if len(parts) < 3:
+            return f"❌ 請提供標的代號。例如：`/sweep {action} NVDA`"
+        
         symbols = [p.upper() for p in parts[2:] if p.strip()]
+        symbols = [s for s in symbols if re.fullmatch(r"[A-Z0-9\.\-]{1,6}", s)]
+        if not symbols:
+            return (
+                "❌ 請提供有效的標的代號。\n"
+                "可用格式：`/sweep add NVDA TSLA`"
+            )
+            
         for s in symbols:
             if action == "add":
                 database.add_sniper(user_id, s)
             else:
                 database.del_sniper(user_id, s)
-        return f"✅ 狙擊監控已{'新增' if action == 'add' else '移除'}：{', '.join(symbols)}"
-    return frame.sweep_guide()
+        
+        action_name = "新增" if action == "add" else "移除"
+        return (
+            f"✅ 狙擊監控已{action_name}：{', '.join(symbols)}\n"
+            "💡 可用 `/sweep list` 查看當前監控清單。"
+        )
+    
+    return (
+        f"❌ 未知的子指令：`{action}`\n\n"
+        f"{frame.sweep_guide()}"
+    )
 
 
 def cmd_ask(text: str, user_name: str, user_id: int) -> list[str] | str:
@@ -856,7 +1014,7 @@ def cmd_tech(text: str, user_id: int) -> str:
     return "\n\n".join(reports)
 
 
-def cmd_help() -> str:
+def cmd_help() -> list[str]:
     return frame.help_text()
 
 

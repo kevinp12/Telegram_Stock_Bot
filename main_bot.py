@@ -146,12 +146,15 @@ def reply(message, text: str | list[str], parse_mode: str | None = None, reply_m
 def setup_bot_commands() -> None:
     commands = [
         telebot.types.BotCommand("now", "⚡ 即時全景 + 總損益"),
+        telebot.types.BotCommand("total", "💰 總資產損益回顧"),
         telebot.types.BotCommand("list", "📋 持股詳細明細"),
         telebot.types.BotCommand("theme", "🚀 產業趨勢速報"),
         telebot.types.BotCommand("news", "📰 即時新聞與市場報告"),
         telebot.types.BotCommand("fin", "📊 個股財報與 EPS"),
         telebot.types.BotCommand("tech", "📊 專業量化分析"),
         telebot.types.BotCommand("sweep", "🎯 狙擊監控管理"),
+        telebot.types.BotCommand("bc", "📢 自動推播設定"),
+        telebot.types.BotCommand("data", "🧹 資料清除（需二次確認）"),
         telebot.types.BotCommand("quota", "💳 API 使用配額"),
         telebot.types.BotCommand("status", "🔍 AI 連線驗證"),
         telebot.types.BotCommand("help", "🎯 指揮手冊"),
@@ -193,11 +196,22 @@ signal.signal(signal.SIGTERM, handle_shutdown)
 
 def auto_news_job() -> None:
     while True:
-        time.sleep(AUTO_NEWS_INTERVAL_SECONDS)
+        time.sleep(30)
         try:
-            for user_id in database.get_all_user_ids():
+            now_ts = time.time()
+            for row in database.get_all_active_bc_users():
+                user_id = int(row.get("user_id", 0) or 0)
+                if user_id <= 0:
+                    continue
+                interval_min = int(row.get("bc_timer", 120) or 120)
+                if interval_min < 30:
+                    interval_min = 30
+                last_ts = float(row.get("last_bc_ts", 0) or 0)
+                if last_ts > 0 and now_ts - last_ts < interval_min * 60:
+                    continue
                 user_name = database.get_user_display_name(user_id)
                 safe_send(user_id, command.cmd_proactive_news(user_name, user_id=user_id))
+                database.update_bc_settings(user_id, last_ts=now_ts)
         except Exception as exc:
             logging.warning("auto_news_job failed: %s", exc)
 
@@ -364,6 +378,13 @@ def on_now(m):
         reply(m, "⚠️ 讀取行情失敗。")
 
 
+@bot.message_handler(commands=["total"])
+@bot.channel_post_handler(commands=["total"])
+def on_total(m):
+    user_id, _ = register_user(m)
+    reply(m, command.cmd_total(user_id))
+
+
 @bot.message_handler(commands=["list"])
 @bot.channel_post_handler(commands=["list"])
 def on_list(m):
@@ -436,6 +457,20 @@ def on_quota(m):
     reply(m, command.cmd_quota(user_id))
 
 
+@bot.message_handler(commands=["bc"])
+@bot.channel_post_handler(commands=["bc"])
+def on_bc(m):
+    user_id, _ = register_user(m)
+    reply(m, command.cmd_bc(m.text or "", user_id))
+
+
+@bot.message_handler(commands=["data"])
+@bot.channel_post_handler(commands=["data"])
+def on_data(m):
+    user_id, _ = register_user(m)
+    reply(m, command.cmd_data_clear(m.text or "", user_id))
+
+
 @bot.message_handler(commands=["ask"])
 @bot.channel_post_handler(commands=["ask"])
 def on_ask(m):
@@ -485,6 +520,9 @@ def on_text(m):
     text = getattr(m, "text", "") or ""
     if not text or text.startswith("/"): return
     user_id, user_name = register_user(m)
+    if " ".join(text.strip().split()).lower() == "data clear":
+        reply(m, command.cmd_data_clear(text, user_id))
+        return
     reply(m, command.handle_natural_language(text, user_name, user_id=user_id))
 
 

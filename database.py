@@ -9,6 +9,10 @@ from datetime import datetime
 from config import DB_NAME
 
 
+def _to_ts(dt: datetime) -> float:
+    return dt.timestamp()
+
+
 def get_conn():
     return sqlite3.connect(DB_NAME)
 
@@ -113,6 +117,12 @@ def init_db() -> None:
         existing_columns = [row[1] for row in c.fetchall()]
         if "model_pref" not in existing_columns:
             c.execute("ALTER TABLE users ADD COLUMN model_pref TEXT DEFAULT 'flash'")
+        if "bc_active" not in existing_columns:
+            c.execute("ALTER TABLE users ADD COLUMN bc_active INTEGER DEFAULT 0")
+        if "bc_timer" not in existing_columns:
+            c.execute("ALTER TABLE users ADD COLUMN bc_timer INTEGER DEFAULT 120")
+        if "last_bc_ts" not in existing_columns:
+            c.execute("ALTER TABLE users ADD COLUMN last_bc_ts REAL DEFAULT 0")
 
         conn.commit()
 
@@ -122,6 +132,51 @@ def _ensure_user_stats(c, user_id: int):
     c.execute("INSERT OR IGNORE INTO stats (user_id, key, value) VALUES (?, 'realized_profit', 0.0)", (user_id,))
     c.execute("INSERT OR IGNORE INTO stats (user_id, key, value) VALUES (?, 'tokens_used_today', 0.0)", (user_id,))
     c.execute("INSERT OR IGNORE INTO stats (user_id, key, value) VALUES (?, 'last_token_reset_date', 0.0)", (user_id,))
+
+
+def clear_portfolio_db(user_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM trades WHERE user_id=?", (user_id,))
+        # 同時也清除已實現損益統計
+        conn.execute("DELETE FROM stats WHERE user_id=? AND key='realized_profit'", (user_id,))
+        conn.commit()
+
+
+def clear_user_all_data(user_id: int) -> None:
+    """清空使用者的資產相關資料：買賣、觀察、狙擊、已實現損益。"""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM trades WHERE user_id=?", (user_id,))
+        conn.execute("DELETE FROM watchlist WHERE user_id=?", (user_id,))
+        conn.execute("DELETE FROM sniper_list WHERE user_id=?", (user_id,))
+        conn.execute("DELETE FROM stats WHERE user_id=? AND key='realized_profit'", (user_id,))
+        conn.commit()
+
+
+def get_bc_settings(user_id: int) -> tuple[int, int, float]:
+    with get_conn() as conn:
+        row = conn.execute("SELECT bc_active, bc_timer, last_bc_ts FROM users WHERE user_id=?", (user_id,)).fetchone()
+        if row:
+            return row
+        return (0, 120, 0.0)
+
+
+def update_bc_settings(user_id: int, active: int | None = None, timer: int | None = None, last_ts: float | None = None) -> None:
+    with get_conn() as conn:
+        if active is not None:
+            conn.execute("UPDATE users SET bc_active=? WHERE user_id=?", (active, user_id))
+        if timer is not None:
+            conn.execute("UPDATE users SET bc_timer=? WHERE user_id=?", (timer, user_id))
+        if last_ts is not None:
+            conn.execute("UPDATE users SET last_bc_ts=? WHERE user_id=?", (last_ts, user_id))
+        conn.commit()
+
+
+def get_all_active_bc_users() -> list[dict]:
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT user_id, bc_timer, last_bc_ts FROM users WHERE bc_active=1").fetchall()
+        return [dict(r) for r in rows]
+
 
 def add_or_update_user(user_id: int, display_name: str = "", username: str | None = None) -> None:
     with get_conn() as conn:
@@ -238,6 +293,30 @@ def get_status(user_id: int):
         return rows, []
 
 
+def get_trade_ledger(user_id: int) -> list[dict]:
+    """取得使用者完整交易流水（含時間），用於 total 歷史損益計算。"""
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT symbol, buy_price, quantity, trade_date
+            FROM trades
+            WHERE user_id=?
+            ORDER BY trade_date ASC, id ASC
+            """,
+            (user_id,),
+        ).fetchall()
+    return [
+        {
+            "symbol": str(r["symbol"]).upper(),
+            "buy_price": float(r["buy_price"]),
+            "quantity": float(r["quantity"]),
+            "trade_date": str(r["trade_date"]),
+        }
+        for r in rows
+    ]
+
+
 def get_aggregated_portfolio(user_id: int) -> dict[str, dict[str, float]]:
     stocks, _ = get_status(user_id)
     portfolio: dict[str, dict[str, float]] = {}
@@ -330,6 +409,11 @@ def add_sniper(user_id: int, symbol: str) -> None:
 def del_sniper(user_id: int, symbol: str) -> None:
     with get_conn() as conn:
         conn.execute("DELETE FROM sniper_list WHERE user_id=? AND symbol=?", (user_id, symbol.upper(),))
+        conn.commit()
+
+def clear_sniper_list(user_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM sniper_list WHERE user_id=?", (user_id,))
         conn.commit()
 
 def get_all_sniper_targets() -> list[tuple[int, str]]:

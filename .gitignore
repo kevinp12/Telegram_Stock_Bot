@@ -19,3 +19,26 @@ __pycache__/
 *.txt
 !README.md
 !requirements.txt
+
+# =========================
+# 以下為新增的防護與 AI 忽略規則
+# =========================
+
+# 其他常見的 Python 虛擬環境名稱
+venv/
+ENV/
+env/
+
+# 進階資安防護 (防止交易金鑰或憑證外流)
+*.pem
+secrets.json
+.env.*
+
+# AI Agent 與 CLI 專用暫存 (防止 Gemini 讀取過慢)
+.gemini_audit.log
+.cline/
+.cursor/
+
+# IDE 開發工具設定檔 (避免上傳個人編輯器環境)
+.vscode/
+.idea/

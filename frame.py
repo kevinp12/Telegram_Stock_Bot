@@ -14,26 +14,28 @@ def escape_html(text: Any) -> str:
 
 def help_text() -> list[str]:
     part1 = (
-        "🎯 美股顧問 指揮手冊 (1/2)\n"
+        "🎯 **美股顧問 指揮手冊 (1/2)**\n"
         "━━━━━━━━━━━━━━\n"
-        "⚡ 行情與損益\n"
+        "⚡ **行情與損益**\n"
         "• /now - 宏觀數據、帳戶總盈虧、AI 戰術短評\n\n"
-        "📋 資產明細\n"
+        "• /total - 總資產損益（含 7d/1mo/6mo/ytd/1y/max）\n\n"
+        "📋 **資產明細**\n"
         "• /list - 詳細股數、平均成本與獲利\n"
         "• /buy [代號] [價格] [股數] - 記錄買入\n"
         "• /sell [代號] [價格] [股數] - 記錄賣出\n\n"
-        "👀 雷達監控\n"
+        "👀 **雷達監控**\n"
         "• /watch add NVDA TSLA - 批量新增標的\n"
         "• /watch del AAPL - 批量移除標的\n"
         "• /watch list - 查看當前名單\n"
-        "• /watch clear - 清空雷達名單\n\n"
-        "💬 自然語言\n"
-        "• 直接輸入 NVDA 今天怎麼看 - 自動偵測代號並分析"
+        "• /watch clear - 清空雷達名單\n"
+        "• data clear - 雙重確認後清除你的資產資料\n\n"
+        "💬 **自然語言**\n"
+        "• 直接輸入 `NVDA 今天怎麼看` - 自動偵測代號並分析"
     )
     part2 = (
-        "🎯 美股顧問 指揮手冊 (2/2)\n"
+        "🎯 **美股顧問 指揮手冊 (2/2)**\n"
         "━━━━━━━━━━━━━━\n"
-        "🚀 報告與分析\n"
+        "🚀 **報告與分析**\n"
         "【新聞速報】\n"
         "• /news - 立即執行完整市場報告與新聞摘要\n"
         "• /news [代號|關鍵詞] - 獲取指定標的或主題的即時新聞分析\n"
@@ -51,6 +53,7 @@ def help_text() -> list[str]:
         "• /sweep list - 查看當前監控清單\n\n"
         "【其他】\n"
         "• /ask [代號] [問題] - 啟動 Pro 深度戰術分析\n"
+        "• /bc on|off|timer - 個人化自動推播設定\n"
         "• /status - 驗證 Gemini 配額與連線"
     )
     return [part1, part2]
@@ -200,85 +203,220 @@ def menu_registered_text() -> str:
 def status_text(version: str, brain_status: str, system_status: str, ping_ok: bool) -> str:
     icon = "🟢" if ping_ok else "🔴"
     return (
-        f"🔍 顧問系統狀態報告 ({version})\n"
+        f"🔍 **顧問系統狀態報告 ({version})**\n"
         "━━━━━━━━━━━━━━\n"
         f"核心連線：{icon} {'運行中' if ping_ok else '連線異常'}\n\n"
-        "📊 伺服器資源：\n"
+        "📊 **伺服器資源：**\n"
         f"{system_status}\n\n"
-        "🧠 AI 模型與配額：\n"
+        "🧠 **AI 模型與配額：**\n"
         f"{brain_status}"
     )
 
 
 def watch_guide() -> str:
     return (
-        "👀 雷達管理教學\n"
+        "👀 **雷達管理教學**\n"
         "━━━━━━━━━━━━━━\n"
-        "✅ 批量新增：/watch add TSLA NVDA\n"
-        "❌ 批量移除：/watch del AAPL\n"
-        "📋 查看清單：/watch list\n"
-        "🧹 清空清單：/watch clear"
+        "✅ 批量新增：`/watch add TSLA NVDA`\n"
+        "❌ 批量移除：`/watch del AAPL`\n"
+        "📋 查看清單：`/watch list`\n"
+        "🧹 清空清單：`/watch clear`"
     )
 
 
 def watch_list(symbols: list[str]) -> str:
     if not symbols:
-        return "👀 雷達清單：空"
-    return "👀 雷達清單：\n" + ", ".join(symbols)
+        return "👀 雷達清單：目前為空 🈳"
+    return "👀 **當前雷達名單：**\n" + ", ".join([f"`{s}`" for s in symbols])
+
+
+def sweep_guide() -> str:
+    return (
+        "🎯 **狙擊監控教學**\n"
+        "━━━━━━━━━━━━━━\n"
+        "本功能啟動 FVG 缺口與流動性掃蕩 (Sweep) 的 24/7 實時監控。\n"
+        "當標的進入結構失衡區或發生掃蕩時，我會主動發送警報。\n\n"
+        "✅ **新增監控**：`/sweep add NVDA TSLA` (支援批量)\n"
+        "❌ **移除監控**：`/sweep del AAPL`\n"
+        "📋 **查看清單**：`/sweep list`\n"
+        "🧹 **全部清空**：`/sweep clear`"
+    )
+
+
+def sweep_list(symbols: list[str]) -> str:
+    if not symbols:
+        return "🎯 **狙擊監控名單**\n━━━━━━━━━━━━━━\n目前為空 🈳\n\n💡 提示：使用 `/sweep add [代號]` 開始監控結構共振。"
+    return "🎯 **當前狙擊名單：**\n" + ", ".join([f"`{s}`" for s in symbols])
+
+
+def portfolio_total_report(
+    total_cost: float,
+    total_value: float,
+    unrealized_profit: float,
+    realized_profit: float,
+    history_perf: dict[str, dict[str, float]] | None = None
+) -> str:
+    total_all_profit = unrealized_profit + realized_profit
+    unrealized_pct = (unrealized_profit / total_cost * 100) if total_cost > 0 else 0.0
+    
+    sign_u = "+" if unrealized_profit >= 0 else ""
+    sign_r = "+" if realized_profit >= 0 else ""
+    sign_a = "+" if total_all_profit >= 0 else ""
+    
+    lines = [
+        "💰 **全球資產總盈虧報告**",
+        "━━━━━━━━━━━━━━",
+        f"📦 總持倉成本：`${total_cost:,.2f}`",
+        f"🏦 目前總市值：`${total_value:,.2f}`",
+        "",
+        f"💵 未實現損益：`{sign_u}${unrealized_profit:,.2f}` ({sign_u}{unrealized_pct:.2f}%)",
+        f"💰 已實現損益：`{sign_r}${realized_profit:,.2f}`",
+        f"📈 累計總盈虧：`{sign_a}${total_all_profit:,.2f}`",
+        "━━━━━━━━━━━━━━"
+    ]
+    
+    if history_perf:
+        lines.append("⏳ **歷史表現回溯** (基於目前持倉)")
+        periods = [
+            ("7d", "7 Day"),
+            ("1mo", "1 Month"),
+            ("6mo", "6 Month"),
+            ("ytd", "YTD"),
+            ("1y", "1 Year"),
+            ("max", "MAX")
+        ]
+        for key, label in periods:
+            perf = history_perf.get(key)
+            if perf:
+                diff = perf["diff"]
+                pct = perf["pct"]
+                s = "+" if diff >= 0 else ""
+                lines.append(f"├ {label}：`{s}${diff:,.2f}` ({s}{pct:.2f}%)")
+        lines.append("━━━━━━━━━━━━━━")
+    
+    return "\n".join(lines)
+
+
+def bc_settings_status(enabled: bool, interval: int) -> str:
+    status = "✅ 已開啟" if enabled else "❌ 已關閉"
+    return (
+        "📢 **自動推播設定**\n"
+        "━━━━━━━━━━━━━━\n"
+        f"🔹 目前狀態：{status}\n"
+        f"⏱ 推播頻率：`{interval}` 分鐘\n\n"
+        "💡 指令：\n"
+        "• `/bc on` - 開啟自動推播\n"
+        "• `/bc off` - 關閉自動推播\n"
+        "• `/bc timer [分鐘]` - 設定頻率 (最少 30 分)"
+    )
+
+
+def data_clear_confirm_text() -> str:
+    return (
+        "⚠️ **高風險操作確認**\n"
+        "━━━━━━━━━━━━━━\n"
+        "你即將清除以下資料：\n"
+        "• 持股庫存（buy / sell / list）\n"
+        "• 已實現總損益\n"
+        "• watch 清單\n"
+        "• sweep 狙擊清單\n\n"
+        "若確定執行，請在 60 秒內再輸入一次：`data clear`"
+    )
+
+
+def data_clear_done_text() -> str:
+    return (
+        "🧹 **資料已清除完成**\n"
+        "━━━━━━━━━━━━━━\n"
+        "你的資產庫存、總損益、watch 與 sweep 清單已清空。"
+    )
 
 
 def buy_success(symbol: str, price: float, qty: float) -> str:
     p_val = safe_round(price, 2)
-    return f"✅ 已記錄買入\n{symbol.upper()} | {qty:g} 股 | 成本 ${p_val:.2f}"
+    return f"✅ **已成功記錄買入**\n━━━━━━━━━━━━━━\n📈 標的：`{symbol.upper()}`\n🔹 股數：`{qty:g}` 股\n💰 成本：`${p_val:.2f}`"
 
 
 def sell_success(symbol: str, price: float, qty: float, profit: float, rem: float) -> str:
     p_val = safe_round(profit, 2)
     pr_val = safe_round(price, 2)
     sign = "+" if p_val >= 0 else ""
-    msg = f"✅ 已記錄賣出\n{symbol.upper()} | {qty - rem:g} 股 | 賣出 ${pr_val:.2f}\n已實現損益：{sign}${p_val:.2f} USD"
+    icon = "💰" if p_val >= 0 else "📉"
+    msg = (
+        f"✅ **已成功記錄賣出**\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"📈 標的：`{symbol.upper()}`\n"
+        f"🔹 數量：`{qty - rem:g}` 股\n"
+        f"💵 價格：`${pr_val:.2f}`\n"
+        f"{icon} 損益：{sign}${p_val:.2f} USD"
+    )
     if rem > 0:
-        msg += f"\n⚠️ 庫存不足，尚有 {rem:g} 股未能賣出。"
+        msg += f"\n⚠️ **庫存不足**：尚有 `{rem:g}` 股未能賣出。"
     return msg
 
 
 def portfolio_list(rows: list[dict[str, Any]], realized_profit: float = 0.0, page: int = 1, total_pages: int = 1) -> str:
     if not rows:
-        return "目前無庫存資料。"
-    
-    lines = [f"📋 持股詳細明細 (第 {page}/{total_pages} 頁)", "━━━━━━━━━━━━━━"]
+        return "📋 **持股明細**：目前無庫存資料。 🈳"
+
+    lines = [f"📋 **持股詳細明細 (第 {page}/{total_pages} 頁)**", "━━━━━━━━━━━━━━"]
     total_value = 0.0
     total_profit = 0.0
-    
-    # 注意：這裡傳入的 rows 應該是已經分頁過的
+    total_cost_all = 0.0
+
     for r in rows:
         symbol = r["symbol"]
         qty = float(r["quantity"])
         avg_cost = float(r["avg_cost"])
         curr = r.get("current_price", "N/A")
+        day_diff = r.get("day_diff", 0.0)
+        day_pct = r.get("day_pct", 0.0)
+
+        cost_basis = avg_cost * qty
+        total_cost_all += cost_basis
+
         if isinstance(curr, (int, float)):
             market_value = safe_round(float(curr) * qty, 2)
             profit = safe_round((float(curr) - avg_cost) * qty, 2)
-            pct = safe_round((profit / (avg_cost * qty) * 100), 2) if avg_cost * qty else 0.0
+            pct = (profit / cost_basis * 100) if cost_basis else 0.0
+
             sign = "+" if profit >= 0 else ""
+            trend_icon = "📈" if profit >= 0 else "📉"
+
+            day_sign = "+" if day_diff >= 0 else ""
+
             total_value += market_value
             total_profit += profit
+
             lines.append(
-                f"{symbol} (${safe_round(float(curr), 2):.2f}) | {qty:g} 股 | 市值 ${market_value:,.2f}\n"
-                f"成本：${safe_round(avg_cost, 2):.2f} | 獲利：{sign}${profit:,.2f} ({sign}{pct:.2f}%)\n"
+                f"{trend_icon} **{symbol}** (`${safe_round(float(curr), 2):.2f}` | {day_sign}{day_diff:.2f} / {day_sign}{day_pct:.2f}%)\n"
+                f"├ 股數：`{qty:g}` | 均價：`${safe_round(avg_cost, 2):.2f}`\n"
+                f"├ 總成本：`${cost_basis:,.2f}`\n"
+                f"└ 市值：`${market_value:,.2f}` | 獲利：{sign}${profit:,.2f} ({sign}{pct:.2f}%)\n"
             )
         else:
-            lines.append(f"{symbol} | {qty:g} 股\n成本：${safe_round(avg_cost, 2):.2f} | 現價：N/A\n")
-    
+            lines.append(
+                f"⚪ **{symbol}**\n"
+                f"├ 股數：`{qty:g}` | 成本：`${safe_round(avg_cost, 2):.2f}`\n"
+                f"└ 現價：`N/A`\n"
+            )
+
     total_profit = safe_round(total_profit, 2)
     realized_profit = safe_round(realized_profit, 2)
+
+    unrealized_pct = (total_profit / total_cost_all * 100) if total_cost_all > 0 else 0.0
+    realized_pct = (realized_profit / total_cost_all * 100) if total_cost_all > 0 else 0.0
+
     sign_total = "+" if total_profit >= 0 else ""
     sign_realized = "+" if realized_profit >= 0 else ""
+
     lines.append("━━━━━━━━━━━━━━")
     if total_pages == 1 or page == total_pages:
-        lines.append(f"未實現損益：{sign_total}${total_profit:,.2f} USD")
-        lines.append(f"已實現損益：{sign_realized}${realized_profit:,.2f} USD")
-    
+        lines.append(f"📦 **持倉總成本**：`${total_cost_all:,.2f} USD`")
+        lines.append(f"💵 **未實現損益**：`{sign_total}${total_profit:,.2f} USD` ({sign_total}{unrealized_pct:.2f}%)")
+        lines.append(f"💰 **已實現總損益**：`{sign_realized}${realized_profit:,.2f} USD` ({sign_realized}{realized_pct:.2f}%)")
+
+    lines.append(f"\n💡 提示：使用 `/list [頁碼]` 切換分頁。")
     return "\n".join(lines)
 
 
@@ -288,27 +426,27 @@ def fin_report(data: dict[str, Any]) -> str:
     
     growth_section = ""
     if rev_growth != "N/A" or eps_growth != "N/A":
-        growth_section = f"📊 **季度增長 (QoQ)**\n• 營收增長：{rev_growth}\n• EPS 增長 ：{eps_growth}\n\n"
+        growth_section = f"📈 **季度增長 (QoQ)**\n• 營收增長：`{rev_growth}`\n• EPS 增長 ：`{eps_growth}`\n\n"
 
     return (
-        f"📊 個股財報快照：{data.get('company_name', data.get('symbol', 'N/A'))}\n"
+        f"📊 **財報快照：{data.get('company_name', data.get('symbol', 'N/A'))}**\n"
         "━━━━━━━━━━━━━━\n"
-        f"代號：{data.get('symbol', 'N/A')}\n"
-        f"現價：{data.get('current_price', 'N/A')}\n"
-        f"產業：{data.get('sector', 'N/A')} / {data.get('industry', 'N/A')}\n"
-        f"市值：{data.get('market_cap', 'N/A')}\n"
-        f"TTM 營收：{data.get('revenue_ttm', 'N/A')}\n"
-        f"TTM 淨利：{data.get('net_income', 'N/A')}\n"
-        f"EPS (TTM)：{data.get('trailing_eps', 'N/A')}\n\n"
+        f"🔹 代號：`{data.get('symbol', 'N/A')}`\n"
+        f"💵 現價：`${data.get('current_price', 'N/A')}`\n"
+        f"🏗️ 產業：{data.get('sector', 'N/A')} / {data.get('industry', 'N/A')}\n"
+        f"💎 市值：`{data.get('market_cap', 'N/A')}`\n"
+        f"📢 TTM 營收：`{data.get('revenue_ttm', 'N/A')}`\n"
+        f"💵 TTM 淨利：`{data.get('net_income', 'N/A')}`\n"
+        f"📝 EPS (TTM)：`{data.get('trailing_eps', 'N/A')}`\n\n"
         f"{growth_section}"
         f"📐 **估值與範圍**\n"
-        f"• 本益比 (TTM)：{data.get('trailing_pe', 'N/A')} / 預期：{data.get('forward_pe', 'N/A')}\n"
-        f"• 毛利率：{data.get('gross_margin', 'N/A')} / 淨利率：{data.get('profit_margin', 'N/A')}\n"
-        f"• 52 週：{data.get('year_low', 'N/A')} - {data.get('year_high', 'N/A')}\n"
+        f"• 本益比 (TTM)：`{data.get('trailing_pe', 'N/A')}` / 預期：`{data.get('forward_pe', 'N/A')}`\n"
+        f"• 毛利率：`{data.get('gross_margin', 'N/A')}` | 淨利率：`{data.get('profit_margin', 'N/A')}`\n"
+        f"• 52 週：`{data.get('year_low', 'N/A')} - {data.get('year_high', 'N/A')}`\n"
         + (
             f"\n📅 **最新季報 ({data.get('latest_quarter')})**\n"
-            f"• EPS：{data.get('latest_quarter_eps', 'N/A')}\n"
-            f"• 營收：{data.get('latest_quarter_revenue', 'N/A')}"
+            f"• EPS：`{data.get('latest_quarter_eps', 'N/A')}`\n"
+            f"• 營收：`{data.get('latest_quarter_revenue', 'N/A')}`"
             if data.get("latest_quarter")
             else ""
         )
@@ -317,46 +455,32 @@ def fin_report(data: dict[str, Any]) -> str:
 
 def news_help_text() -> str:
     return (
-        "📰 新聞功能指南\n"
+        "📰 **新聞功能指南**\n"
         "━━━━━━━━━━━━━━\n"
         "提供即時市場新聞、個股相關新聞及 AI 深度解析。\n\n"
         "**指令用法：**\n"
-        "• `/news`：預設查詢美股整體市場新聞，包含標普 500、納斯達克；若未找到同類新聞，會自動改查聯準會、經濟數據與美股宏觀動向。\n"
-        "• `/news [股票代號]`：查詢指定股票的即時新聞，例如 `/news TSLA`。\n"
-        "  會自動判斷股票代號，並回傳最新一則新聞、即時行情與自然對話式的 AI 交易回饋。\n"
-        "• `/news [關鍵詞]`：搜尋特定主題新聞，例如 `/news AI 晶片`。\n"
-        "  會回傳最相關一則新聞，並附上 AI 對該主題的市場分析與判斷。\n"
-        "• `/news list`：查看所有可用的新聞來源清單。\n"
-        "• `/news help` 或 `/news_help`：顯示本新聞功能指南。\n\n"
-        "**新聞結果：**\n"
-        "系統將直接發送最相關的一則新聞，附上原文網址、讀取時間、最新時間與完整 AI 回饋。\n"
-        "若指定股票，會同時展示最新行情、支撐壓力與成本考量（若已持有）。\n"
-        "已優化為單則精選回應，避免過長內容傳送不完全。\n\n"
+        "• `/news`：預設隨機推送持股或關注標的的新聞。\n"
+        "• `/news [代號]`：查詢指定股票的即時解讀。\n"
+        "• `/news [關鍵詞]`：搜尋特定主題新聞。\n"
+        "• `/news list`：查看新聞來源清單。\n\n"
         "**AI 深度解析：**\n"
-        "每篇新聞的詳情頁面都將包含 AI 總結的\n**重要程度評級**、**新聞大綱**、**內文整理**、**專業觀點**以及**可能影響標的**，幫助您快速掌握核心資訊。\n\n"
-        "⚠️ 如果看不到新聞，請先確認 `NEWS_API_KEY` 是否已正確設定，系統會使用 NewsAPI 與 Yahoo Finance 兩種來源備援抓取。\n\n"
+        "包含重要程度評級、新聞大綱、專業觀點及 SMC 結構影響分析。\n\n"
         "📊 祝您投資順利！"
     )
 
 
 def hidden_op_text(current_model: str) -> str:
     return (
-        "🕵️ 隱藏功能指令集 (Hidden Features)\n"
+        "🕵️ **隱藏功能指令集 (Hidden Features)**\n"
         "━━━━━━━━━━━━━━\n"
-        "這些指令專為進階玩家設計，不會出現在選單中。\n\n"
-        f"• 當前 AI 核心：`{current_model}`\n\n"
-        "📌 指令清單與說明：\n"
-        "• `/op model flash` - 切換至 Gemini Flash\n"
-        "  (反應極快，適合日常行情與簡單分析)\n\n"
-        "• `/op model pro` - 切換至 Gemini Pro\n"
-        "  (具備最強算力，適合深度戰術與複雜比較)\n\n"
-        "• `/op log` - 查看系統運行實時日誌\n"
-        "  (直接將伺服器最近 40 筆審計日誌傳送到此)\n\n"
+        f"🤖 當前 AI 核心：`{current_model}`\n\n"
+        "📌 **指令清單：**\n"
+        "• `/op model [flash|pro]` - 切換 AI 模型\n"
+        "• `/op log` - 查看系統實時日誌\n"
+        "• `/op log clear` - 清除日誌檔案\n"
         "• `/op quota` - 查詢今日 API 配額進度\n"
-        "  (視覺化展示 Token 剩餘空間與使用比例)\n"
         "━━━━━━━━━━━━━━\n"
-        "💡 提示：指令需完整輸入，例如 `/op model pro`。\n"
-        "若只輸入 `/op model` 系統會給予詳細切換教學。"
+        "💡 提示：這些指令不會顯示在選單中。"
     )
 
 
@@ -368,11 +492,10 @@ def quota_text(used: int, limit: int, percent: float) -> str:
     bar = "█" * filled_length + "░" * (bar_length - filled_length)
     
     return (
-        "💎 Gemini 配額使用報告\n"
+        "💎 **Gemini 配額使用報告**\n"
         "━━━━━━━━━━━━━━\n"
-        f"今日已使用 Token：{used:,}\n"
-        f"每日配額上限：{limit:,}\n"
-        f"目前進度：{percent:.2f}%\n"
-        f"使用狀態：[{bar}]\n\n"
-        "💡 提示：配額於每日台灣時間上午 8 點（或 GCP 設定時間）重置。"
+        f"🔹 今日已使用：`{used:,}` Token\n"
+        f"🔸 每日上限：`{limit:,}` Token\n"
+        f"📊 目前進度：`{percent:.2f}%`\n"
+        f"⏳ 使用狀態：`[{bar}]`"
     )

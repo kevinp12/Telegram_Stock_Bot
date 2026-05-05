@@ -484,6 +484,78 @@ def get_stock_fundamentals(symbol: str) -> dict[str, Any]:
     return data
 
 
+def fetch_portfolio_history(symbols: list[str]) -> dict[str, dict[str, float]]:
+    """
+    獲取多個標的在不同時間點的歷史價格。
+    回傳：{ symbol: { "7d": price, "1mo": price, ... } }
+    """
+    if not symbols:
+        return {}
+    
+    ticker_map = {s: get_ticker_mapping(s, "yahoo") for s in symbols}
+    target_tickers = list(ticker_map.values())
+    
+    try:
+        # 下載過去一年的日 K 線
+        data = yf.download(
+            tickers=" ".join(target_tickers),
+            period="1y",
+            interval="1d",
+            group_by='ticker',
+            auto_adjust=True,
+            prepost=True,
+            session=session,
+            progress=False
+        )
+        
+        if data.empty:
+            return {}
+            
+        results = {}
+        for original_sym, yf_sym in ticker_map.items():
+            try:
+                if len(target_tickers) > 1:
+                    df = data[yf_sym].dropna()
+                else:
+                    df = data.dropna()
+                
+                if df.empty:
+                    continue
+                
+                # 獲取不同偏移量的價格
+                # 如果該日期沒開盤，則取最接近的後一個交易日
+                hist_prices = {}
+                
+                def get_price_at(offset_days: int) -> float | None:
+                    target_date = datetime.now() - timedelta(days=offset_days)
+                    # 尋找大於等於目標日期的第一筆資料
+                    match = df[df.index >= target_date.strftime("%Y-%m-%d")]
+                    if not match.empty:
+                        return float(match['Close'].iloc[0])
+                    return None
+
+                def get_price_ytd() -> float | None:
+                    ytd_date = datetime(datetime.now().year, 1, 1)
+                    match = df[df.index >= ytd_date.strftime("%Y-%m-%d")]
+                    if not match.empty:
+                        return float(match['Close'].iloc[0])
+                    return None
+
+                hist_prices["7d"] = get_price_at(7)
+                hist_prices["1mo"] = get_price_at(30)
+                hist_prices["6mo"] = get_price_at(180)
+                hist_prices["ytd"] = get_price_ytd()
+                hist_prices["1y"] = get_price_at(365)
+                
+                results[original_sym] = hist_prices
+            except Exception:
+                continue
+        return results
+    except Exception as e:
+        logging.warning(f"fetch_portfolio_history failed: {e}")
+        return {}
+
+
 def fetch_news_multi(symbol: str, limit: int = 3) -> list[dict[str, str]]:
     symbol = symbol.upper()
     news_list: list[dict[str, str]] = []
