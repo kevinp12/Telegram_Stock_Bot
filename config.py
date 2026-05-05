@@ -2,11 +2,13 @@
 全局設定檔：優先讀取 .env / 環境變數。
 請不要把真正 API key 寫進 GitHub。
 """
+
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent

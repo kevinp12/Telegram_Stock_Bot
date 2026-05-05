@@ -1,13 +1,14 @@
 """command.py
 所有 Telegram 指令與業務流程核心。
 """
+
 from __future__ import annotations
 
 import logging
-import re
-from datetime import datetime, timedelta
 import math
 import random
+import re
+from datetime import datetime, timedelta
 from typing import Any
 
 import psutil
@@ -19,8 +20,8 @@ import database
 import frame
 import market_api
 import tech_indicators
-from utils import safe_round
 from config import BOT_START_TIME, VERSION
+from utils import safe_round
 
 STOCK_RE = re.compile(r"\b[A-Z]{2,5}\b")
 FIN_COMPARE_STATE: dict[int, list[str]] = {}
@@ -41,7 +42,7 @@ def _portfolio_snapshot_from_ledger(ledger: list[dict]) -> dict[str, dict[str, f
     return portfolio
 
 
-def _compute_total_history_perf(user_id: int) -> dict[str, dict[str, float]]:
+def _compute_total_history_perf(user_id: int) -> dict[str, dict[str, Any]]:
     """以目前庫存 + 歷史價格回看各週期損益（不含已賣出部位回補）。"""
     portfolio = database.get_aggregated_portfolio(user_id)
     if not portfolio:
@@ -50,7 +51,17 @@ def _compute_total_history_perf(user_id: int) -> dict[str, dict[str, float]]:
     symbols = list(portfolio.keys())
     hist = market_api.fetch_portfolio_history(symbols)
     periods = ["7d", "1mo", "6mo", "ytd", "1y"]
-    out: dict[str, dict[str, float]] = {}
+
+    now = datetime.now()
+    period_dates = {
+        "7d": (now - timedelta(days=7)).strftime("%Y/%m/%d"),
+        "1mo": (now - timedelta(days=30)).strftime("%Y/%m/%d"),
+        "6mo": (now - timedelta(days=180)).strftime("%Y/%m/%d"),
+        "ytd": now.replace(month=1, day=1).strftime("%Y/%m/%d"),
+        "1y": (now - timedelta(days=365)).strftime("%Y/%m/%d"),
+    }
+
+    out: dict[str, dict[str, Any]] = {}
 
     for period in periods:
         current_value = 0.0
@@ -69,7 +80,7 @@ def _compute_total_history_perf(user_id: int) -> dict[str, dict[str, float]]:
         if valid and past_value > 0:
             diff = current_value - past_value
             pct = diff / past_value * 100
-            out[period] = {"diff": safe_round(diff, 2), "pct": safe_round(pct, 2)}
+            out[period] = {"diff": safe_round(diff, 2), "pct": safe_round(pct, 2), "date_str": period_dates[period]}
     return out
 
 
@@ -77,6 +88,17 @@ def cmd_total(user_id: int) -> str:
     portfolio = database.get_aggregated_portfolio(user_id)
     if not portfolio:
         return "📭 您沒有購買任何股票，沒有任何損益資料。"
+
+    join_date_raw = database.get_first_trade_date(user_id)
+    join_date = "N/A"
+    if join_date_raw:
+        try:
+            dt = datetime.strptime(join_date_raw.split(".")[0], "%Y-%m-%d %H:%M:%S")
+            join_date = dt.strftime("%Y/%m/%d")
+        except Exception:
+            join_date = str(join_date_raw)[:10].replace("-", "/")
+
+    today_date = datetime.now().strftime("%Y/%m/%d")
 
     total_cost = 0.0
     total_value = 0.0
@@ -92,7 +114,7 @@ def cmd_total(user_id: int) -> str:
     history_perf = _compute_total_history_perf(user_id)
     max_diff = unrealized + realized
     max_pct = (max_diff / total_cost * 100) if total_cost > 0 else 0.0
-    history_perf["max"] = {"diff": safe_round(max_diff, 2), "pct": safe_round(max_pct, 2)}
+    history_perf["max"] = {"diff": safe_round(max_diff, 2), "pct": safe_round(max_pct, 2), "date_str": join_date}
 
     return frame.portfolio_total_report(
         total_cost=safe_round(total_cost, 2),
@@ -100,6 +122,8 @@ def cmd_total(user_id: int) -> str:
         unrealized_profit=safe_round(unrealized, 2),
         realized_profit=safe_round(realized, 2),
         history_perf=history_perf,
+        join_date=join_date,
+        today_date=today_date,
     )
 
 
@@ -107,12 +131,7 @@ def cmd_data_clear(text: str, user_id: int) -> str:
     """雙重確認刪除：第一次警告，60秒內再次輸入 data clear 才執行。"""
     normalized = " ".join((text or "").strip().split()).lower()
     if normalized not in {"data clear", "/data clear"}:
-        return (
-            "🧹 資料清除說明\n"
-            "━━━━━━━━━━━━━━\n"
-            "請輸入：`data clear`\n"
-            "⚠️ 需連續輸入兩次才會真的刪除。"
-        )
+        return "🧹 資料清除說明\n" "━━━━━━━━━━━━━━\n" "請輸入：`data clear`\n" "⚠️ 需連續輸入兩次才會真的刪除。"
 
     now = datetime.now()
     prev = DATA_CLEAR_CONFIRM_STATE.get(user_id)
@@ -143,42 +162,21 @@ def cmd_bc(text: str, user_id: int) -> str:
     sub = parts[1].lower()
     if sub == "on":
         database.update_bc_settings(user_id, active=1)
-        return (
-            "✅ 自動推播已開啟\n"
-            "━━━━━━━━━━━━━━\n"
-            f"{frame.bc_settings_status(enabled=True, interval=int(timer))}"
-        )
+        return "✅ 自動推播已開啟\n" "━━━━━━━━━━━━━━\n" f"{frame.bc_settings_status(enabled=True, interval=int(timer))}"
     if sub == "off":
         database.update_bc_settings(user_id, active=0)
-        return (
-            "✅ 自動推播已關閉\n"
-            "━━━━━━━━━━━━━━\n"
-            f"{frame.bc_settings_status(enabled=False, interval=int(timer))}"
-        )
+        return "✅ 自動推播已關閉\n" "━━━━━━━━━━━━━━\n" f"{frame.bc_settings_status(enabled=False, interval=int(timer))}"
     if sub == "timer":
         if len(parts) < 3:
-            return (
-                "❌ 缺少分鐘數\n"
-                "━━━━━━━━━━━━━━\n"
-                "⏱️ 正確用法：`/bc timer 120`\n"
-                "ℹ️ 最少 30 分鐘，預設 120 分鐘。"
-            )
+            return "❌ 缺少分鐘數\n" "━━━━━━━━━━━━━━\n" "⏱️ 正確用法：`/bc timer 120`\n" "ℹ️ 最少 30 分鐘，預設 120 分鐘。"
         try:
             mins = int(parts[2])
         except Exception:
-            return (
-                "❌ 分鐘格式錯誤\n"
-                "━━━━━━━━━━━━━━\n"
-                "請輸入有效整數分鐘數，例如：`/bc timer 120`"
-            )
+            return "❌ 分鐘格式錯誤\n" "━━━━━━━━━━━━━━\n" "請輸入有效整數分鐘數，例如：`/bc timer 120`"
         if mins < 30:
             return "❌ 推播間隔最少 30 分鐘。請重新設定，例如：`/bc timer 60`"
         database.update_bc_settings(user_id, timer=mins)
-        return (
-            f"✅ 推播間隔已更新為 {mins} 分鐘\n"
-            "━━━━━━━━━━━━━━\n"
-            f"{frame.bc_settings_status(enabled=bool(active), interval=mins)}"
-        )
+        return f"✅ 推播間隔已更新為 {mins} 分鐘\n" "━━━━━━━━━━━━━━\n" f"{frame.bc_settings_status(enabled=bool(active), interval=mins)}"
 
     return (
         f"❌ 未知的 /bc 子指令：`{sub}`\n"
@@ -194,7 +192,7 @@ def get_system_status() -> str:
         cpu_pct = psutil.cpu_percent(interval=0.1)
         ram = psutil.virtual_memory()
         disk = psutil.disk_usage("/")
-        
+
         # 計算運行時間
         uptime = datetime.now() - BOT_START_TIME
         days = uptime.days
@@ -229,7 +227,7 @@ def build_portfolio_summary(user_id: int) -> dict[str, float]:
         "total_cost": safe_round(total_cost, 2),
         "total_value": safe_round(total_value, 2),
         "pl_val": safe_round(pl_val, 2),
-        "pl_pct": safe_round(pl_pct, 2)
+        "pl_pct": safe_round(pl_pct, 2),
     }
 
 
@@ -296,15 +294,13 @@ def _build_fin_compare_message(symbols: list[str], user_id: int) -> list[str] | 
             f"└ 📏 52 週區間：`{data.get('year_low', 'N/A')} - {data.get('year_high', 'N/A')}`\n"
             + (
                 f"📅 最新季：`{data.get('latest_quarter')}`｜EPS：`{data.get('latest_quarter_eps', 'N/A')}`｜營收：`{data.get('latest_quarter_revenue', 'N/A')}`\n"
-                if data.get('latest_quarter')
+                if data.get("latest_quarter")
                 else ""
             )
         )
         if symbol in holdings:
             position = holdings[symbol]
-            report_sections.append(
-                f"📦 持股：`{position.get('shares', 0):.2f}` 股｜成本：`${position.get('avg_cost', 0):.2f}`"
-            )
+            report_sections.append(f"📦 持股：`{position.get('shares', 0):.2f}` 股｜成本：`${position.get('avg_cost', 0):.2f}`")
 
     news_sections: list[str] = [
         f"📰 **深度分析素材（3/3）：{' vs '.join(symbols)}**",
@@ -316,21 +312,23 @@ def _build_fin_compare_message(symbols: list[str], user_id: int) -> list[str] | 
         if news_map[symbol]:
             news_lines = []
             for idx, item in enumerate(news_map[symbol], start=1):
-                title = item.get('title', '無標題').strip()
-                source = item.get('source', '未知')
-                url = item.get('url', '')
+                title = item.get("title", "無標題").strip()
+                source = item.get("source", "未知")
+                url = item.get("url", "")
                 news_lines.append(f"{idx}. 🗞️ {title}（{source}）\n   🔗 {url}")
             news_sections.append("\n".join(news_lines))
         else:
             news_sections.append("⚪ 暫無可用新聞。")
 
     ai_analysis = ai_core.compare_financials(symbols, fundamentals_map, news_map, user_name, holdings, user_id=user_id)
-    ai_page = "\n".join([
-        f"🤖 **AI 評析（2/3）：{' vs '.join(symbols)}**",
-        "━━━━━━━━━━━━━━",
-        "🧠 綜合估值、成長性、獲利品質、新聞催化與持股狀態：",
-        ai_analysis,
-    ])
+    ai_page = "\n".join(
+        [
+            f"🤖 **AI 評析（2/3）：{' vs '.join(symbols)}**",
+            "━━━━━━━━━━━━━━",
+            "🧠 綜合估值、成長性、獲利品質、新聞催化與持股狀態：",
+            ai_analysis,
+        ]
+    )
     return ["\n".join(report_sections), ai_page, "\n".join(news_sections)]
 
 
@@ -430,11 +428,13 @@ def build_risk_section(quotes: list[dict[str, Any]]) -> str:
         direction = "上升" if vix_diff > 0 else "下降" if vix_diff < 0 else "橫盤"
         signals.append(f"VIX {vix_status}，風險指標{direction}。")
 
-    return "\n".join([
-        "⚠️ 當前風險評估",
-        "━━━━━━━━━━━━━━",
-        *[f"• {note}" for note in signals],
-    ])
+    return "\n".join(
+        [
+            "⚠️ 當前風險評估",
+            "━━━━━━━━━━━━━━",
+            *[f"• {note}" for note in signals],
+        ]
+    )
 
 
 def build_now_dashboard(user_name: str, user_id: int, with_ai: bool = True) -> list[str]:
@@ -457,7 +457,7 @@ def build_now_dashboard(user_name: str, user_id: int, with_ai: bool = True) -> l
                 model=model_pref,
                 user_id=user_id,
                 temperature=0.35,
-                max_output_tokens=3000
+                max_output_tokens=3000,
             )
         except Exception as exc:
             logging.warning("AI tactical failed: %s", exc)
@@ -477,27 +477,31 @@ def cmd_list(user_id: int, page: int = 1) -> tuple[str, int]:
     total_items = len(all_symbols)
     page_size = 4
     total_pages = math.ceil(total_items / page_size) if total_items > 0 else 1
-    
-    if page < 1: page = 1
-    if page > total_pages: page = total_pages
-    
+
+    if page < 1:
+        page = 1
+    if page > total_pages:
+        page = total_pages
+
     start_idx = (page - 1) * page_size
     end_idx = start_idx + page_size
     page_symbols = all_symbols[start_idx:end_idx]
-    
+
     rows = []
     for symbol in page_symbols:
         item = portfolio[symbol]
         quote = market_api.get_macro_quote(symbol)
-        rows.append({
-            "symbol": symbol,
-            "quantity": item["shares"],
-            "avg_cost": item["avg_cost"],
-            "current_price": quote.get("price", "N/A"),
-            "day_diff": quote.get("diff", 0.0),
-            "day_pct": quote.get("pct", 0.0),
-        })
-    
+        rows.append(
+            {
+                "symbol": symbol,
+                "quantity": item["shares"],
+                "avg_cost": item["avg_cost"],
+                "current_price": quote.get("price", "N/A"),
+                "day_diff": quote.get("diff", 0.0),
+                "day_pct": quote.get("pct", 0.0),
+            }
+        )
+
     text = frame.portfolio_list(rows, database.get_realized_profit(user_id), page, total_pages)
     return text, total_pages
 
@@ -559,56 +563,36 @@ def cmd_sweep(text: str, user_id: int) -> str:
     """處理 /sweep 指令。"""
     parts = text.split()
     if len(parts) < 2:
-        return (
-            "📘 /sweep 指令教學\n"
-            "━━━━━━━━━━━━━━\n"
-            f"{frame.sweep_guide()}"
-        )
-    
+        return "📘 /sweep 指令教學\n" "━━━━━━━━━━━━━━\n" f"{frame.sweep_guide()}"
+
     action = parts[1].lower()
-    
+
     if action == "list":
-        return (
-            "📋 /sweep 監控清單\n"
-            "━━━━━━━━━━━━━━\n"
-            f"{frame.sweep_list(database.get_sniper_list(user_id))}"
-        )
-    
+        return "📋 /sweep 監控清單\n" "━━━━━━━━━━━━━━\n" f"{frame.sweep_list(database.get_sniper_list(user_id))}"
+
     if action == "clear":
         database.clear_sniper_list(user_id)
-        return (
-            "✅ 狙擊監控清單已全數清空。\n"
-            "💡 你可以使用 `/sweep add NVDA` 重新建立監控。"
-        )
-    
+        return "✅ 狙擊監控清單已全數清空。\n" "💡 你可以使用 `/sweep add NVDA` 重新建立監控。"
+
     if action in {"add", "del"}:
         if len(parts) < 3:
             return f"❌ 請提供標的代號。例如：`/sweep {action} NVDA`"
-        
+
         symbols = [p.upper() for p in parts[2:] if p.strip()]
         symbols = [s for s in symbols if re.fullmatch(r"[A-Z0-9\.\-]{1,6}", s)]
         if not symbols:
-            return (
-                "❌ 請提供有效的標的代號。\n"
-                "可用格式：`/sweep add NVDA TSLA`"
-            )
-            
+            return "❌ 請提供有效的標的代號。\n" "可用格式：`/sweep add NVDA TSLA`"
+
         for s in symbols:
             if action == "add":
                 database.add_sniper(user_id, s)
             else:
                 database.del_sniper(user_id, s)
-        
+
         action_name = "新增" if action == "add" else "移除"
-        return (
-            f"✅ 狙擊監控已{action_name}：{', '.join(symbols)}\n"
-            "💡 可用 `/sweep list` 查看當前監控清單。"
-        )
-    
-    return (
-        f"❌ 未知的子指令：`{action}`\n\n"
-        f"{frame.sweep_guide()}"
-    )
+        return f"✅ 狙擊監控已{action_name}：{', '.join(symbols)}\n" "💡 可用 `/sweep list` 查看當前監控清單。"
+
+    return f"❌ 未知的子指令：`{action}`\n\n" f"{frame.sweep_guide()}"
 
 
 def cmd_ask(text: str, user_name: str, user_id: int) -> list[str] | str:
@@ -617,12 +601,12 @@ def cmd_ask(text: str, user_name: str, user_id: int) -> list[str] | str:
         return "🤖 用法：/ask [代號] [問題]\n例如：/ask NVDA 現在是否過熱？"
     symbol = parts[1].upper().strip()
     query = parts[2].strip()
-    
+
     # 使用完整的量化分析作為快照
     snapshot = tech_indicators.calculate_indicators(symbol)
     if "error" in snapshot:
         snapshot = market_api.get_stock_snapshot(symbol)
-    
+
     news = market_api.fetch_news_multi(symbol, limit=3)
     holdings = database.get_aggregated_portfolio(user_id) if user_id is not None else {}
 
@@ -656,14 +640,15 @@ def process_news_item_smart(symbol: str, news_item: dict[str, Any], user_name: s
     title = news_item.get("title", "").lower()
     desc = news_item.get("description", "").lower()
     model_pref = database.get_user_model_preference(user_id)
-    
+
     # 財報季關鍵字池
     earnings_keywords = ["earnings", "q1", "q2", "q3", "q4", "財報", "業績", "guidance", "revenue", "eps", "財測"]
-    
+
     if any(keyword in title or keyword in desc for keyword in earnings_keywords):
         return ai_core.summarize_earnings_report(symbol, news_item, user_name, model=model_pref, user_id=user_id)
     else:
         return ai_core.summarize_tech_news(symbol, news_item, user_name, model=model_pref, user_id=user_id)
+
 
 def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
     """取得最相關的新聞，並以智慧模式詳細結構化回饋。支持隨機推播優先級：持股 > 監控 > 宏觀。"""
@@ -679,7 +664,7 @@ def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
         return [market_api.get_news_source_list()]
 
     raw_query = " ".join(parts[1:]).strip() if len(parts) >= 2 else ""
-    
+
     is_random = False
     if raw_query == "":
         is_random = True
@@ -695,7 +680,7 @@ def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
 
     # 1. 嘗試高品質過濾搜尋 (NewsAPI + Domains)
     news_items = market_api.fetch_news_filtered(target, limit=1)
-    
+
     # 2. 如果沒結果，且有擴展過搜尋詞，嘗試原始輸入的過濾搜尋
     if not news_items and target != raw_query:
         news_items = market_api.fetch_news_filtered(raw_query, limit=1)
@@ -705,8 +690,10 @@ def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
         try:
             symbol = raw_query.strip().upper()
             news_items = market_api.fetch_news_multi(symbol, limit=1)
-            if news_items: note = "NewsAPI 暫無結果，已由 Yahoo Finance 取得即時消息。"
-        except Exception: pass
+            if news_items:
+                note = "NewsAPI 暫無結果，已由 Yahoo Finance 取得即時消息。"
+        except Exception:
+            pass
 
     # 4. 宏觀兜底
     if not news_items:
@@ -717,11 +704,7 @@ def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
             note = "未找到原始目標新聞，改查聯準會與美國宏觀經濟數據。"
 
     if not news_items:
-        return [
-            f"📌 查詢：{raw_query}\n"
-            f"目前找不到相關新聞，可能是該標的近期無重大消息。\n"
-            f"🕒 讀取時間：{current_time_str}"
-        ]
+        return [f"📌 查詢：{raw_query}\n" f"目前找不到相關新聞，可能是該標的近期無重大消息。\n" f"🕒 讀取時間：{current_time_str}"]
 
     item = news_items[0]
     title = item.get("title", "無標題")
@@ -737,11 +720,7 @@ def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
         ai_answer = process_news_item_smart(symbol, item, user_name, user_id)
         header = f"📰 /news {symbol} 智慧解讀" + (" (隨機推播)" if is_random else "")
         snapshot = market_api.get_stock_snapshot(symbol)
-        market_line = (
-            f"現價：{snapshot.get('price', 'N/A')}，"
-            f"漲跌：{snapshot.get('diff', 'N/A')}，"
-            f"漲幅：{snapshot.get('pct', 'N/A')}%"
-        )
+        market_line = f"現價：{snapshot.get('price', 'N/A')}，" f"漲跌：{snapshot.get('diff', 'N/A')}，" f"漲幅：{snapshot.get('pct', 'N/A')}%"
     else:
         ai_prompt = (
             f"請以副官身分針對此新聞主題「{raw_query}」進行 SMC 結構影響分析。"
@@ -759,52 +738,49 @@ def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
         header = f"📰 /news {raw_query} 詳細回饋" + (" (隨機推播)" if is_random else "")
         market_line = ""
 
-    header_message = (
-        f"{header}\n"
-        f"🕒 讀取時間：{current_time_str}\n"
-        f"🎯 查詢目標：{target} {note}\n"
+    page1 = (
+        f"📰 **{header}** (1/2)\n"
         f"━━━━━━━━━━━━━━\n"
-        f"標題：{title}\n"
-        f"來源：{source}\n"
-        f"發佈時間：{published_text}\n"
-        f"原文：{url}\n"
-        f"{market_line}\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"摘要：{outline}\n"
-        f"━━━━━━━━━━━━━━"
+        f"🗞️ **{title}**\n"
+        f"📅 {published_text} | 🏢 {source}\n\n"
+        f"📝 **摘要：**\n{outline}\n\n"
+        f"🎯 **目標：** {target} {note}\n"
+        f"🕒 **更新：** {current_time_str}\n" + (f"\n📈 **市場快照：**\n{market_line}" if market_line else "") + f"\n\n🔗 [點擊閱讀原文]({url})"
     )
-    ai_message = f"🤖 AI 智慧戰術分析：\n{ai_answer}"
-    return [header_message, ai_message]
+
+    page2 = f"🤖 **AI 深度分析與戰術決策** (2/2)\n" f"━━━━━━━━━━━━━━\n" f"{ai_answer}"
+
+    return [page1, page2]
 
 
 def cmd_theme(text: str, user_name: str, user_id: int) -> str:
     """處理 /theme 指令，生成指定產業的深度速報"""
     parts = text.split()
     available_themes = list(market_api.TECH_THEMES.keys())
-    
+
     if len(parts) < 2:
         return f"🤖 用法：/theme [主題]\n目前支援的主題：{', '.join(available_themes)}\n例如：/theme 核能"
-    
+
     theme_input = parts[1].strip()
     # 模糊匹配
     matched_key = next((k for k in available_themes if k.upper() == theme_input.upper() or k == theme_input), None)
-    
+
     if not matched_key:
         return f"❌ 未知的趨勢主題。目前支援：{', '.join(available_themes)}"
-        
+
     query = market_api.TECH_THEMES[matched_key]
     # 先抓 RSS 看看有沒有相關的
     rss_news = market_api.fetch_tech_rss(limit=10)
-    theme_news = [n for n in rss_news if matched_key.lower() in n['title'].lower() or matched_key.lower() in n['description'].lower()]
-    
+    theme_news = [n for n in rss_news if matched_key.lower() in n["title"].lower() or matched_key.lower() in n["description"].lower()]
+
     # 如果 RSS 沒抓到，改抓 NewsAPI
     if len(theme_news) < 2:
         api_news = market_api.fetch_news_filtered(query, limit=5)
         theme_news.extend(api_news)
-    
+
     if not theme_news:
         return f"⚠️ 目前找不到關於【{matched_key}】的最新市場情報。"
-        
+
     news_text = "\n".join([f"- {n['title']}: {n['description']}" for n in theme_news[:3]])
     prompt = f"""
 請根據以下最新新聞，為 {user_name} 撰寫一份【{matched_key} 產業趨勢速報】。
@@ -818,15 +794,16 @@ def cmd_theme(text: str, user_name: str, user_id: int) -> str:
 新聞素材：
 {news_text}
 """
-    
+
     model_pref = database.get_user_model_preference(user_id)
     report = ai_core.ask_model(prompt, user_name, model=model_pref, user_id=user_id, temperature=0.4, max_output_tokens=2500)
-    
+
     return f"🚀 【{matched_key} 未來趨勢速報】\n━━━━━━━━━━━━━━\n{report}"
 
 
 def cmd_news_help() -> str:
     return frame.news_help_text()
+
 
 def cmd_fin(text: str, user_id: int) -> str:
     parts = text.split(maxsplit=2)
@@ -848,17 +825,12 @@ def cmd_fin(text: str, user_id: int) -> str:
 
         if len(combined) == 1:
             FIN_COMPARE_STATE[user_id] = combined
-            return (
-                f"📊 已暫存 {combined[0]}，請再輸入第二支代碼，或使用 /fin compare [第二支代號] 進行比較。"
-            )
+            return f"📊 已暫存 {combined[0]}，請再輸入第二支代碼，或使用 /fin compare [第二支代號] 進行比較。"
 
         if len(combined) > 3:
             FIN_COMPARE_STATE[user_id] = combined[:3]
             combined = combined[:3]
-            return (
-                f"📊 比較最多支援 3 支股票，目前已取前三支：{', '.join(combined)}。\n"
-                f"請重新使用 /fin compare {' '.join(combined)} 進行比較。"
-            )
+            return f"📊 比較最多支援 3 支股票，目前已取前三支：{', '.join(combined)}。\n" f"請重新使用 /fin compare {' '.join(combined)} 進行比較。"
 
         FIN_COMPARE_STATE.pop(user_id, None)
         return _build_fin_compare_message(combined, user_id)
@@ -870,7 +842,7 @@ def cmd_fin(text: str, user_id: int) -> str:
     return frame.fin_report(fundamentals)
 
 
-def cmd_status(user_id: int) -> str:
+def cmd_status(user_id: int) -> list[str]:
     try:
         ok = brain.ping(user_id)
     except Exception:
@@ -881,12 +853,13 @@ def cmd_status(user_id: int) -> str:
     sweep_count = len(database.get_sniper_list(user_id))
     watch_count = len(database.get_watchlist(user_id))
     brain_status = (
-        f"{brain_status}\n"
-        f"• 🤖 目前模型偏好：`{model_pref}`\n"
-        "• ⚡ Flash：速度快，適合日常查詢、新聞摘要、快速問答。\n"
-        "• 🧠 Pro：推理深，適合複雜比較、策略拆解、深度研究。\n"
-        f"• 📢 自動推播：{'✅ 開啟' if bc_active else '❌ 關閉'}（每 {bc_timer} 分鐘，可用 `/bc on/off/timer`）\n"
-        f"• 👀 Watch 監控數：`{watch_count}`｜🎯 Sweep 狙擊數：`{sweep_count}`"
+        f"{brain_status}\n\n"
+        f"• 🤖 模型偏好：`{model_pref}`\n"
+        f"  (⚡ Flash: 快速問答 | 🧠 Pro: 深度推理)\n\n"
+        f"• 📢 自動推播：{'✅ 開啟' if bc_active else '❌ 關閉'} (每 {bc_timer} 分)\n"
+        f"• 👀 雷達監控數：`{watch_count}`\n"
+        f"• 🎯 狙擊監控數：`{sweep_count}`\n\n"
+        f"💡 提示：使用 `/op model pro` 切換模型，使用 `/bc on` 開啟推播。"
     )
     return frame.status_text(VERSION, brain_status, get_system_status(), ok)
 
@@ -909,10 +882,10 @@ def cmd_op(text: str, user_id: int) -> str:
     logging.info(f"cmd_op called: text='{text}', user_id={user_id}")
     parts = text.split()
     current_model = database.get_user_model_preference(user_id)
-    
+
     if len(parts) == 1:
         return frame.hidden_op_text(current_model)
-    
+
     sub = parts[1].lower()
     if sub == "help":
         return frame.hidden_op_text(current_model)
@@ -932,12 +905,14 @@ def cmd_op(text: str, user_id: int) -> str:
             return "❌ 錯誤：模型僅支援 `flash` 或 `pro`。範例：`/op model pro`"
         database.set_user_model_preference(user_id, choice)
         return f"✅ 核心模型已更新為：`{choice}`\n即刻起所有 AI 分析將採用新模型。"
-    
+
     if sub == "log":
         if len(parts) > 2 and parts[2].lower() == "clear":
             try:
                 import os
+
                 from config import GEMINI_AUDIT_LOG_PATH
+
                 if os.path.exists(GEMINI_AUDIT_LOG_PATH):
                     os.remove(GEMINI_AUDIT_LOG_PATH)
                     return "🧹 系統審計日誌已成功清除。"
@@ -945,20 +920,18 @@ def cmd_op(text: str, user_id: int) -> str:
             except Exception as e:
                 return f"❌ 清除日誌失敗：{e}"
         return "__TRIGGER_LOG__"
-    
+
     if sub == "quota":
         return cmd_quota(user_id)
-        
-    return (
-        f"❓ 未知的隱藏指令：`{sub}`\n\n"
-        f"請使用 `/op help` 查看完整的隱藏功能清單。"
-    )
+
+    return f"❓ 未知的隱藏指令：`{sub}`\n\n" f"請使用 `/op help` 查看完整的隱藏功能清單。"
 
 
 def cmd_quota(user_id: int) -> str:
     """獲取 Token 配額使用情況。"""
     used_today, _ = database.get_daily_tokens(user_id)
     from config import DAILY_TOKEN_LIMIT
+
     percent = (used_today / DAILY_TOKEN_LIMIT) * 100
     return frame.quota_text(used_today, DAILY_TOKEN_LIMIT, percent)
 
@@ -1001,7 +974,7 @@ def _build_comprehensive_news(user_name: str, user_id: int) -> str:
 def cmd_test(user_name: str = "User", user_id: int | None = None) -> str:
     """立即執行包含新聞與即時盤勢的完整市場報告。"""
     sections = ["🚀 美股顧問：完整市場報告", "━━━━━━━━━━━━━━"]
-    
+
     # 1. 系統檢查
     sections.append("【核心狀態】")
     try:
@@ -1011,21 +984,21 @@ def cmd_test(user_name: str = "User", user_id: int | None = None) -> str:
             sections.append("❌ AI 核心連線異常")
     except Exception:
         sections.append("❌ AI 核心連線失敗")
-    
+
     # 2. 即時盤勢 (Dashboard)
     sections.append("\n【即時盤勢摘要】")
     if user_id is not None:
         sections.append(build_now_dashboard(user_name, user_id, with_ai=True))
     else:
         sections.append(build_now_dashboard(user_name, 0, with_ai=True))
-    
+
     # 3. 綜合新聞
     sections.append("\n【關鍵情報摘要】")
     if user_id is not None:
         sections.append(_build_comprehensive_news(user_name, user_id))
     else:
         sections.append(_build_comprehensive_news(user_name, 0))
-    
+
     return "\n".join(sections)
 
 
@@ -1034,33 +1007,33 @@ def cmd_tech(text: str, user_id: int) -> str:
     parts = text.split()
     if len(parts) < 2:
         return frame.tech_help_text()
-    
+
     # 子指令判斷
     subcmd = parts[1].upper()
-    
+
     if subcmd == "HELP":
         return frame.tech_help_text()
-    
+
     if subcmd == "COMPARE":
-        symbols = [s.strip().upper() for s in parts[2:5]] # 上限 3 隻
+        symbols = [s.strip().upper() for s in parts[2:5]]  # 上限 3 隻
         if not symbols:
             return "❌ 請輸入要比較的股票代號，例如：`/tech compare AAPL NVDA`"
-        
+
         data_list = []
         for sym in symbols:
             data = tech_indicators.calculate_indicators(sym)
             data_list.append(data)
-        
+
         # AI 戰術分析整合
         user_name = database.get_user_display_name(user_id)
         report = frame.tech_compare_report(data_list)
         ai_insight = ai_core.analyze_tech_comparison(data_list, user_name, user_id=user_id)
-        
+
         return f"{report}\n\n🤖 AI 戰術評析：\n{ai_insight}"
 
     # 處理批量查詢 (最多 3 隻)
     symbols = [s.strip().upper() for s in parts[1:4]]
-    
+
     # 如果只有一隻，走詳細報告
     if len(symbols) == 1:
         symbol = symbols[0]
@@ -1070,19 +1043,19 @@ def cmd_tech(text: str, user_id: int) -> str:
         data = tech_indicators.calculate_indicators(symbol)
         if "error" in data:
             return f"❌ 分析失敗 ({symbol})：{data['error']}\n請檢查代號是否正確或稍後再試。"
-        
+
         return frame.tech_report(data)
-    
-    # 如果有多隻，走批量詳細報告 (串接起來)
+
+    # 如果有多隻，收集所有分頁並回傳 list
     reports = []
     for sym in symbols:
         data = tech_indicators.calculate_indicators(sym)
         if "error" in data:
             reports.append(f"❌ 分析失敗 ({sym})：{data['error']}")
         else:
-            reports.append(frame.tech_report(data))
-    
-    return "\n\n".join(reports)
+            reports.extend(frame.tech_report(data))
+
+    return reports
 
 
 def cmd_help() -> list[str]:
@@ -1128,7 +1101,7 @@ def cmd_pre_market_report(user_name: str = "User", user_id: int | None = None) -
         sections.append(build_now_dashboard(user_name, user_id, with_ai=True))
     else:
         sections.append(build_now_dashboard(user_name, 0, with_ai=True))
-    
+
     # 加上有幫助的新聞
     sections.append("\n🗞️ 開盤焦點新聞：")
     macro_targets = ["標普500", "納斯達克"]
@@ -1136,17 +1109,17 @@ def cmd_pre_market_report(user_name: str = "User", user_id: int | None = None) -
         news = market_api.fetch_news_filtered(t, limit=1)
         if news:
             sections.append(process_news_item_smart(t, news[0], user_name, user_id or 0))
-    
+
     return "\n\n".join(sections)
 
 
 def cmd_post_market_report(user_name: str = "User", user_id: int | None = None) -> str:
     sections = ["🏁 美股收盤結算匯報 (收盤後 30 分鐘)", "━━━━━━━━━━━━━━"]
     if user_id is not None:
-        sections.append(cmd_list(user_id)[0]) # 分頁列表的第一頁文字
+        sections.append(cmd_list(user_id)[0])  # 分頁列表的第一頁文字
     else:
-        sections.append(cmd_list(0)[0]) # 分頁列表的第一頁文字
-    
+        sections.append(cmd_list(0)[0])  # 分頁列表的第一頁文字
+
     # 加上有幫助的新聞
     sections.append("\n🗞️ 今日市場關鍵總結：")
     macro_targets = ["標普500", "納斯達克"]
@@ -1154,14 +1127,14 @@ def cmd_post_market_report(user_name: str = "User", user_id: int | None = None) 
         news = market_api.fetch_news_filtered(t, limit=1)
         if news:
             sections.append(process_news_item_smart(t, news[0], user_name, user_id or 0))
-            
+
     return "\n\n".join(sections)
 
 
 def handle_natural_language(text: str, user_name: str, user_id: int | None = None) -> str:
     syms = STOCK_RE.findall(text or "")
     symbol = syms[0].upper() if syms else None
-    
+
     if symbol:
         # 偵測到代號，自動切換為股票深度分析模式
         # 使用量化分析作為快照
@@ -1170,11 +1143,11 @@ def handle_natural_language(text: str, user_name: str, user_id: int | None = Non
             snapshot = market_api.get_stock_snapshot(symbol)
 
         model_pref = database.get_user_model_preference(user_id) if user_id is not None else None
-        
+
         # 抓取最新新聞
         news = market_api.fetch_news_multi(symbol, limit=3)
         holdings = database.get_aggregated_portfolio(user_id) if user_id is not None else {}
-        
+
         prompt = f"""
 {user_name} 提到股票代號：{symbol}。
 原文內容：{text}

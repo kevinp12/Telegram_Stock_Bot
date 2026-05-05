@@ -1,5 +1,6 @@
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
-from decimal import Decimal, ROUND_HALF_UP
+
 
 def safe_round(value: Any, decimals: int = 2) -> Any:
     """安全地將數值四捨五入到指定位數 (使用 ROUND_HALF_UP)。"""

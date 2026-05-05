@@ -2,10 +2,12 @@
 SQLite 資料層：持股、分批成本、FIFO 賣出、已實現損益、雷達清單。
 支援多使用者隔離。
 """
+
 from __future__ import annotations
 
 import sqlite3
 from datetime import datetime
+
 from config import DB_NAME
 
 
@@ -21,8 +23,7 @@ def init_db() -> None:
     with get_conn() as conn:
         c = conn.cursor()
         # 建立交易表，增加 user_id
-        c.execute(
-            """
+        c.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
                 username TEXT,
@@ -31,10 +32,8 @@ def init_db() -> None:
                 first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-            """
-        )
-        c.execute(
-            """
+            """)
+        c.execute("""
             CREATE TABLE IF NOT EXISTS trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -43,45 +42,37 @@ def init_db() -> None:
                 quantity REAL NOT NULL,
                 trade_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-            """
-        )
+            """)
         # 建立觀察清單表，主鍵改為 (user_id, symbol)
-        c.execute(
-            """
+        c.execute("""
             CREATE TABLE IF NOT EXISTS watchlist (
                 user_id INTEGER NOT NULL,
                 symbol TEXT NOT NULL,
                 added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (user_id, symbol)
             )
-            """
-        )
+            """)
         # 建立狙擊名單表
-        c.execute(
-            """
+        c.execute("""
             CREATE TABLE IF NOT EXISTS sniper_list (
                 user_id INTEGER NOT NULL,
                 symbol TEXT NOT NULL,
                 added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (user_id, symbol)
             )
-            """
-        )
+            """)
         # 建立統計表，增加 user_id
-        c.execute(
-            """
+        c.execute("""
             CREATE TABLE IF NOT EXISTS stats (
                 user_id INTEGER NOT NULL,
                 key TEXT NOT NULL,
                 value REAL NOT NULL,
                 PRIMARY KEY (user_id, key)
             )
-            """
-        )
-        
+            """)
+
         # 建立詳細 Token 日誌表
-        c.execute(
-            """
+        c.execute("""
             CREATE TABLE IF NOT EXISTS token_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
@@ -92,9 +83,8 @@ def init_db() -> None:
                 urls TEXT,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-            """
-        )
-        
+            """)
+
         # 檢查是否需要遷移舊資料 (如果 user_id 欄位不存在則新增)
         try:
             c.execute("SELECT user_id FROM trades LIMIT 1")
@@ -102,11 +92,13 @@ def init_db() -> None:
             # 欄位不存在，進行簡單遷移
             # 假設舊資料 user_id 為 0
             c.execute("ALTER TABLE trades ADD COLUMN user_id INTEGER DEFAULT 0")
-            c.execute("CREATE TABLE watchlist_new (user_id INTEGER NOT NULL, symbol TEXT NOT NULL, added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, symbol))")
+            c.execute(
+                "CREATE TABLE watchlist_new (user_id INTEGER NOT NULL, symbol TEXT NOT NULL, added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, symbol))"
+            )
             c.execute("INSERT INTO watchlist_new (user_id, symbol, added_date) SELECT 0, symbol, added_date FROM watchlist")
             c.execute("DROP TABLE watchlist")
             c.execute("ALTER TABLE watchlist_new RENAME TO watchlist")
-            
+
             c.execute("CREATE TABLE stats_new (user_id INTEGER NOT NULL, key TEXT NOT NULL, value REAL NOT NULL, PRIMARY KEY (user_id, key))")
             c.execute("INSERT INTO stats_new (user_id, key, value) SELECT 0, key, value FROM stats")
             c.execute("DROP TABLE stats")
@@ -239,7 +231,7 @@ def update_daily_tokens(user_id: int, count: int) -> int:
     """更新指定使用者今日 Token 使用量，若跨日則歸零。"""
     today = datetime.now().strftime("%Y-%m-%d")
     used, last_date = get_daily_tokens(user_id)
-    
+
     with get_conn() as conn:
         if last_date != today:
             used = count
@@ -255,11 +247,12 @@ def update_daily_tokens(user_id: int, count: int) -> int:
 def record_token_log(user_id: int | None, model: str, prompt: int, output: int, total: int, urls: list[str] | None = None) -> None:
     """記錄單次 AI 請求的 Token 消耗與相關網址。"""
     import json
+
     url_json = json.dumps(urls) if urls else None
     with get_conn() as conn:
         conn.execute(
             "INSERT INTO token_logs (user_id, model, prompt_tokens, output_tokens, total_tokens, urls) VALUES (?, ?, ?, ?, ?, ?)",
-            (user_id, model, prompt, output, total, url_json)
+            (user_id, model, prompt, output, total, url_json),
         )
         conn.commit()
 
@@ -271,7 +264,7 @@ def get_token_stats(user_id: int | None = None) -> dict[str, float]:
     if user_id is not None:
         query += " WHERE user_id = ?"
         params.append(user_id)
-    
+
     with get_conn() as conn:
         row = conn.execute(query, params).fetchone()
         if row and row[0] is not None:
@@ -291,10 +284,20 @@ def save_trade(user_id: int, symbol: str, price: float, quantity: float) -> None
 def get_status(user_id: int):
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT symbol, buy_price, quantity FROM trades WHERE user_id=? ORDER BY symbol ASC, trade_date ASC, id ASC",
-            (user_id,)
+            "SELECT symbol, buy_price, quantity FROM trades WHERE user_id=? ORDER BY symbol ASC, trade_date ASC, id ASC", (user_id,)
         ).fetchall()
         return rows, []
+
+
+def get_first_trade_date(user_id: int) -> str | None:
+    """取得使用者第一筆交易的日期。"""
+    with get_conn() as conn:
+        c = conn.cursor()
+        c.execute("SELECT MIN(trade_date) FROM trades WHERE user_id=?", (user_id,))
+        row = c.fetchone()
+        if row and row[0]:
+            return row[0]
+        return None
 
 
 def get_trade_ledger(user_id: int) -> list[dict]:
@@ -386,13 +389,25 @@ def get_watchlist(user_id: int) -> list[str]:
 
 def add_watchlist(user_id: int, symbol: str) -> None:
     with get_conn() as conn:
-        conn.execute("INSERT OR IGNORE INTO watchlist (user_id, symbol) VALUES (?, ?)", (user_id, symbol.upper(),))
+        conn.execute(
+            "INSERT OR IGNORE INTO watchlist (user_id, symbol) VALUES (?, ?)",
+            (
+                user_id,
+                symbol.upper(),
+            ),
+        )
         conn.commit()
 
 
 def del_watchlist(user_id: int, symbol: str) -> None:
     with get_conn() as conn:
-        conn.execute("DELETE FROM watchlist WHERE user_id=? AND symbol=?", (user_id, symbol.upper(),))
+        conn.execute(
+            "DELETE FROM watchlist WHERE user_id=? AND symbol=?",
+            (
+                user_id,
+                symbol.upper(),
+            ),
+        )
         conn.commit()
 
 
@@ -401,24 +416,41 @@ def clear_watchlist_db(user_id: int) -> None:
         conn.execute("DELETE FROM watchlist WHERE user_id=?", (user_id,))
         conn.commit()
 
+
 def get_sniper_list(user_id: int) -> list[str]:
     with get_conn() as conn:
         return [r[0] for r in conn.execute("SELECT symbol FROM sniper_list WHERE user_id=? ORDER BY added_date ASC", (user_id,)).fetchall()]
 
+
 def add_sniper(user_id: int, symbol: str) -> None:
     with get_conn() as conn:
-        conn.execute("INSERT OR IGNORE INTO sniper_list (user_id, symbol) VALUES (?, ?)", (user_id, symbol.upper(),))
+        conn.execute(
+            "INSERT OR IGNORE INTO sniper_list (user_id, symbol) VALUES (?, ?)",
+            (
+                user_id,
+                symbol.upper(),
+            ),
+        )
         conn.commit()
+
 
 def del_sniper(user_id: int, symbol: str) -> None:
     with get_conn() as conn:
-        conn.execute("DELETE FROM sniper_list WHERE user_id=? AND symbol=?", (user_id, symbol.upper(),))
+        conn.execute(
+            "DELETE FROM sniper_list WHERE user_id=? AND symbol=?",
+            (
+                user_id,
+                symbol.upper(),
+            ),
+        )
         conn.commit()
+
 
 def clear_sniper_list(user_id: int) -> None:
     with get_conn() as conn:
         conn.execute("DELETE FROM sniper_list WHERE user_id=?", (user_id,))
         conn.commit()
+
 
 def get_all_sniper_targets() -> list[tuple[int, str]]:
     with get_conn() as conn:

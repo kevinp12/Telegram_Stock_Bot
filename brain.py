@@ -5,26 +5,20 @@ Gemini Brain：只負責和 Gemini API 溝通。
 - 自動 fallback
 - 可列出可用模型
 """
+
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Callable
+from typing import Callable, Iterable
 
 from google import genai
 from google.genai import types
 
 import database
-from config import (
-    BASE_DIR,
-    GEMINI_API_KEY,
-    FLASH_FALLBACK_MODELS,
-    PRO_FALLBACK_MODELS,
-    DAILY_TOKEN_LIMIT,
-    GEMINI_AUDIT_LOG_PATH,
-)
+from config import BASE_DIR, DAILY_TOKEN_LIMIT, FLASH_FALLBACK_MODELS, GEMINI_API_KEY, GEMINI_AUDIT_LOG_PATH, PRO_FALLBACK_MODELS
 
 
 @dataclass
@@ -89,31 +83,31 @@ def _audit_gemini_entry(
 ) -> None:
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     status = "✅ SUCCESS" if success else "❌ FAILED"
-    
+
     usage_info = usage_info or {"prompt": 0, "output": 0, "total": 0, "lost": 0}
     p = usage_info.get("prompt") or 0
     o = usage_info.get("output") or 0
     t = usage_info.get("total") or 0
-    
+
     line = f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     line += f"🕒 {timestamp} | {status} | User:{user_id or 0} | Model:{model}\n"
     line += f"📊 Tokens: Prompt:{p} | Output:{o} | Total:{t}\n"
-    
+
     if urls:
         line += f"🌐 Research URLs:\n"
         for url in urls:
             line += f"   - {url}\n"
-            
+
     if error:
         line += f"⚠️ Error: {error}\n"
-        
+
     if response_text:
         # 僅保留開頭一段預覽，避免 Log 爆炸
         preview = response_text.replace("\n", " ")[:200]
         line += f"📝 Response Preview: {preview}...\n"
-        
+
     _append_audit_line(line)
-    
+
     if success:
         database.record_token_log(user_id, model, p, o, t, urls)
 
@@ -131,7 +125,9 @@ def log_gemini_error(user_id: int | None, model: str, exc: Exception, urls: list
     )
 
 
-def log_gemini_success(user_id: int | None, model: str, response: object, response_text: str | None, max_output_tokens: int, urls: list[str] | None = None) -> None:
+def log_gemini_success(
+    user_id: int | None, model: str, response: object, response_text: str | None, max_output_tokens: int, urls: list[str] | None = None
+) -> None:
     usage_info = _format_usage(response)
     _audit_gemini_entry(
         user_id=user_id,
@@ -167,8 +163,8 @@ def list_available_models(force_refresh: bool = False) -> list[str]:
         client = get_client()
         for m in client.models.list():
             # 過濾掉不支援生成內容的模型 (例如只有 TTS 的模型)
-            methods = getattr(m, 'supported_generation_methods', []) or []
-            if 'generateContent' not in methods:
+            methods = getattr(m, "supported_generation_methods", []) or []
+            if "generateContent" not in methods:
                 continue
 
             name = normalize_model_name(getattr(m, "name", ""))
@@ -203,7 +199,7 @@ def check_quota_alert(used_tokens: int):
     """檢查流量是否過低並發送警報。"""
     global _last_alert_percent
     percent = (used_tokens / DAILY_TOKEN_LIMIT) * 100
-    
+
     # 在 80%, 90%, 100% 時提醒
     for threshold in [100, 90, 80]:
         if percent >= threshold > _last_alert_percent:
@@ -281,7 +277,7 @@ def generate_text(
             msg = str(exc)
             stats.last_error = msg[:500]
             log_gemini_error(user_id, clean_model, exc, urls=urls)
-            
+
             # 若為配額耗盡錯誤
             if "429" in msg or "ResourceExhausted" in msg:
                 if stats.alert_callback:
@@ -326,7 +322,7 @@ def get_status_text(user_id: int) -> str:
 
     used_today, _ = database.get_daily_tokens(user_id)
     percent = (used_today / DAILY_TOKEN_LIMIT) * 100
-    
+
     t_stats = database.get_token_stats(user_id)
 
     return (

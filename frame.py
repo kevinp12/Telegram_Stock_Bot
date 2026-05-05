@@ -1,10 +1,12 @@
 """frame.py
 所有 Telegram 顯示格式集中管理。
 """
+
 from __future__ import annotations
 
 import html
 from typing import Any
+
 from utils import safe_round
 
 
@@ -88,7 +90,7 @@ def tech_help_text() -> list[str]:
     return [part1, part2]
 
 
-def tech_report(data: dict[str, Any]) -> str:
+def tech_report(data: dict[str, Any]) -> list[str]:
     symbol = data.get("symbol", "N/A")
     price = data.get("last_price", 0)
     atr = data.get("atr", 0)
@@ -111,36 +113,46 @@ def tech_report(data: dict[str, Any]) -> str:
     ma_filter = data.get("ma_filter", {}) or {}
     tdst = data.get("tdst", {}) or {}
     signal = data.get("confluence_payload") or data.get("confluence_signal", {}) or {}
-    
-    # 動態圖示
+
     def get_status_icon(status: str) -> str:
-        if "大買" in status: return "🔥"
-        if "中買" in status or "小買" in status: return "✅"
-        if "大賣" in status: return "💀"
-        if "中賣" in status or "小賣" in status: return "⚠️"
+        if "大買" in status:
+            return "🔥"
+        if "中買" in status or "小買" in status:
+            return "✅"
+        if "大賣" in status:
+            return "💀"
+        if "中賣" in status or "小賣" in status:
+            return "⚠️"
         return "⚪"
 
     attack_icon = get_status_icon(attack)
     whale_icon = "🐋" if "買" in whale else ("🦈" if "賣" in whale else "⚪")
-    
-    # 策略總結生成
-    strategy_title = "💡 戰術執行建議"
-    strategy_body = "指標顯示趨勢不明，建議空手觀望，等待方向表態。"
-    
-    if "買" in attack:
-        stop_loss_1 = safe_round(price - 1.5 * atr, 2)
-        strategy_body = (
-            f"進攻指標顯示 {attack}，且主力籌碼 {whale}。\n"
-            f"🎯 **建議建倉位**：於 VWAP ({vwap}) 或 POC ({poc}) 附近分批佈局。\n"
-            f"🛡️ **核心防守位**：設於 {stop_loss_1} (價 - 1.5 ATR)。"
-        )
-    elif "賣" in attack:
-        strategy_body = (
-            f"進攻指標顯示 {attack}，技術面顯著轉弱。\n"
-            f"📉 **減碼建議**：建議分批減碼或執行停損計畫。\n"
-            f"🔭 **觀察位**：重要觀察防禦位設於 {vwap}。"
-        )
 
+    # 第一頁：基礎技術量化
+    page1 = (
+        f"📊 **量化作戰儀表板：{symbol} (1/2)**\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"現價：`{price}` | **ATR**：`{atr}`\n\n"
+        f"⚔️ **核心動能**\n"
+        f"• 綜合評級：{attack_icon} `{attack}`\n"
+        f"• 主力籌碼：{whale_icon} `{whale}` (量能倍數：{vol_ratio}x)\n"
+        f"• 趨勢結構：`{ema}`\n\n"
+        f"🌪️ **擺盪與衰竭**\n"
+        f"• MACD：{macd}\n"
+        f"• RSI：{rsi}\n"
+        f"• TD9：{td}\n\n"
+        f"📐 **關鍵點位參考**\n"
+        f"• 壓力位：`{res}`\n"
+        f"• 錨定成本 (VWAP)：`{vwap}`\n"
+        f"• 支撐位：`{sup}`\n\n"
+        f"💰 **獲利目標測算 (Take Profit)**\n"
+        f"• 短線 (2x ATR)：`{tp.get('tp1', 'N/A')}`\n"
+        f"• 波段 (Fib Ext)：`{tp.get('tp_fib', 'N/A')}`\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"💡 下一頁：SMC 結構與共振狙擊訊號"
+    )
+
+    # 第二頁：SMC 結構與戰術
     fvg_text = f"{fvg.get('type', 'N/A')} ({fvg.get('range', 'N/A')})"
     support_line = tdst.get("support") or {}
     resistance_line = tdst.get("resistance") or {}
@@ -148,66 +160,53 @@ def tech_report(data: dict[str, Any]) -> str:
     signal_icon = "🟢" if signal_type == "STRONG_LONG" else "🔴" if signal_type == "STRONG_SHORT" else "⚪"
     entry_zone = signal.get("entry_zone") or {}
     signal_reasons = signal.get("reasons") or []
-    signal_reason_text = "\n".join([f"  • {reason}" for reason in signal_reasons[:4]]) or "  • 尚無訊號說明。"
+    signal_reason_text = "\n".join([f"  • {reason}" for reason in signal_reasons[:3]]) or "  • 尚無訊號。"
     entry_zone_text = signal.get("entry_zone_text") or entry_zone.get("text", "N/A")
 
-    return (
-        f"📊 **【量化作戰儀表板：{symbol}】**\n"
+    strategy_body = "指標未顯示強烈共振，建議於關鍵點位觀望。"
+    if "買" in attack:
+        stop_loss_1 = safe_round(price - 1.5 * atr, 2)
+        strategy_body = f"多方動能佔優。🎯 建議進場點：VWAP ({vwap}) 或 POC ({poc}) 附近。\n" f"🛡️ 防守位：{stop_loss_1} (-1.5 ATR)。"
+    elif "賣" in attack:
+        strategy_body = f"空方動能佔優。📉 建議分批減碼。\n" f"🔭 觀察防禦位：VWAP ({vwap})。"
+
+    page2 = (
+        f"🎯 **SMC 狙擊戰術：{symbol} (2/2)**\n"
         f"━━━━━━━━━━━━━━\n"
-        f"現價：`{price}` | **ATR**：`{atr}`\n"
-        f"⚔️ **核心評級**：{attack_icon} `{attack}`\n"
-        f"🌊 **主力籌碼**：{whale_icon} `{whale}` (爆量 {vol_ratio}x)\n"
-        f"🧬 **趨勢結構**：{ema}\n\n"
-        f"🧲 **SMC 結構 (Smart Money)**\n"
-        f"• FVG 缺口 ：{fvg_text}\n"
-        f"• 流動性掃蕩 ：{sweep}\n"
-        f"• POC 控制點 ：`{poc}`\n\n"
-        f"🎯 **共振狙擊訊號 (MA20/50/200 × TDST × FVG)**\n"
-        f"• 訊號類型：{signal_icon} `{signal_type}`\n"
-        f"• MA 濾網：{ma_filter.get('status', 'N/A')}\n"
-        f"• MA20 / MA50 / MA200：`{ma_filter.get('ma20', 'N/A')}` / `{ma_filter.get('ma50', 'N/A')}` / `{ma_filter.get('ma200', 'N/A')}`\n"
-        f"• TDST 支撐：`{support_line.get('price', 'N/A')}` ({support_line.get('status', 'N/A')})｜TDST 壓力：`{resistance_line.get('price', 'N/A')}` ({resistance_line.get('status', 'N/A')})\n"
-        f"• 進場區間：`{entry_zone_text}`｜止損建議：`{signal.get('stop_loss', 'N/A')}`\n"
-        f"• 共振理由：\n{signal_reason_text}\n\n"
-        f"📐 **關鍵點位參考**\n"
-        f"• 支撐 / 壓力位 ：`{sup}` / `{res}`\n"
-        f"• 錨定成本 (VWAP)：`{vwap}`\n"
-        f"• 建議停損參考 ：`{safe_round(price - 2*atr, 2)}` - `{safe_round(price - 1.5*atr, 2)}`\n\n"
-        f"💰 **建議獲利目標 (Take Profit)**\n"
-        f"• 第一目標 (2x ATR)：`{tp.get('tp1', 'N/A')}`\n"
-        f"• 第二目標 (3x ATR)：`{tp.get('tp2', 'N/A')}`\n"
-        f"• 波段目標 (Fib Ext)：`{tp.get('tp_fib', 'N/A')}`\n\n"
-        f"🌪️ **動能與背離**\n"
-        f"• MACD 狀態：{macd}\n"
-        f"• RSI 強弱 ：{rsi}\n"
-        f"• TD9 序列 ：{td}\n\n"
-        f"**{strategy_title}**\n"
-        f"━━━━━━━━━━━━━━\n"
+        f"🧲 **流動性與失衡區**\n"
+        f"• FVG 缺口：{fvg_text}\n"
+        f"• 流動性掃蕩：{sweep}\n"
+        f"• POC 籌碼密集區：`{poc}`\n\n"
+        f"⚡ **共振狙擊訊號**\n"
+        f"• 狀態：{signal_icon} `{signal_type}`\n"
+        f"• MA 濾網：`{ma_filter.get('status', 'N/A')}`\n"
+        f"• TDST 區間：`{support_line.get('price', 'N/A')}` ~ `{resistance_line.get('price', 'N/A')}`\n"
+        f"• 進場區間：`{entry_zone_text}`\n"
+        f"• 訊號條件：\n{signal_reason_text}\n\n"
+        f"💡 **戰術執行**\n"
         f"{strategy_body}"
     )
+
+    return [page1, page2]
 
 
 def tech_compare_report(data_list: list[dict[str, Any]]) -> str:
     sections = ["📊 **【多維度技術面對比】**\n━━━━━━━━━━━━━━"]
-    
+
     for data in data_list:
         if "error" in data:
             sections.append(f"❌ {data.get('symbol', 'Unknown')}: 分析失敗")
             continue
-            
-        symbol = data['symbol']
-        price = data['last_price']
-        attack = data['attack_status']
-        td = data['td_status']
-        rsi = data['rsi']
-        ema = "多頭" if "多頭" in data['ema_status'] else ("空頭" if "空頭" in data['ema_status'] else "盤整")
-        
-        sections.append(
-            f"**{symbol}** (${price})\n"
-            f"├ 評級: `{attack}` | 趨勢: `{ema}`\n"
-            f"└ RSI: `{rsi}` | TD: `{td}`"
-        )
-    
+
+        symbol = data["symbol"]
+        price = data["last_price"]
+        attack = data["attack_status"]
+        td = data["td_status"]
+        rsi = data["rsi"]
+        ema = "多頭" if "多頭" in data["ema_status"] else ("空頭" if "空頭" in data["ema_status"] else "盤整")
+
+        sections.append(f"**{symbol}** (${price})\n" f"├ 評級: `{attack}` | 趨勢: `{ema}`\n" f"└ RSI: `{rsi}` | TD: `{td}`")
+
     sections.append("\n💡 提示：輸入 `/tech [代號]` 查看詳細點位。")
     return "\n".join(sections)
 
@@ -216,18 +215,20 @@ def menu_registered_text() -> str:
     return "✅ Telegram Menu 指令已註冊完成"
 
 
-def status_text(version: str, brain_status: str, system_status: str, ping_ok: bool) -> str:
+def status_text(version: str, brain_status: str, system_status: str, ping_ok: bool) -> list[str]:
     icon = "🟢" if ping_ok else "🔴"
-    return (
-        f"🔍 **顧問系統狀態報告 ({version})**\n"
-        "━━━━━━━━━━━━━━\n"
-        f"🧠 核心連線：{icon} {'運行中' if ping_ok else '連線異常'}\n"
-        "✅ 重要資訊：模型、推播、監控、伺服器資源如下。\n\n"
-        "🖥️ **伺服器資源**\n"
-        f"{system_status}\n\n"
-        "🤖 **AI 模型、配額與個人設定**\n"
-        f"{brain_status}"
+    page1 = (
+        f"🔍 **顧問系統狀態報告 (1/2)**\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"版本：{version}\n"
+        f"🧠 核心連線：{icon} {'運行中' if ping_ok else '連線異常'}\n\n"
+        f"🖥️ **伺服器資源狀況**\n"
+        f"{system_status}"
     )
+
+    page2 = f"🤖 **個人化 AI 與推播設定 (2/2)**\n" f"━━━━━━━━━━━━━━\n" f"{brain_status}"
+
+    return [page1, page2]
 
 
 def watch_guide() -> str:
@@ -271,15 +272,17 @@ def portfolio_total_report(
     total_value: float,
     unrealized_profit: float,
     realized_profit: float,
-    history_perf: dict[str, dict[str, float]] | None = None
+    history_perf: dict[str, dict[str, Any]] | None = None,
+    join_date: str = "N/A",
+    today_date: str = "N/A",
 ) -> str:
     total_all_profit = unrealized_profit + realized_profit
     unrealized_pct = (unrealized_profit / total_cost * 100) if total_cost > 0 else 0.0
-    
+
     sign_u = "+" if unrealized_profit >= 0 else ""
     sign_r = "+" if realized_profit >= 0 else ""
     sign_a = "+" if total_all_profit >= 0 else ""
-    
+
     lines = [
         "💰 **全球資產總盈虧報告**",
         "━━━━━━━━━━━━━━",
@@ -289,30 +292,24 @@ def portfolio_total_report(
         f"💵 未實現損益：`{sign_u}${unrealized_profit:,.2f}` ({sign_u}{unrealized_pct:.2f}%)",
         f"💰 已實現損益：`{sign_r}${realized_profit:,.2f}`",
         f"📈 累計總盈虧：`{sign_a}${total_all_profit:,.2f}`",
-        "━━━━━━━━━━━━━━"
+        "━━━━━━━━━━━━━━",
     ]
-    
+
     if history_perf:
-        lines.append("⏳ **歷史表現回溯** (基於目前持倉)")
-        periods = [
-            ("7d", "7 Day"),
-            ("1mo", "1 Month"),
-            ("6mo", "6 Month"),
-            ("ytd", "YTD"),
-            ("1y", "1 Year"),
-            ("max", "MAX")
-        ]
+        lines.append(f"⏳ **歷史表現回溯** (加入日: `{join_date}` ~ 今日: `{today_date}`)")
+        periods = [("7d", "7 Day"), ("1mo", "1 Month"), ("6mo", "6 Month"), ("ytd", "YTD"), ("1y", "1 Year"), ("max", "MAX")]
         for key, label in periods:
             perf = history_perf.get(key)
             if perf:
                 diff = perf["diff"]
                 pct = perf["pct"]
+                date_str = perf.get("date_str", "N/A")
                 s = "+" if diff >= 0 else ""
-                lines.append(f"├ {label}：`{s}${diff:,.2f}` ({s}{pct:.2f}%)")
+                lines.append(f"├ {label} ({date_str})：`{s}${diff:,.2f}` ({s}{pct:.2f}%)")
             else:
-                lines.append(f"├ {label}：`N/A` (`N/A`)" )
+                lines.append(f"├ {label}：`N/A` (`N/A`)")
         lines.append("━━━━━━━━━━━━━━")
-    
+
     return "\n".join(lines)
 
 
@@ -344,11 +341,7 @@ def data_clear_confirm_text() -> str:
 
 
 def data_clear_done_text() -> str:
-    return (
-        "🧹 **資料已清除完成**\n"
-        "━━━━━━━━━━━━━━\n"
-        "你的資產庫存、總損益、watch 與 sweep 清單已清空。"
-    )
+    return "🧹 **資料已清除完成**\n" "━━━━━━━━━━━━━━\n" "你的資產庫存、總損益、watch 與 sweep 清單已清空。"
 
 
 def buy_success(symbol: str, price: float, qty: float) -> str:
@@ -414,11 +407,7 @@ def portfolio_list(rows: list[dict[str, Any]], realized_profit: float = 0.0, pag
                 f"└ 市值：`${market_value:,.2f}` | 獲利：{sign}${profit:,.2f} ({sign}{pct:.2f}%)\n"
             )
         else:
-            lines.append(
-                f"⚪ **{symbol}**\n"
-                f"├ 股數：`{qty:g}` | 成本：`${safe_round(avg_cost, 2):.2f}`\n"
-                f"└ 現價：`N/A`\n"
-            )
+            lines.append(f"⚪ **{symbol}**\n" f"├ 股數：`{qty:g}` | 成本：`${safe_round(avg_cost, 2):.2f}`\n" f"└ 現價：`N/A`\n")
 
     total_profit = safe_round(total_profit, 2)
     realized_profit = safe_round(realized_profit, 2)
@@ -442,7 +431,7 @@ def portfolio_list(rows: list[dict[str, Any]], realized_profit: float = 0.0, pag
 def fin_report(data: dict[str, Any]) -> str:
     rev_growth = data.get("revenue_growth_qoq", "N/A")
     eps_growth = data.get("eps_growth_qoq", "N/A")
-    
+
     growth_section = ""
     if rev_growth != "N/A" or eps_growth != "N/A":
         growth_section = f"📈 **季度增長 (QoQ)**\n• 營收增長：`{rev_growth}`\n• EPS 增長 ：`{eps_growth}`\n\n"
@@ -507,9 +496,10 @@ def quota_text(used: int, limit: int, percent: float) -> str:
     # 建立進度條
     bar_length = 10
     filled_length = int(bar_length * percent / 100)
-    if filled_length > bar_length: filled_length = bar_length
+    if filled_length > bar_length:
+        filled_length = bar_length
     bar = "█" * filled_length + "░" * (bar_length - filled_length)
-    
+
     return (
         "💎 **Gemini 配額使用報告**\n"
         "━━━━━━━━━━━━━━\n"

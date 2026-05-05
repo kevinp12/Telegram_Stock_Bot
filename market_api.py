@@ -1,6 +1,7 @@
 """market_api.py
 市場資料調度層：Finnhub、Yahoo Finance、NewsAPI。
 """
+
 from __future__ import annotations
 
 import logging
@@ -8,10 +9,10 @@ import re
 from datetime import datetime, timedelta
 from typing import Any
 
-import requests
-import yfinance as yf
 import feedparser
 import numpy as np
+import requests
+import yfinance as yf
 
 try:
     import finnhub
@@ -20,7 +21,6 @@ except Exception:
 
 import ai_core
 from config import FINNHUB_KEY, NEWS_API_KEY
-
 
 finnhub_client = None
 if finnhub and FINNHUB_KEY:
@@ -31,9 +31,10 @@ if finnhub and FINNHUB_KEY:
 
 # 全局 Session 偽裝，避免被 yfinance/yahoo 封鎖
 session = requests.Session()
-session.headers.update({
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-})
+session.headers.update(
+    {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+)
+
 
 def fetch_batch_quotes(symbols: list[str]) -> dict[str, float]:
     """
@@ -41,45 +42,39 @@ def fetch_batch_quotes(symbols: list[str]) -> dict[str, float]:
     """
     if not symbols:
         return {}
-    
+
     ticker_map = {s: get_ticker_mapping(s, "yahoo") for s in symbols}
     target_tickers = list(ticker_map.values())
-    
+
     try:
         try:
             data = yf.download(
                 tickers=" ".join(target_tickers),
                 period="1d",
                 interval="1m",
-                group_by='ticker',
+                group_by="ticker",
                 auto_adjust=True,
                 prepost=True,
                 session=session,
-                progress=False
+                progress=False,
             )
         except TypeError:
             # 某些 yfinance 版本不支援 session 參數
             data = yf.download(
-                tickers=" ".join(target_tickers),
-                period="1d",
-                interval="1m",
-                group_by='ticker',
-                auto_adjust=True,
-                prepost=True,
-                progress=False
+                tickers=" ".join(target_tickers), period="1d", interval="1m", group_by="ticker", auto_adjust=True, prepost=True, progress=False
             )
-        
+
         if data.empty:
             return {}
-            
+
         results = {}
         for original_sym, yf_sym in ticker_map.items():
             try:
                 if len(target_tickers) > 1:
-                    price = data[yf_sym]['Close'].iloc[-1]
+                    price = data[yf_sym]["Close"].iloc[-1]
                 else:
-                    price = data['Close'].iloc[-1]
-                
+                    price = data["Close"].iloc[-1]
+
                 if not np.isnan(price):
                     results[original_sym] = float(price)
             except Exception:
@@ -88,6 +83,7 @@ def fetch_batch_quotes(symbols: list[str]) -> dict[str, float]:
     except Exception as e:
         logging.warning(f"fetch_batch_quotes failed: {e}")
         return {}
+
 
 # 擴充的科技與未來趨勢主題池
 TECH_THEMES = {
@@ -100,7 +96,7 @@ TECH_THEMES = {
     "未來APP": "Web3 OR Decentralized App OR Spatial Computing OR AR VR",
     "能源": "Renewable Energy OR Clean Energy OR Grid Storage",
     "核能": "Nuclear Energy OR Uranium OR SMR OR Constellation Energy",
-    "資安": "Cybersecurity OR Palo Alto Networks OR CrowdStrike OR Fortinet"
+    "資安": "Cybersecurity OR Palo Alto Networks OR CrowdStrike OR Fortinet",
 }
 
 
@@ -108,16 +104,14 @@ def fetch_tech_rss(limit: int = 5) -> list[dict[str, str]]:
     rss_urls = [
         ("CNBC Tech", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19854910"),
         ("TechCrunch", "https://techcrunch.com/feed/"),
-        ("WSJ Tech", "https://feeds.a.dj.com/rss/RSSWSJD.xml")
+        ("WSJ Tech", "https://feeds.a.dj.com/rss/RSSWSJD.xml"),
     ]
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    
+
+    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+
     news_list = []
     import time
-    
+
     for source_name, url in rss_urls:
         try:
             response = requests.get(url, headers=headers, timeout=10)
@@ -131,19 +125,21 @@ def fetch_tech_rss(limit: int = 5) -> list[dict[str, str]]:
                 published_time = entry.get("published_parsed") or entry.get("updated_parsed")
                 timestamp = time.mktime(published_time) if published_time else 0
                 content = entry.get("summary") or entry.get("description") or ""
-                content = re.sub(r'<[^>]+>', '', content).strip()
+                content = re.sub(r"<[^>]+>", "", content).strip()
 
-                news_list.append({
-                    "title": entry.get("title", "無標題").strip(),
-                    "description": content[:500] + ("..." if len(content) > 500 else ""),
-                    "source": source_name,
-                    "url": entry.get("link", ""),
-                    "publishedAt": entry.get("published", ""),
-                    "_timestamp": timestamp
-                })
+                news_list.append(
+                    {
+                        "title": entry.get("title", "無標題").strip(),
+                        "description": content[:500] + ("..." if len(content) > 500 else ""),
+                        "source": source_name,
+                        "url": entry.get("link", ""),
+                        "publishedAt": entry.get("published", ""),
+                        "_timestamp": timestamp,
+                    }
+                )
         except Exception as e:
             logging.warning(f"RSS 讀取失敗 {source_name}: {e}")
-            
+
     news_list.sort(key=lambda x: x.get("_timestamp", 0), reverse=True)
     for n in news_list:
         n.pop("_timestamp", None)
@@ -318,14 +314,14 @@ from utils import safe_round
 def get_stock_history_summary(symbol: str) -> dict[str, Any]:
     symbol = symbol.upper()
     out = {
-        "symbol": symbol, 
-        "price": "N/A", 
-        "volume_note": "N/A", 
-        "trend_note": "N/A", 
-        "support": "N/A", 
+        "symbol": symbol,
+        "price": "N/A",
+        "volume_note": "N/A",
+        "trend_note": "N/A",
+        "support": "N/A",
         "resistance": "N/A",
         "range_high_3mo": "N/A",
-        "range_low_3mo": "N/A"
+        "range_low_3mo": "N/A",
     }
     try:
         hist = yf.Ticker(symbol).history(period="3mo", interval="1d")
@@ -362,10 +358,10 @@ def get_stock_snapshot(symbol: str) -> dict[str, Any]:
     quote = quote_from_yahoo(symbol)
     history = get_stock_history_summary(symbol)
     return {
-        **history, 
-        "price": safe_round(quote.get("price", history.get("price"))), 
-        "diff": safe_round(quote.get("diff", 0)), 
-        "pct": safe_round(quote.get("pct", 0))
+        **history,
+        "price": safe_round(quote.get("price", history.get("price"))),
+        "diff": safe_round(quote.get("diff", 0)),
+        "pct": safe_round(quote.get("pct", 0)),
     }
 
 
@@ -424,7 +420,7 @@ def resolve_news_topic(query: str) -> dict[str, str]:
         target = "原油"
     elif any(k in topic_text.upper() for k in ["比特", "BTC", "BITCOIN"]):
         target = "比特幣"
-    elif 1 <= len(normalized_topic) <= 12: # 擴展代號長度
+    elif 1 <= len(normalized_topic) <= 12:  # 擴展代號長度
         try:
             # 檢查是否像股票代號
             ticker = yf.Ticker(normalized_topic)
@@ -439,7 +435,8 @@ def resolve_news_topic(query: str) -> dict[str, str]:
                 if related:
                     unique_related = []
                     for item in [normalized_topic] + related:
-                        if item not in unique_related: unique_related.append(item)
+                        if item not in unique_related:
+                            unique_related.append(item)
                     target = " OR ".join(unique_related)
                     note = f"已判斷為股票代號 {normalized_topic}，擴展搜尋：{', '.join(related)}。"
         except Exception as exc:
@@ -458,7 +455,8 @@ def get_stock_fundamentals(symbol: str) -> dict[str, Any]:
         info = getattr(ticker, "info", {}) or {}
     except Exception:
         info = {}
-    if not info: return {}
+    if not info:
+        return {}
 
     data: dict[str, Any] = {
         "symbol": symbol,
@@ -505,10 +503,10 @@ def fetch_portfolio_history(symbols: list[str]) -> dict[str, dict[str, float]]:
     """
     if not symbols:
         return {}
-    
+
     ticker_map = {s: get_ticker_mapping(s, "yahoo") for s in symbols}
     target_tickers = list(ticker_map.values())
-    
+
     try:
         # 下載過去一年的日 K 線
         try:
@@ -516,26 +514,20 @@ def fetch_portfolio_history(symbols: list[str]) -> dict[str, dict[str, float]]:
                 tickers=" ".join(target_tickers),
                 period="1y",
                 interval="1d",
-                group_by='ticker',
+                group_by="ticker",
                 auto_adjust=True,
                 prepost=True,
                 session=session,
-                progress=False
+                progress=False,
             )
         except TypeError:
             data = yf.download(
-                tickers=" ".join(target_tickers),
-                period="1y",
-                interval="1d",
-                group_by='ticker',
-                auto_adjust=True,
-                prepost=True,
-                progress=False
+                tickers=" ".join(target_tickers), period="1y", interval="1d", group_by="ticker", auto_adjust=True, prepost=True, progress=False
             )
-        
+
         if data.empty:
             return {}
-            
+
         results = {}
         for original_sym, yf_sym in ticker_map.items():
             try:
@@ -543,27 +535,27 @@ def fetch_portfolio_history(symbols: list[str]) -> dict[str, dict[str, float]]:
                     df = data[yf_sym].dropna()
                 else:
                     df = data.dropna()
-                
+
                 if df.empty:
                     continue
-                
+
                 # 獲取不同偏移量的價格
                 # 如果該日期沒開盤，則取最接近的後一個交易日
                 hist_prices = {}
-                
+
                 def get_price_at(offset_days: int) -> float | None:
                     target_date = datetime.now() - timedelta(days=offset_days)
                     # 尋找大於等於目標日期的第一筆資料
                     match = df[df.index >= target_date.strftime("%Y-%m-%d")]
                     if not match.empty:
-                        return float(match['Close'].iloc[0])
+                        return float(match["Close"].iloc[0])
                     return None
 
                 def get_price_ytd() -> float | None:
                     ytd_date = datetime(datetime.now().year, 1, 1)
                     match = df[df.index >= ytd_date.strftime("%Y-%m-%d")]
                     if not match.empty:
-                        return float(match['Close'].iloc[0])
+                        return float(match["Close"].iloc[0])
                     return None
 
                 hist_prices["7d"] = get_price_at(7)
@@ -571,7 +563,7 @@ def fetch_portfolio_history(symbols: list[str]) -> dict[str, dict[str, float]]:
                 hist_prices["6mo"] = get_price_at(180)
                 hist_prices["ytd"] = get_price_ytd()
                 hist_prices["1y"] = get_price_at(365)
-                
+
                 results[original_sym] = hist_prices
             except Exception:
                 continue
@@ -593,13 +585,15 @@ def fetch_news_multi(symbol: str, limit: int = 3) -> list[dict[str, str]]:
             data = r.json()
             if data.get("status") == "ok":
                 for n in data.get("articles", [])[:limit]:
-                    news_list.append({
-                        "title": n.get("title") or "",
-                        "description": n.get("description") or "",
-                        "source": (n.get("source") or {}).get("name", "NewsAPI"),
-                        "url": n.get("url") or "",
-                        "publishedAt": n.get("publishedAt") or "",
-                    })
+                    news_list.append(
+                        {
+                            "title": n.get("title") or "",
+                            "description": n.get("description") or "",
+                            "source": (n.get("source") or {}).get("name", "NewsAPI"),
+                            "url": n.get("url") or "",
+                            "publishedAt": n.get("publishedAt") or "",
+                        }
+                    )
         except Exception as exc:
             logging.warning("NewsAPI failed for %s: %s", symbol, exc)
 
@@ -608,14 +602,17 @@ def fetch_news_multi(symbol: str, limit: int = 3) -> list[dict[str, str]]:
         yf_news = yf.Ticker(symbol).news or []
         for n in yf_news[:limit]:
             # 避免重複 (比對標題)
-            if any(n.get("title") == existing.get("title") for existing in news_list): continue
-            news_list.append({
-                "title": n.get("title", ""),
-                "description": n.get("summary", "") or n.get("publisher", ""),
-                "source": n.get("publisher", "Yahoo Finance"),
-                "url": n.get("link", ""),
-                "publishedAt": n.get("providerPublishTime", ""),
-            })
+            if any(n.get("title") == existing.get("title") for existing in news_list):
+                continue
+            news_list.append(
+                {
+                    "title": n.get("title", ""),
+                    "description": n.get("summary", "") or n.get("publisher", ""),
+                    "source": n.get("publisher", "Yahoo Finance"),
+                    "url": n.get("link", ""),
+                    "publishedAt": n.get("providerPublishTime", ""),
+                }
+            )
     except Exception as exc:
         logging.warning("Yahoo news failed for %s: %s", symbol, exc)
 
@@ -641,13 +638,15 @@ def fetch_news_filtered(query: str, limit: int = 5) -> list[dict[str, str]]:
             data = r.json()
             if data.get("status") == "ok":
                 for n in data.get("articles", []):
-                    news_list.append({
-                        "title": n.get("title") or "",
-                        "description": n.get("description") or "",
-                        "source": (n.get("source") or {}).get("name", "NewsAPI"),
-                        "url": n.get("url") or "",
-                        "publishedAt": n.get("publishedAt") or "",
-                    })
+                    news_list.append(
+                        {
+                            "title": n.get("title") or "",
+                            "description": n.get("description") or "",
+                            "source": (n.get("source") or {}).get("name", "NewsAPI"),
+                            "url": n.get("url") or "",
+                            "publishedAt": n.get("publishedAt") or "",
+                        }
+                    )
         except Exception as exc:
             logging.debug("NewsAPI filtered search failed for %s: %s", query, exc)
 

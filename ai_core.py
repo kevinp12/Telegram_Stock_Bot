@@ -1,13 +1,13 @@
 """ai_core.py
 AI 思考層：決定美股顧問如何分析與回覆。
 """
+
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
 
 import brain
-
 from utils import safe_round
 
 SYSTEM_PROMPT_TEMPLATE = """
@@ -72,6 +72,7 @@ SYSTEM_PROMPT_TEMPLATE = """
 4. 若 VIX 高於 25，必須在最後加註風險警語。]
 """.strip()
 
+
 def get_current_time_str() -> str:
     """獲取精確到秒的當前時間與星期。"""
     now = datetime.now()
@@ -79,12 +80,22 @@ def get_current_time_str() -> str:
     weekday_str = weekdays[now.weekday()]
     return now.strftime(f"%Y年%m月%d日 {weekday_str} %H:%M:%S")
 
+
 def sanitize_for_telegram(text: str) -> str:
     if not text:
         return ""
     return text.strip()
 
-def ask_flash(prompt: str, user_name: str, *, user_id: int | None = None, temperature: float = 0.45, max_output_tokens: int = 4000, urls: list[str] | None = None) -> str:
+
+def ask_flash(
+    prompt: str,
+    user_name: str,
+    *,
+    user_id: int | None = None,
+    temperature: float = 0.45,
+    max_output_tokens: int = 4000,
+    urls: list[str] | None = None,
+) -> str:
     current_time = get_current_time_str()
     return sanitize_for_telegram(
         brain.generate_text(
@@ -98,7 +109,16 @@ def ask_flash(prompt: str, user_name: str, *, user_id: int | None = None, temper
         )
     )
 
-def ask_pro(prompt: str, user_name: str, *, user_id: int | None = None, temperature: float = 0.35, max_output_tokens: int = 4000, urls: list[str] | None = None) -> str:
+
+def ask_pro(
+    prompt: str,
+    user_name: str,
+    *,
+    user_id: int | None = None,
+    temperature: float = 0.35,
+    max_output_tokens: int = 4000,
+    urls: list[str] | None = None,
+) -> str:
     current_time = get_current_time_str()
     return sanitize_for_telegram(
         brain.generate_text(
@@ -111,6 +131,7 @@ def ask_pro(prompt: str, user_name: str, *, user_id: int | None = None, temperat
             urls=urls,
         )
     )
+
 
 def ask_model(
     prompt: str,
@@ -127,13 +148,15 @@ def ask_model(
         return ask_pro(prompt, user_name, user_id=user_id, temperature=temperature, max_output_tokens=max_output_tokens, urls=urls)
     return ask_flash(prompt, user_name, user_id=user_id, temperature=temperature, max_output_tokens=max_output_tokens, urls=urls)
 
+
 def summarize_tech_news(symbol: str, news_item: dict[str, Any], user_name: str, model: str | None = None, user_id: int | None = None) -> str:
     """一般科技新聞：強制輸出情緒分數、重要程度與 Hashtag"""
     title = news_item.get("title", "")
     desc = news_item.get("description", "")
     url = news_item.get("url", "")
-    
+
     import market_api
+
     price_info = market_api.get_fast_price(symbol)
     price_str = f"（當前股價：{price_info} USD）" if price_info != "N/A" else ""
 
@@ -155,8 +178,9 @@ def summarize_earnings_report(symbol: str, news_item: dict[str, Any], user_name:
     title = news_item.get("title", "")
     desc = news_item.get("description", "")
     url = news_item.get("url", "")
-    
+
     import market_api
+
     price_info = market_api.get_fast_price(symbol)
     price_str = f"（當前股價：{price_info} USD）" if price_info != "N/A" else ""
 
@@ -172,9 +196,10 @@ def summarize_earnings_report(symbol: str, news_item: dict[str, Any], user_name:
 """
     return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.2, max_output_tokens=2500, urls=[url] if url else None)
 
+
 def analyze_tech_comparison(data_list: list[dict[str, Any]], user_name: str, model: str | None = None, user_id: int | None = None) -> str:
     """提供 AI 戰術評析：比較多支股票的量價與行業關聯。"""
-    
+
     prompt = f"""
 {user_name}，請對以下幾支股票進行橫向 SMC 與量化技術對比分析：
 {data_list}
@@ -185,6 +210,7 @@ def analyze_tech_comparison(data_list: list[dict[str, Any]], user_name: str, mod
 3. 若 VIX 高於 25，需特別強調保守策略。
 """
     return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=2000)
+
 
 def infer_related_news_terms(symbol: str, user_name: str, *, user_id: int | None = None) -> list[str]:
     prompt = f"""
@@ -197,6 +223,7 @@ def infer_related_news_terms(symbol: str, user_name: str, *, user_id: int | None
     items = [item.strip() for item in result.replace(";", ",").replace("\n", ",").split(",") if item.strip()]
     return items[:5]
 
+
 def ask_ai_investment_advice(
     symbol: str,
     query: str,
@@ -208,19 +235,14 @@ def ask_ai_investment_advice(
     model: str | None = None,
 ) -> str:
     current_time = get_current_time_str()
-    news_text = "\n".join(
-        f"- {n.get('title','')}｜{n.get('description','')}"
-        for n in news_items[:3]
-    ) or "目前無可用新聞。"
-    
+    news_text = "\n".join(f"- {n.get('title','')}｜{n.get('description','')}" for n in news_items[:3]) or "目前無可用新聞。"
+
     urls = [n.get("url") for n in news_items if n.get("url")]
 
     holding_info = "目前尚未持有該標的。"
     if user_holdings and symbol in user_holdings:
         position = user_holdings[symbol]
-        holding_info = (
-            f"持股狀態：持有 {position.get('shares', 0):.2f} 股，平均成本 ${position.get('avg_cost', 0):.2f}。"
-        )
+        holding_info = f"持股狀態：持有 {position.get('shares', 0):.2f} 股，平均成本 ${position.get('avg_cost', 0):.2f}。"
 
     def _f(val):
         res = safe_round(val, 2)
@@ -230,6 +252,7 @@ def ask_ai_investment_advice(
 
     # 獲取 VIX 數值
     import market_api
+
     vix_data = market_api.get_macro_quote("VIX")
     raw_vix = vix_data.get("price", 0)
     vix_val = float(raw_vix) if isinstance(raw_vix, (int, float)) else 0.0
@@ -261,6 +284,7 @@ def ask_ai_investment_advice(
 """.strip()
     return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=4000, urls=urls)
 
+
 def compare_financials(
     symbols: list[str],
     fundamentals_map: dict[str, dict[str, Any]],
@@ -274,7 +298,7 @@ def compare_financials(
     holdings = user_holdings or {}
     summary_lines: list[str] = []
     all_urls: list[str] = []
-    
+
     def _f(val):
         res = safe_round(val, 2)
         if isinstance(res, (int, float)):
@@ -289,12 +313,10 @@ def compare_financials(
             holding_note = f"使用者持有 {symbol} {position.get('shares', 0):.2f} 股，成本 ${position.get('avg_cost', 0):.2f}。"
         news_items = news_map.get(symbol, [])
         for n in news_items:
-            if n.get("url"): all_urls.append(n["url"])
-            
-        news_text = "\n".join(
-            f"- {n.get('title','')} ({n.get('source','Unknown')}) {n.get('url','')}"
-            for n in news_items[:2]
-        ) or "- 無可用新聞。"
+            if n.get("url"):
+                all_urls.append(n["url"])
+
+        news_text = "\n".join(f"- {n.get('title','')} ({n.get('source','Unknown')}) {n.get('url','')}" for n in news_items[:2]) or "- 無可用新聞。"
 
         summary_lines.append(
             f"{symbol} - {data.get('company_name', symbol)}\n"
@@ -323,8 +345,15 @@ def compare_financials(
     )
     return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=4000, urls=all_urls)
 
+
 def chat_with_user(
-query: str, user_name: str, context_symbol: str | None = None, snapshot: dict[str, Any] | None = None, user_id: int | None = None, model: str | None = None) -> str:
+    query: str,
+    user_name: str,
+    context_symbol: str | None = None,
+    snapshot: dict[str, Any] | None = None,
+    user_id: int | None = None,
+    model: str | None = None,
+) -> str:
     if context_symbol:
         prompt = f"""
 {user_name} 的自然語言問題：{query}

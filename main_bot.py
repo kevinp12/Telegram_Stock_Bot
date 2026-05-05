@@ -1,6 +1,7 @@
 """main_bot.py
 Telegram 執行核心：指令註冊、訊息分發、開關機通報、polling。
 """
+
 from __future__ import annotations
 
 import html
@@ -16,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 import telebot
 from telebot.apihelper import ApiTelegramException
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 try:
     from telebot.apihelper import RetryAfter
@@ -33,11 +34,13 @@ from config import (
     LONG_POLLING_TIMEOUT,
     MAX_TELEGRAM_MESSAGE_LENGTH,
     POLLING_TIMEOUT,
-    TELEGRAM_TOKEN,
     SNIPER_CHECK_INTERVAL,
+    TELEGRAM_TOKEN,
 )
+
 # 重大新聞即時推送，最小輪詢間隔
 ALERT_NEWS_INTERVAL_SECONDS = 600
+
 
 def is_market_open() -> bool:
     """檢查美股是否正在交易 (09:30 - 16:00 ET)"""
@@ -49,6 +52,7 @@ def is_market_open() -> bool:
         market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
         return market_open <= now_et <= market_close
     return False
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - [%(levelname)s] - %(message)s")
 
@@ -97,7 +101,7 @@ def normalize_loose_command_text(text: str) -> str:
     dot_cmd_prefixes = ("./", ".")
     for prefix in dot_cmd_prefixes:
         if lower.startswith(prefix):
-            after = normalized[len(prefix):].lstrip()
+            after = normalized[len(prefix) :].lstrip()
             if after:
                 return "/" + after
 
@@ -143,16 +147,21 @@ def safe_send(chat_id, text: str | list[str], parse_mode: str | None = None, rep
     else:
         full_text = text
     CHUNK_SIZE = min(MAX_TELEGRAM_MESSAGE_LENGTH, 3800)
+
     def _chunk_text(s: str, limit: int) -> list[str]:
-        if len(s) <= limit: return [s]
+        if len(s) <= limit:
+            return [s]
         chunks = []
         while len(s) > limit:
             split_at = s.rfind("\n", 0, limit)
-            if split_at == -1: split_at = limit
+            if split_at == -1:
+                split_at = limit
             chunks.append(s[:split_at].strip())
             s = s[split_at:].strip()
-        if s: chunks.append(s)
+        if s:
+            chunks.append(s)
         return chunks
+
     message_chunks = _chunk_text(full_text, CHUNK_SIZE)
     for i, chunk in enumerate(message_chunks):
         markup = reply_markup if i == len(message_chunks) - 1 else None
@@ -187,12 +196,16 @@ def setup_bot_commands() -> None:
 
 
 def get_pagination_markup(prefix: str, current_page: int, total_pages: int, token: str | None = None) -> InlineKeyboardMarkup | None:
-    if total_pages <= 1 or token is None: return None
+    if total_pages <= 1 or token is None:
+        return None
     markup = InlineKeyboardMarkup()
     buttons = []
-    if current_page > 1: buttons.append(InlineKeyboardButton("⬅️ 上一頁", callback_data=f"{prefix}_{token}_{current_page-1}"))
-    if current_page < total_pages: buttons.append(InlineKeyboardButton("下一頁 ➡️", callback_data=f"{prefix}_{token}_{current_page+1}"))
-    if buttons: markup.row(*buttons)
+    if current_page > 1:
+        buttons.append(InlineKeyboardButton("⬅️ 上一頁", callback_data=f"{prefix}_{token}_{current_page-1}"))
+    if current_page < total_pages:
+        buttons.append(InlineKeyboardButton("下一頁 ➡️", callback_data=f"{prefix}_{token}_{current_page+1}"))
+    if buttons:
+        markup.row(*buttons)
     return markup
 
 
@@ -226,8 +239,10 @@ def send_paged_message(chat_id, pages: list[str] | tuple[str, ...], parse_mode: 
 
 
 def notify_status(status_type: str) -> None:
-    if not CHAT_ID: return
+    if not CHAT_ID:
+        return
     from ai_core import get_current_time_str
+
     now_full = get_current_time_str()
     if status_type == "online":
         logging.info("🚀 [SYSTEM] 啟動中")
@@ -276,13 +291,15 @@ def major_news_alert_job() -> None:
         try:
             for user_id in database.get_all_user_ids():
                 watchlist = database.get_watchlist(user_id)
-                if not watchlist: continue
+                if not watchlist:
+                    continue
                 user_name = database.get_user_display_name(user_id)
                 for symbol in watchlist:
                     news_items = command.market_api.fetch_news_filtered(symbol, limit=2)
                     for item in news_items:
                         url = item.get("url") or ""
-                        if not url or url in seen_news_urls: continue
+                        if not url or url in seen_news_urls:
+                            continue
                         seen_news_urls.add(url)
                         summary = command.process_news_item_smart(symbol, item, user_name, user_id)
                         message = f"🔔 重大新聞快訊：{symbol}\n━━━━━━━━━━━━━━\n{summary}"
@@ -318,51 +335,58 @@ def market_report_job() -> None:
 
 SNIPER_WATCH_ZONES: dict[str, dict[str, Any]] = {}
 
+
 def sniper_alert_job() -> None:
-    import tech_indicators, market_api, ai_core
+    import ai_core
+    import market_api
+    import tech_indicators
+
     sent_alerts: set[tuple[int, str, str, str]] = set()
     logging.info("🎯 [SNIPER] 狙擊監控執行緒已啟動")
-    
+
     while True:
         if not is_market_open():
             # logging.info("🎯 [SNIPER] 市場未開盤，狙擊任務休眠 60s")
             time.sleep(60)
             continue
-            
+
         time.sleep(SNIPER_CHECK_INTERVAL)
         try:
             targets = database.get_all_sniper_targets()
-            if not targets: continue
-            
+            if not targets:
+                continue
+
             today = datetime.now().strftime("%Y-%m-%d")
             symbols = list(set([t[1] for t in targets]))
             current_prices = market_api.fetch_batch_quotes(symbols)
-            
+
             for user_id, symbol in targets:
                 price = current_prices.get(symbol)
-                if not price: continue
-                
+                if not price:
+                    continue
+
                 now_ts = time.time()
-                if symbol not in SNIPER_WATCH_ZONES or now_ts - SNIPER_WATCH_ZONES[symbol]['last_updated'] > 3600:
+                if symbol not in SNIPER_WATCH_ZONES or now_ts - SNIPER_WATCH_ZONES[symbol]["last_updated"] > 3600:
                     data = tech_indicators.calculate_indicators(symbol)
                     if "error" not in data:
                         SNIPER_WATCH_ZONES[symbol] = {
-                            'fvg': data.get('fvg', {}),
-                            'sweep': data.get('sweep', '無'),
-                            'snapshot': data,
-                            'last_updated': now_ts
+                            "fvg": data.get("fvg", {}),
+                            "sweep": data.get("sweep", "無"),
+                            "snapshot": data,
+                            "last_updated": now_ts,
                         }
-                
+
                 zone_info = SNIPER_WATCH_ZONES.get(symbol)
-                if not zone_info: continue
-                
-                fvg = zone_info['fvg']
-                sweep = zone_info['sweep']
+                if not zone_info:
+                    continue
+
+                fvg = zone_info["fvg"]
+                sweep = zone_info["sweep"]
                 hit_type = None
-                
+
                 # FVG 比對 (數字比對，0 Token)
                 if fvg.get("low_b") and fvg.get("high_b"):
-                    if fvg['low_b'] <= price <= fvg['high_b']:
+                    if fvg["low_b"] <= price <= fvg["high_b"]:
                         hit_type = f"進入 {fvg['type']}"
 
                 # 掃蕩比對
@@ -380,7 +404,7 @@ def sniper_alert_job() -> None:
                         header = f"🚨 **【狙擊手警報：{symbol}】**\n結構共振：{hit_type}"
                         safe_send(user_id, [header, ai_message])
                         sent_alerts.add(alert_key)
-                        
+
             if datetime.now().hour == 0 and datetime.now().minute < 20:
                 sent_alerts.clear()
         except Exception as exc:
@@ -389,7 +413,9 @@ def sniper_alert_job() -> None:
 
 def log_cleanup_job() -> None:
     import os
+
     from config import GEMINI_AUDIT_LOG_PATH
+
     while True:
         time.sleep(4 * 24 * 3600)
         try:
@@ -426,12 +452,15 @@ def on_now(m):
     loading_message = reply(m, "⏳ 正在整理最新行情...")
     try:
         sections = command.cmd_now(user_id, user_name)
-        if loading_message: bot.delete_message(m.chat.id, loading_message.message_id)
+        if loading_message:
+            bot.delete_message(m.chat.id, loading_message.message_id)
         if isinstance(sections, (list, tuple)):
             send_paged_message(m.chat.id, sections)
-        else: reply(m, sections)
+        else:
+            reply(m, sections)
     except Exception as exc:
-        if loading_message: bot.delete_message(m.chat.id, loading_message.message_id)
+        if loading_message:
+            bot.delete_message(m.chat.id, loading_message.message_id)
         reply(m, "⚠️ 讀取行情失敗。")
 
 
@@ -486,10 +515,12 @@ def on_theme(m):
     loading = reply(m, "🚀 正在整理產業趨勢速報，請稍候...")
     try:
         result = command.cmd_theme(m.text or "", user_name, user_id)
-        if loading: bot.delete_message(m.chat.id, loading.message_id)
+        if loading:
+            bot.delete_message(m.chat.id, loading.message_id)
         reply(m, result)
     except Exception as exc:
-        if loading: bot.delete_message(m.chat.id, loading.message_id)
+        if loading:
+            bot.delete_message(m.chat.id, loading.message_id)
         reply(m, f"⚠️ 產業趨勢速報產生失敗：{exc}")
 
 
@@ -500,10 +531,13 @@ def on_news(m):
     loading = reply(m, "📰 正在讀取新聞...")
     try:
         msgs = command.cmd_news(m.text or "", user_name, user_id)
-        if loading: bot.delete_message(m.chat.id, loading.message_id)
-        for msg in msgs: safe_send(m.chat.id, msg)
+        if loading:
+            bot.delete_message(m.chat.id, loading.message_id)
+        for msg in msgs:
+            safe_send(m.chat.id, msg)
     except Exception:
-        if loading: bot.delete_message(m.chat.id, loading.message_id)
+        if loading:
+            bot.delete_message(m.chat.id, loading.message_id)
         reply(m, "⚠️ 讀取新聞失敗。")
 
 
@@ -516,13 +550,15 @@ def on_fin(m):
     loading = reply(m, "📊 正在整理財報比較與 AI 評析，請稍候...") if is_compare else None
     try:
         result = command.cmd_fin(text, user_id)
-        if loading: bot.delete_message(m.chat.id, loading.message_id)
+        if loading:
+            bot.delete_message(m.chat.id, loading.message_id)
         if isinstance(result, (list, tuple)):
             send_paged_message(m.chat.id, result)
         else:
             reply(m, result)
     except Exception as exc:
-        if loading: bot.delete_message(m.chat.id, loading.message_id)
+        if loading:
+            bot.delete_message(m.chat.id, loading.message_id)
         reply(m, f"⚠️ 財報查詢失敗：{exc}")
 
 
@@ -566,16 +602,20 @@ def on_status(m):
 def on_op(m):
     user_id = get_user_id(m)
     res = command.cmd_op(m.text or "", user_id)
-    if res == "__TRIGGER_LOG__": on_log(m)
-    else: reply(m, res)
+    if res == "__TRIGGER_LOG__":
+        on_log(m)
+    else:
+        reply(m, res)
 
 
 @bot.message_handler(commands=["log"])
 @bot.channel_post_handler(commands=["log"])
 def on_log(m):
     log_lines = read_hidden_log_lines(40)
-    if not log_lines: reply(m, "🔒 系統日誌為空。")
-    else: safe_send(m.chat.id, "🔒 系統日誌\n" + "\n".join(log_lines))
+    if not log_lines:
+        reply(m, "🔒 系統日誌為空。")
+    else:
+        safe_send(m.chat.id, "🔒 系統日誌\n" + "\n".join(log_lines))
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("list_page_"))
@@ -658,6 +698,7 @@ if __name__ == "__main__":
     database.init_db()
     setup_bot_commands()
     import brain
+
     brain.stats.alert_callback = lambda msg: safe_send(CHAT_ID, msg)
     threading.Thread(target=auto_news_job, daemon=True).start()
     threading.Thread(target=major_news_alert_job, daemon=True).start()
@@ -666,7 +707,8 @@ if __name__ == "__main__":
     threading.Thread(target=log_cleanup_job, daemon=True).start()
     notify_status("online")
     while True:
-        try: bot.infinity_polling(timeout=POLLING_TIMEOUT, long_polling_timeout=LONG_POLLING_TIMEOUT)
+        try:
+            bot.infinity_polling(timeout=POLLING_TIMEOUT, long_polling_timeout=LONG_POLLING_TIMEOUT)
         except Exception as exc:
             logging.error("Polling failed: %s", exc)
             time.sleep(10)
