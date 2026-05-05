@@ -27,7 +27,8 @@ NEWS_API_KEY = os.getenv("NEWS_API_KEY", "").strip()
 FINNHUB_KEY = os.getenv("FINNHUB_KEY", "").strip()
 
 # Gemini
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+# 兼容 README 舊版範例的 GOOGLE_API_KEY，同時保留正式 GEMINI_API_KEY。
+GEMINI_API_KEY = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
 GEMINI_FLASH_MODEL = os.getenv("GEMINI_FLASH_MODEL", "gemini-2.5-flash").strip()
 GEMINI_PRO_MODEL = os.getenv("GEMINI_PRO_MODEL", "gemini-2.5-pro").strip()
 GEMINI_AUDIT_LOG_PATH = BASE_DIR / ".gemini_audit.log"
@@ -56,7 +57,7 @@ MAX_TELEGRAM_MESSAGE_LENGTH = int(os.getenv("MAX_TELEGRAM_MESSAGE_LENGTH", "3500
 POLLING_TIMEOUT = int(os.getenv("POLLING_TIMEOUT", "40"))
 LONG_POLLING_TIMEOUT = int(os.getenv("LONG_POLLING_TIMEOUT", "15"))
 AUTO_NEWS_INTERVAL_SECONDS = int(os.getenv("AUTO_NEWS_INTERVAL_SECONDS", "28800"))
-SNIPER_CHECK_INTERVAL = 300 # 5分鐘檢查一次，符合 Yahoo API 頻率限制
+SNIPER_CHECK_INTERVAL = int(os.getenv("SNIPER_CHECK_INTERVAL", "300"))  # 預設 5 分鐘，符合 Yahoo API 頻率限制
 
 # 自動更新版本資訊 (格式: v.YY.M.D)
 _now = datetime.now()

@@ -231,8 +231,9 @@ def ask_ai_investment_advice(
     # 獲取 VIX 數值
     import market_api
     vix_data = market_api.get_macro_quote("VIX")
-    vix_val = vix_data.get("price", 0)
-    vix_str = f"{vix_val:.2f} ({'恐慌' if vix_val > 25 else '正常'})"
+    raw_vix = vix_data.get("price", 0)
+    vix_val = float(raw_vix) if isinstance(raw_vix, (int, float)) else 0.0
+    vix_str = f"{vix_val:.2f} ({'恐慌' if vix_val > 25 else '正常'})" if vix_val > 0 else "N/A"
 
     prompt = f"""
 【報告產生時間：{current_time}】
@@ -346,4 +347,4 @@ query: str, user_name: str, context_symbol: str | None = None, snapshot: dict[st
 1. 絕對完整性：嚴禁斷句或草草結束。
 2. 保持簡練且完整，必要時可用符號與縮排排版。
 """.strip()
-    return ask_model(prompt, user_name, model=model, temperature=0.5, max_output_tokens=4000)
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.5, max_output_tokens=4000)

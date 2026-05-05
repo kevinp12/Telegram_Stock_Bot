@@ -8,6 +8,267 @@ import yfinance as yf
 from typing import Any
 from utils import safe_round
 
+
+def _format_price_zone(low: float, high: float) -> str:
+    return f"${safe_round(low, 2):.2f} - ${safe_round(high, 2):.2f}"
+
+
+def calculate_ma_trend_filter(df: pd.DataFrame) -> dict[str, Any]:
+    """計算 MA20/MA50/MA200 趨勢濾網。"""
+    df['MA20'] = df['Close'].rolling(window=20).mean()
+    df['MA50'] = df['Close'].rolling(window=50).mean()
+    df['MA200'] = df['Close'].rolling(window=200).mean()
+
+    last_price = float(df['Close'].iloc[-1])
+    ma20 = df['MA20'].iloc[-1]
+    ma50 = df['MA50'].iloc[-1]
+    ma200 = df['MA200'].iloc[-1]
+
+    if pd.isna(ma20) or pd.isna(ma50) or pd.isna(ma200):
+        return {
+            "status": "資料不足，無法完成 MA20/50/200 趨勢濾網",
+            "price": safe_round(last_price, 2),
+            "ma20": "N/A",
+            "ma50": "N/A",
+            "ma200": "N/A",
+            "bullish": False,
+            "bearish": False,
+        }
+
+    ma20_f = float(ma20)
+    ma50_f = float(ma50)
+    ma200_f = float(ma200)
+    bullish = last_price > ma20_f > ma50_f > ma200_f
+    bearish = last_price < ma20_f < ma50_f < ma200_f
+    if bullish:
+        status = "🟢 多頭排列 (Price > MA20 > MA50 > MA200)"
+    elif bearish:
+        status = "🔴 空頭排列 (Price < MA20 < MA50 < MA200)"
+    else:
+        status = "⚪ 趨勢未共振 / MA 結構糾結"
+
+    return {
+        "status": status,
+        "price": safe_round(last_price, 2),
+        "ma20": safe_round(ma20_f, 2),
+        "ma50": safe_round(ma50_f, 2),
+        "ma200": safe_round(ma200_f, 2),
+        "bullish": bullish,
+        "bearish": bearish,
+    }
+
+
+def calculate_tdst_levels(df: pd.DataFrame) -> dict[str, Any]:
+    """計算 TD Setup 9 與最新有效 TDST 支撐/壓力線。"""
+    bullish_count = 0  # 連續收盤高於前第 4 根，用於 TDST Resistance
+    bearish_count = 0  # 連續收盤低於前第 4 根，用於 TDST Support
+    support_lines: list[dict[str, Any]] = []
+    resistance_lines: list[dict[str, Any]] = []
+
+    for i in range(4, len(df)):
+        close = float(df['Close'].iloc[i])
+        ref_close = float(df['Close'].iloc[i - 4])
+
+        bullish_count = bullish_count + 1 if close > ref_close else 0
+        bearish_count = bearish_count + 1 if close < ref_close else 0
+
+        if bullish_count == 9:
+            start = i - 8
+            high = float(df['High'].iloc[start:i + 1].max())
+            resistance_lines.append({
+                "type": "TDST_RESISTANCE",
+                "price": safe_round(high, 2),
+                "source_index": int(i),
+                "age_bars": int(len(df) - 1 - i),
+            })
+
+        if bearish_count == 9:
+            start = i - 8
+            low = float(df['Low'].iloc[start:i + 1].min())
+            support_lines.append({
+                "type": "TDST_SUPPORT",
+                "price": safe_round(low, 2),
+                "source_index": int(i),
+                "age_bars": int(len(df) - 1 - i),
+            })
+
+    def _mark_valid(line: dict[str, Any] | None, side: str) -> dict[str, Any] | None:
+        if not line:
+            return None
+        price = float(line["price"])
+        start = int(line["source_index"]) + 1
+        closes_after = df['Close'].iloc[start:] if start < len(df) else pd.Series(dtype=float)
+        if side == "support":
+            broken = bool((closes_after < price).any()) if not closes_after.empty else False
+        else:
+            broken = bool((closes_after > price).any()) if not closes_after.empty else False
+        line = dict(line)
+        line["valid"] = not broken
+        line["status"] = "有效" if not broken else "已失效"
+        return line
+
+    latest_support = _mark_valid(support_lines[-1] if support_lines else None, "support")
+    latest_resistance = _mark_valid(resistance_lines[-1] if resistance_lines else None, "resistance")
+
+    return {
+        "support": latest_support,
+        "resistance": latest_resistance,
+        "support_count": len(support_lines),
+        "resistance_count": len(resistance_lines),
+    }
+
+
+def detect_fvg_at_index(df: pd.DataFrame, i: int) -> dict[str, Any] | None:
+    """依照 Low[0] > High[2] / High[0] < Low[2] 偵測單根 FVG。"""
+    if i < 2 or i >= len(df):
+        return None
+
+    curr_low = float(df['Low'].iloc[i])
+    curr_high = float(df['High'].iloc[i])
+    prev2_high = float(df['High'].iloc[i - 2])
+    prev2_low = float(df['Low'].iloc[i - 2])
+
+    if curr_low > prev2_high:
+        low_b = prev2_high
+        high_b = curr_low
+        return {
+            "type": "看漲 FVG",
+            "direction": "BULLISH",
+            "range": _format_price_zone(low_b, high_b),
+            "low_b": low_b,
+            "high_b": high_b,
+            "index": int(i),
+        }
+
+    if curr_high < prev2_low:
+        low_b = curr_high
+        high_b = prev2_low
+        return {
+            "type": "看跌 FVG",
+            "direction": "BEARISH",
+            "range": _format_price_zone(low_b, high_b),
+            "low_b": low_b,
+            "high_b": high_b,
+            "index": int(i),
+        }
+
+    return None
+
+
+def detect_recent_fvgs(df: pd.DataFrame, lookback: int = 20) -> list[dict[str, Any]]:
+    """偵測最近 lookback 根 K 棒內的 FVG，最新在前。"""
+    fvg_list: list[dict[str, Any]] = []
+    start = max(2, len(df) - lookback)
+    for i in range(len(df) - 1, start - 1, -1):
+        fvg = detect_fvg_at_index(df, i)
+        if fvg:
+            fvg_list.append(fvg)
+    return fvg_list
+
+
+def _level_near_zone(level: float, zone_low: float, zone_high: float, tolerance: float) -> tuple[bool, float]:
+    if zone_low <= level <= zone_high:
+        return True, 0.0
+    distance = min(abs(level - zone_low), abs(level - zone_high))
+    return distance <= tolerance, distance
+
+
+def build_confluence_signal(
+    ma_filter: dict[str, Any],
+    current_fvg: dict[str, Any] | None,
+    tdst: dict[str, Any],
+    atr: float,
+    last_price: float,
+) -> dict[str, Any]:
+    """建立 TDST × FVG × MA 趨勢濾網的共振交易訊號。"""
+    tolerance = max(float(atr or 0) * 0.15, float(last_price or 0) * 0.002)
+    def _empty_payload(reason: str) -> dict[str, Any]:
+        return {
+            "signal_type": "NONE",
+            "direction": "NONE",
+            "entry_zone": None,
+            "entry_zone_text": "N/A",
+            "stop_loss": None,
+            "tdst_level": None,
+            "tolerance": safe_round(tolerance, 2),
+            "confluence_ok": False,
+            "reasons": [reason],
+        }
+
+    empty_signal = {
+        "signal_type": "NONE",
+        "direction": "NONE",
+        "entry_zone": None,
+        "entry_zone_text": "N/A",
+        "stop_loss": None,
+        "tdst_level": None,
+        "tolerance": safe_round(tolerance, 2),
+        "confluence_ok": False,
+        "reasons": ["尚未同時滿足 MA 趨勢、當前 FVG 與有效 TDST 共振。"],
+    }
+
+    if not current_fvg:
+        return _empty_payload("當前 K 棒未形成新的 FVG，暫不觸發共振訊號。")
+
+    zone_low = float(current_fvg["low_b"])
+    zone_high = float(current_fvg["high_b"])
+
+    if ma_filter.get("bullish") and current_fvg.get("direction") == "BULLISH":
+        support = tdst.get("support")
+        if support and support.get("valid"):
+            support_price = float(support["price"])
+            near, distance = _level_near_zone(support_price, zone_low, zone_high, tolerance)
+            if near:
+                return {
+                    "signal_type": "STRONG_LONG",
+                    "direction": "LONG",
+                    "entry_zone": {
+                        "low": safe_round(zone_low, 2),
+                        "high": safe_round(zone_high, 2),
+                        "text": _format_price_zone(zone_low, zone_high),
+                    },
+                    "entry_zone_text": _format_price_zone(zone_low, zone_high),
+                    "stop_loss": safe_round(support_price - tolerance, 2),
+                    "tdst_level": safe_round(support_price, 2),
+                    "tolerance": safe_round(tolerance, 2),
+                    "confluence_ok": True,
+                    "reasons": [
+                        "MA20/50/200 多頭排列，僅尋找做多訊號。",
+                        f"當前 K 棒形成看漲 FVG：{current_fvg.get('range')}",
+                        f"有效 TDST 支撐 {safe_round(support_price, 2)} 落在或貼近 FVG（距離 {safe_round(distance, 2)}）。",
+                        "進場規劃：可於 FVG 區間內分批掛單做多。",
+                    ],
+                }
+
+    if ma_filter.get("bearish") and current_fvg.get("direction") == "BEARISH":
+        resistance = tdst.get("resistance")
+        if resistance and resistance.get("valid"):
+            resistance_price = float(resistance["price"])
+            near, distance = _level_near_zone(resistance_price, zone_low, zone_high, tolerance)
+            if near:
+                return {
+                    "signal_type": "STRONG_SHORT",
+                    "direction": "SHORT",
+                    "entry_zone": {
+                        "low": safe_round(zone_low, 2),
+                        "high": safe_round(zone_high, 2),
+                        "text": _format_price_zone(zone_low, zone_high),
+                    },
+                    "entry_zone_text": _format_price_zone(zone_low, zone_high),
+                    "stop_loss": safe_round(resistance_price + tolerance, 2),
+                    "tdst_level": safe_round(resistance_price, 2),
+                    "tolerance": safe_round(tolerance, 2),
+                    "confluence_ok": True,
+                    "reasons": [
+                        "MA20/50/200 空頭排列，僅尋找做空訊號。",
+                        f"當前 K 棒形成看跌 FVG：{current_fvg.get('range')}",
+                        f"有效 TDST 壓力 {safe_round(resistance_price, 2)} 落在或貼近 FVG（距離 {safe_round(distance, 2)}）。",
+                        "進場規劃：可於 FVG 區間內分批掛單做空。",
+                    ],
+                }
+
+    return empty_signal
+
 def calculate_poc(df: pd.DataFrame, bins: int = 50) -> float:
     """
     計算控制點 (Point of Control, POC)：指定區間內成交量最大的價格位。
@@ -186,25 +447,7 @@ def calculate_indicators(symbol: str) -> dict[str, Any]:
             whale_status = "小買" if last_price > df['Open'].iloc[-1] else "小賣"
 
         # 12. SMC: Fair Value Gap (FVG)
-        fvg_list = []
-        for i in range(len(df)-1, len(df)-21, -1):
-            if i < 2: break
-            if df['Low'].iloc[i] > df['High'].iloc[i-2]:
-                fvg_list.append({
-                    "type": "看漲 FVG",
-                    "range": f"${df['High'].iloc[i-2]:.2f} - ${df['Low'].iloc[i]:.2f}",
-                    "low_b": float(df['High'].iloc[i-2]),
-                    "high_b": float(df['Low'].iloc[i]),
-                    "index": i
-                })
-            elif df['High'].iloc[i] < df['Low'].iloc[i-2]:
-                fvg_list.append({
-                    "type": "看跌 FVG",
-                    "range": f"${df['Low'].iloc[i-2]:.2f} - ${df['High'].iloc[i]:.2f}",
-                    "low_b": float(df['High'].iloc[i]),
-                    "high_b": float(df['Low'].iloc[i-2]),
-                    "index": i
-                })
+        fvg_list = detect_recent_fvgs(df, lookback=20)
         
         latest_fvg = fvg_list[0] if fvg_list else {"type": "無明顯 FVG", "range": "N/A", "low_b": 0, "high_b": 0}
 
@@ -246,6 +489,31 @@ def calculate_indicators(symbol: str) -> dict[str, Any]:
         }
         attack_status = attack_map.get(score, "觀察")
 
+        # 16. 文件需求：MA20/50/200 + TDST + 當前 FVG 共振狙擊訊號
+        ma_filter = calculate_ma_trend_filter(df)
+        tdst_levels = calculate_tdst_levels(df)
+        current_fvg = detect_fvg_at_index(df, len(df) - 1)
+        confluence_signal = build_confluence_signal(
+            ma_filter=ma_filter,
+            current_fvg=current_fvg,
+            tdst=tdst_levels,
+            atr=float(atr) if not pd.isna(atr) else 0.0,
+            last_price=float(last_price),
+        )
+
+        # 供 bot / API 直接使用的標準化輸出格式
+        confluence_payload = {
+            "signal_type": confluence_signal.get("signal_type", "NONE"),
+            "direction": confluence_signal.get("direction", "NONE"),
+            "entry_zone": confluence_signal.get("entry_zone"),
+            "entry_zone_text": confluence_signal.get("entry_zone_text", "N/A"),
+            "stop_loss": confluence_signal.get("stop_loss"),
+            "tdst_level": confluence_signal.get("tdst_level"),
+            "tolerance": confluence_signal.get("tolerance"),
+            "confluence_ok": bool(confluence_signal.get("confluence_ok", False)),
+            "reasons": confluence_signal.get("reasons", []),
+        }
+
         return {
             "symbol": symbol,
             "last_price": safe_round(last_price, 2),
@@ -269,7 +537,13 @@ def calculate_indicators(symbol: str) -> dict[str, Any]:
                 "tp_fib": safe_round(tp_fib, 2)
             },
             "fvg": latest_fvg,
-            "sweep": sweep_status
+            "fvg_list": fvg_list[:5],
+            "current_fvg": current_fvg,
+            "sweep": sweep_status,
+            "ma_filter": ma_filter,
+            "tdst": tdst_levels,
+            "confluence_signal": confluence_signal,
+            "confluence_payload": confluence_payload,
         }
     except Exception as e:
         logging.error(f"calculate_indicators error for {symbol}: {e}")

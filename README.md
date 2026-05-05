@@ -24,6 +24,67 @@
 
 ---
 
+## 🆕 最新功能更新｜Confluence Sniper Engine
+
+> 🎯 新增「**共振狙擊訊號引擎**」：把 Gemini 草稿中的 **MA 趨勢濾網 + TDST 時間衰竭 + SMC FVG 價格行為** 整合為可直接寫入 Bot 的標準資料格式。
+
+<div align="center">
+
+| 🧩 模組 | 🚀 新增能力 | 📦 Bot 輸出 |
+|---|---|---|
+| 🧭 **MA Trend Filter** | 判斷 `Price > MA20 > MA50 > MA200` 或 `Price < MA20 < MA50 < MA200` | `ma_filter` |
+| ⏳ **TDST Levels** | 自動偵測 TD Setup 9 後的支撐 / 壓力線，並判斷是否有效 | `tdst` |
+| 🧲 **FVG Detector** | 偵測看漲 / 看跌 Fair Value Gap 區間 | `current_fvg`, `fvg_list` |
+| 🎯 **Confluence Signal** | 產生 `STRONG_LONG` / `STRONG_SHORT` / `NONE` | `confluence_payload` |
+
+</div>
+
+### 🟢 STRONG_LONG 強共振做多
+
+```text
+✅ Price > MA20 > MA50 > MA200
+✅ 當前 K 棒形成看漲 FVG
+✅ 有效 TDST Support 存在
+✅ TDST 支撐落在 / 貼近 FVG 區間
+➡️ Bot 輸出：STRONG_LONG + Entry Zone + Stop Loss + Reasons
+```
+
+### 🔴 STRONG_SHORT 強共振做空
+
+```text
+✅ Price < MA20 < MA50 < MA200
+✅ 當前 K 棒形成看跌 FVG
+✅ 有效 TDST Resistance 存在
+✅ TDST 壓力落在 / 貼近 FVG 區間
+➡️ Bot 輸出：STRONG_SHORT + Entry Zone + Stop Loss + Reasons
+```
+
+### 📦 標準化 Bot Payload
+
+```python
+{
+    "signal_type": "STRONG_LONG",      # STRONG_LONG / STRONG_SHORT / NONE
+    "direction": "LONG",               # LONG / SHORT / NONE
+    "entry_zone": {
+        "low": 100.0,
+        "high": 105.0,
+        "text": "$100.00 - $105.00"
+    },
+    "entry_zone_text": "$100.00 - $105.00",
+    "stop_loss": 98.5,
+    "tdst_level": 100.2,
+    "tolerance": 1.5,
+    "confluence_ok": True,
+    "reasons": [
+        "MA20/50/200 多頭排列，僅尋找做多訊號。",
+        "當前 K 棒形成看漲 FVG。",
+        "有效 TDST 支撐落在或貼近 FVG。"
+    ]
+}
+```
+
+---
+
 ## 🏛️ 核心技術架構 (Core Architecture)
 
 ```mermaid
@@ -150,9 +211,33 @@ graph TB
 
 ## 📟 官方指揮手冊 (Command Manual)
 
-### 📈 技術分析與量化作戰 (`/tech`)
+### 🧭 指令總覽表
+
+| 類別 | 指令 | 特色用途 |
+|---|---|---|
+| ⚡ 即時全景 | `/now` | 宏觀行情、風險評估、AI 戰術短評 |
+| 📊 技術量化 | `/tech NVDA` | 量化儀表板 + SMC + 共振狙擊訊號 |
+| ⚔️ 技術對比 | `/tech compare NVDA AMD` | 多標的量化橫向比較 + AI 評析 |
+| 🎯 狙擊監控 | `/sweep add NVDA TSLA` | 加入 FVG / Sweep / 共振監控名單 |
+| 📰 新聞情報 | `/news TSLA` | 新聞摘要、財報/科技模式智慧路由 |
+| 🚀 主題速報 | `/theme AI` | 產業趨勢與主題催化劑分析 |
+| 📊 財務基本面 | `/fin NVDA` | EPS、P/E、營收、估值、52 週區間 |
+| 🧾 財務比較 | `/fin compare NVDA AMD` | 多公司財務健康度比較 + AI 深度評析 |
+| 💰 買入紀錄 | `/buy NVDA 130 10` | 建立持倉與成本紀錄 |
+| 💸 賣出紀錄 | `/sell NVDA 150 5` | FIFO 自動結算已實現損益 |
+| 📋 持股列表 | `/list` | 持股明細、分頁、未實現損益 |
+| 💼 總損益 | `/total` | 總資產損益與多週期回顧 |
+| 👀 雷達清單 | `/watch add NVDA` | 重大新聞與追蹤名單管理 |
+| 📢 自動推播 | `/bc on` / `/bc timer 120` | 個人化定時情報推播 |
+| 🧠 AI 問答 | `/ask NVDA 現在是否過熱？` | 指定標的深度戰術拆解 |
+| 🔍 系統狀態 | `/status` | Gemini 連線、模型、伺服器與推播狀態 |
+| 💳 配額查詢 | `/quota` | Gemini Token 今日用量 |
+| �️ 隱藏管理 | `/op help` | 模型切換、Log、Quota 等進階功能 |
+| 🧹 資料清除 | `data clear` | 二次確認後清除個人資產資料 |
+
+### �📈 技術分析與量化作戰 (`/tech`)
 *   **⚡ 單標的深度報告**：`/tech [代號]`  
-    > 產出完整 SMC 儀表板，包含 **FVG**、**POC**、**ATR**、**TP 獲利目標**、**進攻評級**、**主力籌碼**、**TD9 序列**等 15+ 項專業指標。
+    > 產出完整 SMC 儀表板，包含 **FVG**、**POC**、**ATR**、**TP 獲利目標**、**進攻評級**、**主力籌碼**、**TD9 序列**，以及最新 **MA20/50/200 × TDST × FVG 共振狙擊訊號**。
 *   **🔍 多標的快速掃描**：`/tech [代號1] [代號2] [代號3]`  
     > 一次獲取最多 3 支股票的詳細技術儀表板，批量分析。
 *   **⚔️ 橫向結構對比**：`/tech compare [A] [B] [C]`  
@@ -256,7 +341,8 @@ pip install -r requirements.txt
 TELEGRAM_TOKEN=您的_Telegram_Bot_Token
 
 # Google Gemini API Key (必填)
-GOOGLE_API_KEY=您的_Gemini_API_Key
+GEMINI_API_KEY=您的_Gemini_API_Key
+# 也兼容舊變數名稱：GOOGLE_API_KEY=您的_Gemini_API_Key
 
 # Finnhub API Key (必填，用於市場數據)
 FINNHUB_KEY=您的_Finnhub_API_Key
@@ -267,11 +353,14 @@ NEWS_API_KEY=您的_NewsAPI_Key
 # 管理員 Telegram Chat ID (必填，用於系統通知)
 CHAT_ID=您的_Telegram_Chat_ID
 
-# Token 配額設定 (選填，預設 1,500,000)
-DAILY_TOKEN_LIMIT=1500000
+# Token 配額設定 (選填，預設 500,000)
+DAILY_TOKEN_LIMIT=500000
 
-# 狙擊監控間隔 (選填，預設 30 秒)
-SNIPER_CHECK_INTERVAL=30
+# 狙擊監控間隔 (選填，預設 300 秒)
+SNIPER_CHECK_INTERVAL=300
+
+# Telegram 訊息分段長度 (選填，預設 3500)
+MAX_TELEGRAM_MESSAGE_LENGTH=3500
 ```
 
 ### 3. 啟動機器人
@@ -367,7 +456,7 @@ gemini_stock_bot_full/
 ### 技術分析
 ```
 /tech NVDA
-→ 完整 SMC 儀表板，包含 FVG、POC、ATR、TP 目標等
+→ 完整 SMC 儀表板，包含 FVG、TDST、MA 濾網、POC、ATR、TP 目標、共振狙擊訊號
 
 /tech AAPL MSFT GOOGL
 → 批量分析三支股票
@@ -432,4 +521,6 @@ gemini_stock_bot_full/
 <p align="center">
   <b>Built with ❤️ by Kevin | Powered by Google Gemini AI</b>
 </p>
+
+</div>
 

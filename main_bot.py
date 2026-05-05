@@ -27,6 +27,7 @@ import command
 import database
 import frame
 from config import (
+    AUTO_NEWS_INTERVAL_SECONDS,
     CHAT_ID,
     GEMINI_AUDIT_LOG_PATH,
     LONG_POLLING_TIMEOUT,
@@ -35,9 +36,6 @@ from config import (
     TELEGRAM_TOKEN,
     SNIPER_CHECK_INTERVAL,
 )
-
-# 使用者要求每小時發送一次
-AUTO_NEWS_INTERVAL_SECONDS = 3600
 # 重大新聞即時推送，最小輪詢間隔
 ALERT_NEWS_INTERVAL_SECONDS = 600
 
@@ -144,7 +142,7 @@ def safe_send(chat_id, text: str | list[str], parse_mode: str | None = None, rep
         full_text = "\n\n".join(text)
     else:
         full_text = text
-    CHUNK_SIZE = 3800
+    CHUNK_SIZE = min(MAX_TELEGRAM_MESSAGE_LENGTH, 3800)
     def _chunk_text(s: str, limit: int) -> list[str]:
         if len(s) <= limit: return [s]
         chunks = []
@@ -589,7 +587,8 @@ def on_list_callback(call):
         text, total_pages = command.cmd_list(user_id, page=page)
         markup = get_pagination_markup("list_page", page, total_pages, token=str(user_id))
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup)
-    except Exception: pass
+    except Exception as exc:
+        logging.warning("list callback failed: %s", exc)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("page_"))

@@ -108,6 +108,9 @@ def tech_report(data: dict[str, Any]) -> str:
     tp = data.get("tp_targets", {})
     fvg = data.get("fvg", {})
     sweep = data.get("sweep", "無")
+    ma_filter = data.get("ma_filter", {}) or {}
+    tdst = data.get("tdst", {}) or {}
+    signal = data.get("confluence_payload") or data.get("confluence_signal", {}) or {}
     
     # 動態圖示
     def get_status_icon(status: str) -> str:
@@ -139,6 +142,14 @@ def tech_report(data: dict[str, Any]) -> str:
         )
 
     fvg_text = f"{fvg.get('type', 'N/A')} ({fvg.get('range', 'N/A')})"
+    support_line = tdst.get("support") or {}
+    resistance_line = tdst.get("resistance") or {}
+    signal_type = signal.get("signal_type", "NONE")
+    signal_icon = "🟢" if signal_type == "STRONG_LONG" else "🔴" if signal_type == "STRONG_SHORT" else "⚪"
+    entry_zone = signal.get("entry_zone") or {}
+    signal_reasons = signal.get("reasons") or []
+    signal_reason_text = "\n".join([f"  • {reason}" for reason in signal_reasons[:4]]) or "  • 尚無訊號說明。"
+    entry_zone_text = signal.get("entry_zone_text") or entry_zone.get("text", "N/A")
 
     return (
         f"📊 **【量化作戰儀表板：{symbol}】**\n"
@@ -151,6 +162,13 @@ def tech_report(data: dict[str, Any]) -> str:
         f"• FVG 缺口 ：{fvg_text}\n"
         f"• 流動性掃蕩 ：{sweep}\n"
         f"• POC 控制點 ：`{poc}`\n\n"
+        f"🎯 **共振狙擊訊號 (MA20/50/200 × TDST × FVG)**\n"
+        f"• 訊號類型：{signal_icon} `{signal_type}`\n"
+        f"• MA 濾網：{ma_filter.get('status', 'N/A')}\n"
+        f"• MA20 / MA50 / MA200：`{ma_filter.get('ma20', 'N/A')}` / `{ma_filter.get('ma50', 'N/A')}` / `{ma_filter.get('ma200', 'N/A')}`\n"
+        f"• TDST 支撐：`{support_line.get('price', 'N/A')}` ({support_line.get('status', 'N/A')})｜TDST 壓力：`{resistance_line.get('price', 'N/A')}` ({resistance_line.get('status', 'N/A')})\n"
+        f"• 進場區間：`{entry_zone_text}`｜止損建議：`{signal.get('stop_loss', 'N/A')}`\n"
+        f"• 共振理由：\n{signal_reason_text}\n\n"
         f"📐 **關鍵點位參考**\n"
         f"• 支撐 / 壓力位 ：`{sup}` / `{res}`\n"
         f"• 錨定成本 (VWAP)：`{vwap}`\n"

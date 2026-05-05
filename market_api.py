@@ -274,8 +274,8 @@ def get_macro_quote(symbol_name: str) -> dict[str, Any]:
                     "pct": float(res.get("dp", 0)),
                     "volume_note": "N/A",
                 }
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.debug("Finnhub quote fallback for %s: %s", symbol_name, exc)
     try:
         return quote_from_yahoo(symbol_name)
     except Exception as exc:
@@ -442,8 +442,8 @@ def resolve_news_topic(query: str) -> dict[str, str]:
                         if item not in unique_related: unique_related.append(item)
                     target = " OR ".join(unique_related)
                     note = f"已判斷為股票代號 {normalized_topic}，擴展搜尋：{', '.join(related)}。"
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.debug("resolve_news_topic ticker check failed for %s: %s", normalized_topic, exc)
 
     if source_tokens:
         target = f"({target}) {' '.join(source_tokens)}"
@@ -493,7 +493,8 @@ def get_stock_fundamentals(symbol: str) -> dict[str, Any]:
             if isinstance(last_rev, (int, float)) and isinstance(prev_rev, (int, float)) and prev_rev != 0:
                 growth = (last_rev - prev_rev) / prev_rev * 100
                 data["revenue_growth_qoq"] = f"{'+' if growth >= 0 else ''}{safe_round(growth, 2)}%"
-    except Exception: pass
+    except Exception as exc:
+        logging.debug("quarterly earnings unavailable for %s: %s", symbol, exc)
     return data
 
 
@@ -647,7 +648,8 @@ def fetch_news_filtered(query: str, limit: int = 5) -> list[dict[str, str]]:
                         "url": n.get("url") or "",
                         "publishedAt": n.get("publishedAt") or "",
                     })
-        except Exception: pass
+        except Exception as exc:
+            logging.debug("NewsAPI filtered search failed for %s: %s", query, exc)
 
     # 如果 Domain 限制找不到，或者 NEWS_API_KEY 不存在，走全網/Yahoo 降級搜尋
     if not news_list:
