@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime, timedelta
 from typing import Any
 
 import requests
@@ -45,16 +46,28 @@ def fetch_batch_quotes(symbols: list[str]) -> dict[str, float]:
     target_tickers = list(ticker_map.values())
     
     try:
-        data = yf.download(
-            tickers=" ".join(target_tickers),
-            period="1d",
-            interval="1m",
-            group_by='ticker',
-            auto_adjust=True,
-            prepost=True,
-            session=session,
-            progress=False
-        )
+        try:
+            data = yf.download(
+                tickers=" ".join(target_tickers),
+                period="1d",
+                interval="1m",
+                group_by='ticker',
+                auto_adjust=True,
+                prepost=True,
+                session=session,
+                progress=False
+            )
+        except TypeError:
+            # 某些 yfinance 版本不支援 session 參數
+            data = yf.download(
+                tickers=" ".join(target_tickers),
+                period="1d",
+                interval="1m",
+                group_by='ticker',
+                auto_adjust=True,
+                prepost=True,
+                progress=False
+            )
         
         if data.empty:
             return {}
@@ -497,16 +510,27 @@ def fetch_portfolio_history(symbols: list[str]) -> dict[str, dict[str, float]]:
     
     try:
         # 下載過去一年的日 K 線
-        data = yf.download(
-            tickers=" ".join(target_tickers),
-            period="1y",
-            interval="1d",
-            group_by='ticker',
-            auto_adjust=True,
-            prepost=True,
-            session=session,
-            progress=False
-        )
+        try:
+            data = yf.download(
+                tickers=" ".join(target_tickers),
+                period="1y",
+                interval="1d",
+                group_by='ticker',
+                auto_adjust=True,
+                prepost=True,
+                session=session,
+                progress=False
+            )
+        except TypeError:
+            data = yf.download(
+                tickers=" ".join(target_tickers),
+                period="1y",
+                interval="1d",
+                group_by='ticker',
+                auto_adjust=True,
+                prepost=True,
+                progress=False
+            )
         
         if data.empty:
             return {}
