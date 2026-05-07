@@ -367,14 +367,16 @@ def sell_success(symbol: str, price: float, qty: float, profit: float, rem: floa
     return msg
 
 
-def portfolio_list(rows: list[dict[str, Any]], realized_profit: float = 0.0, page: int = 1, total_pages: int = 1) -> str:
+def portfolio_list(rows: list[dict[str, Any]], summary: dict[str, Any], page: int = 1, total_pages: int = 1) -> str:
     if not rows:
         return "📋 **持股明細**：目前無庫存資料。 🈳"
 
     lines = [f"📋 **持股詳細明細 (第 {page}/{total_pages} 頁)**", "━━━━━━━━━━━━━━"]
-    total_value = 0.0
-    total_profit = 0.0
-    total_cost_all = 0.0
+
+    # 使用從外部傳入的全域總計，避免分頁導致計算錯誤
+    total_cost_all = summary.get("total_cost", 0.0)
+    total_profit = summary.get("pl_val", 0.0)
+    realized_profit = summary.get("realized_profit", 0.0)
 
     for r in rows:
         symbol = r["symbol"]
@@ -385,7 +387,6 @@ def portfolio_list(rows: list[dict[str, Any]], realized_profit: float = 0.0, pag
         day_pct = r.get("day_pct", 0.0)
 
         cost_basis = avg_cost * qty
-        total_cost_all += cost_basis
 
         if isinstance(curr, (int, float)):
             market_value = safe_round(float(curr) * qty, 2)
@@ -397,9 +398,6 @@ def portfolio_list(rows: list[dict[str, Any]], realized_profit: float = 0.0, pag
 
             day_sign = "+" if day_diff >= 0 else ""
 
-            total_value += market_value
-            total_profit += profit
-
             lines.append(
                 f"{trend_icon} **{symbol}** (`${safe_round(float(curr), 2):.2f}` | {day_sign}{day_diff:.2f} / {day_sign}{day_pct:.2f}%)\n"
                 f"├ 股數：`{qty:g}` | 均價：`${safe_round(avg_cost, 2):.2f}`\n"
@@ -408,9 +406,6 @@ def portfolio_list(rows: list[dict[str, Any]], realized_profit: float = 0.0, pag
             )
         else:
             lines.append(f"⚪ **{symbol}**\n" f"├ 股數：`{qty:g}` | 成本：`${safe_round(avg_cost, 2):.2f}`\n" f"└ 現價：`N/A`\n")
-
-    total_profit = safe_round(total_profit, 2)
-    realized_profit = safe_round(realized_profit, 2)
 
     unrealized_pct = (total_profit / total_cost_all * 100) if total_cost_all > 0 else 0.0
     realized_pct = (realized_profit / total_cost_all * 100) if total_cost_all > 0 else 0.0

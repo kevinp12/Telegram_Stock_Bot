@@ -474,6 +474,11 @@ def cmd_list(user_id: int, page: int = 1) -> tuple[str, int]:
     """獲取分頁後的持股列表。回傳 (文字內容, 總頁數)。"""
     portfolio = database.get_aggregated_portfolio(user_id)
     all_symbols = sorted(list(portfolio.keys()))
+
+    # 獲取全域損益摘要（不論分頁，確保底部署名正確）
+    summary = build_portfolio_summary(user_id)
+    summary["realized_profit"] = database.get_realized_profit(user_id)
+
     total_items = len(all_symbols)
     page_size = 4
     total_pages = math.ceil(total_items / page_size) if total_items > 0 else 1
@@ -502,7 +507,7 @@ def cmd_list(user_id: int, page: int = 1) -> tuple[str, int]:
             }
         )
 
-    text = frame.portfolio_list(rows, database.get_realized_profit(user_id), page, total_pages)
+    text = frame.portfolio_list(rows, summary, page, total_pages)
     return text, total_pages
 
 
