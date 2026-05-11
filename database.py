@@ -173,7 +173,7 @@ def init_db() -> None:
             )
             """)
 
-        # 使用者問答紀錄：供後台 /user log 查詢
+        # 使用者問答紀錄：供後台 /op user log 查詢
         c.execute("""
             CREATE TABLE IF NOT EXISTS qa_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

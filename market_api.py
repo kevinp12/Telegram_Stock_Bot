@@ -29,13 +29,6 @@ if finnhub and FINNHUB_KEY:
     except Exception as exc:
         logging.warning("Finnhub 初始化失敗: %s", exc)
 
-# 全局 Session 偽裝，避免被 yfinance/yahoo 封鎖
-session = requests.Session()
-session.headers.update(
-    {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-)
-
-
 def fetch_batch_quotes(symbols: list[str]) -> dict[str, float]:
     """
     批次打包請求：一次下載所有標的報價，大幅降低 API 被封鎖機率。
@@ -47,22 +40,15 @@ def fetch_batch_quotes(symbols: list[str]) -> dict[str, float]:
     target_tickers = list(ticker_map.values())
 
     try:
-        try:
-            data = yf.download(
-                tickers=" ".join(target_tickers),
-                period="1d",
-                interval="1m",
-                group_by="ticker",
-                auto_adjust=True,
-                prepost=True,
-                session=session,
-                progress=False,
-            )
-        except TypeError:
-            # 某些 yfinance 版本不支援 session 參數
-            data = yf.download(
-                tickers=" ".join(target_tickers), period="1d", interval="1m", group_by="ticker", auto_adjust=True, prepost=True, progress=False
-            )
+        data = yf.download(
+            tickers=" ".join(target_tickers),
+            period="1d",
+            interval="1m",
+            group_by="ticker",
+            auto_adjust=True,
+            prepost=True,
+            progress=False,
+        )
 
         if data.empty:
             return {}
@@ -625,21 +611,15 @@ def fetch_portfolio_history(symbols: list[str]) -> dict[str, dict[str, float]]:
 
     try:
         # 下載過去一年的日 K 線
-        try:
-            data = yf.download(
-                tickers=" ".join(target_tickers),
-                period="1y",
-                interval="1d",
-                group_by="ticker",
-                auto_adjust=True,
-                prepost=True,
-                session=session,
-                progress=False,
-            )
-        except TypeError:
-            data = yf.download(
-                tickers=" ".join(target_tickers), period="1y", interval="1d", group_by="ticker", auto_adjust=True, prepost=True, progress=False
-            )
+        data = yf.download(
+            tickers=" ".join(target_tickers),
+            period="1y",
+            interval="1d",
+            group_by="ticker",
+            auto_adjust=True,
+            prepost=True,
+            progress=False,
+        )
 
         if data.empty:
             return {}

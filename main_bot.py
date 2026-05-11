@@ -660,14 +660,6 @@ def on_ask(m):
     record_user_log_safely(user_id, user_name, get_username(m), m.text or "", result, source="/ask")
 
 
-@bot.message_handler(commands=["user"])
-def on_user(m):
-    user_id, _ = register_user(m)
-    result = command.cmd_user(m.text or "", user_id)
-    if result:
-        reply(m, result)
-
-
 @bot.message_handler(commands=["status"])
 def on_status(m):
     user_id, _ = register_user(m)

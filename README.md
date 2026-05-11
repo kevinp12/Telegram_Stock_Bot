@@ -41,7 +41,7 @@
 - Telegram Menu（`main_bot.setup_bot_commands()`）目前指令：
   - `now`, `list`, `theme`, `news`, `fin`, `whale`, `tech`, `risk`, `marco`, `sweep`, `bc`, `data`, `quota`, `status`, `help`
 
-> 註：`/user` 為隱藏後台指令，不會加入 help/menu。
+> 註：後台查詢已整合至 `/op user ...`，且僅 `ADMIN_ID` 可使用，不會加入 help/menu。
 
 #### 2) 今日功能更動摘要
 
@@ -291,7 +291,7 @@ graph TB
 | 🧠 AI 問答 | `/ask NVDA 現在是否過熱？` | 指定標的深度戰術拆解 |
 | 🔍 系統狀態 | `/status` | Gemini 連線、模型、伺服器與推播狀態 |
 | 💳 配額查詢 | `/quota` | Gemini Token 今日用量 |
-| 🔒 隱藏管理 | `/op help` | 模型切換、Log、Quota 等進階功能 |
+| 🔒 隱藏管理 | `/op help` | 模型切換、User 後台查詢、Log 等進階功能（僅 ADMIN_ID） |
 | 🧹 資料清除 | `data clear` | 二次確認後清除個人資產資料 |
 
 ### 📈 技術分析與量化作戰 (`/tech`)
@@ -357,9 +357,10 @@ graph TB
 *   **🎯 /help** — 指揮手冊  
     > 完整指令說明與使用範例
 
-### 🔒 隱藏指令 (`/op`)
+### 🔒 隱藏指令 (`/op`，僅 ADMIN_ID)
 *   **🛠️ /op model [flash|pro]** — 切換快速或思考模式
-*   **📊 /op quota** — 視覺化 Token 消耗進度
+*   **� /op user list** — 查看使用者清單
+*   **🧾 /op user log [名稱或id]** — 查指定使用者互動紀錄
 *   **🔒 /op log** — 系統審計日誌與錯誤回報
 *   **🧹 /op log clear** — 清除系統審計日誌
 *   **❓ /op help** — 隱藏功能清單

@@ -58,6 +58,7 @@ def help_text() -> list[str]:
         "【其他】\n"
         "• /ask [代號] [問題] - 啟動 Pro 深度戰術分析\n"
         "• /bc on|off|timer - 個人化自動推播設定\n"
+        "• /quota - 查詢今日 API 配額進度\n"
         "• /status - 驗證 Gemini 配額與連線"
     )
     return [part1, part2]
@@ -477,9 +478,10 @@ def hidden_op_text(current_model: str) -> str:
         f"🤖 當前 AI 核心：`{current_model}`\n\n"
         "📌 **指令清單：**\n"
         "• `/op model [flash|pro]` - 切換 AI 模型\n"
+        "• `/op user list` - 查看使用者清單（僅 admin）\n"
+        "• `/op user log [名稱或id]` - 查指定使用者互動紀錄（僅 admin）\n"
         "• `/op log` - 查看系統實時日誌\n"
         "• `/op log clear` - 清除日誌檔案\n"
-        "• `/op quota` - 查詢今日 API 配額進度\n"
         "━━━━━━━━━━━━━━\n"
         "💡 提示：這些指令不會顯示在選單中。"
     )

@@ -20,20 +20,21 @@ import database
 import frame
 import market_api
 import tech_indicators
-from config import BOT_START_TIME, VERSION
+from config import ADMIN_ID, BOT_START_TIME, VERSION
 from utils import safe_round
 
 STOCK_RE = re.compile(r"\b[A-Z]{2,5}\b")
 FIN_COMPARE_STATE: dict[int, list[str]] = {}
 DATA_CLEAR_CONFIRM_STATE: dict[int, datetime] = {}
 
-# /user 是隱藏後台查詢指令，不依賴公開 menu/help。
-# 依需求固定只綁定指定 Telegram 帳號，避免 .env 的 ADMIN_ID/CHAT_ID 設錯時誤開權限。
-OWNER_USER_ID = 5788908737
-
-
-def _is_owner(user_id: int) -> bool:
-    return int(user_id) == OWNER_USER_ID
+def _is_admin(user_id: int) -> bool:
+    """僅允許 .env ADMIN_ID 使用後台隱藏功能。"""
+    if not ADMIN_ID:
+        return False
+    try:
+        return int(user_id) == int(ADMIN_ID)
+    except Exception:
+        return False
 
 
 def _clip_text(text: str, limit: int = 700) -> str:
@@ -58,26 +59,32 @@ def _user_admin_help() -> str:
         "━━━━━━━━━━━━━━\n"
         "這是隱藏指令，不會出現在 /help 或 Telegram Menu。\n\n"
         "✅ 可用指令：\n"
-        "• `/user list`：顯示所有使用者 ID、名稱、最後互動時間\n"
-        "• `/user log 名稱or id`：查詢該使用者 48 小時內問過的問題與回答/指令紀錄\n\n"
+        "• `/op user list`：顯示所有使用者 ID、名稱、最後互動時間\n"
+        "• `/op user log 名稱or id`：查詢該使用者 48 小時內問過的問題與回答/指令紀錄\n\n"
         "📌 範例：\n"
-        "• `/user log 5788908737`\n"
-        "• `/user log Kevin`\n"
-        "• `/user log @username`"
+        "• `/op user log 5788908737`\n"
+        "• `/op user log Kevin`\n"
+        "• `/op user log @username`"
     )
 
 
 def cmd_user(text: str, user_id: int) -> str:
-    """後台使用者查詢。僅 owner 可用，且不加入公開指令清單。"""
-    if not _is_owner(user_id):
-        return ""
+    """後台使用者查詢。僅 ADMIN_ID 可用，供 /op user 子指令呼叫。"""
+    if not _is_admin(user_id):
+        return "⛔ 權限不足：僅 ADMIN_ID 可使用 `/op user`。"
 
     try:
-        parts = (text or "").split(maxsplit=2)
-        if len(parts) < 2:
+        parts = (text or "").split(maxsplit=3)
+        normalized_parts = parts
+        if parts and parts[0].lower() == "/op" and len(parts) >= 2 and parts[1].lower() == "user":
+            normalized_parts = ["user", *parts[2:]]
+        elif parts and parts[0].lower() == "/user":
+            normalized_parts = ["user", *parts[1:]]
+
+        if len(normalized_parts) < 2:
             return _user_admin_help()
 
-        sub = parts[1].lower()
+        sub = normalized_parts[1].lower()
         if sub in {"help", "?", "教學", "說明"}:
             return _user_admin_help()
 
@@ -88,24 +95,24 @@ def cmd_user(text: str, user_id: int) -> str:
             lines = ["🔐 使用者清單", "━━━━━━━━━━━━━━", f"共 {len(users)} 位使用者\n"]
             lines.extend(_format_admin_user(row) for row in users[:80])
             if len(users) > 80:
-                lines.append(f"\n…另有 {len(users) - 80} 位未顯示。請用 `/user log 名稱or id` 查詢特定使用者。")
+                lines.append(f"\n…另有 {len(users) - 80} 位未顯示。請用 `/op user log 名稱or id` 查詢特定使用者。")
             return "\n".join(lines)
 
         if sub == "log":
-            if len(parts) < 3 or not parts[2].strip():
+            if len(normalized_parts) < 3 or not normalized_parts[2].strip():
                 return (
                     "❌ 缺少查詢目標。\n"
                     "━━━━━━━━━━━━━━\n"
-                    "用法：`/user log 名稱or id`\n"
-                    "範例：`/user log 5788908737`、`/user log Kevin`、`/user log @username`"
+                    "用法：`/op user log 名稱or id`\n"
+                    "範例：`/op user log 5788908737`、`/op user log Kevin`、`/op user log @username`"
                 )
-            identifier = parts[2].strip()
+            identifier = normalized_parts[2].strip()
             target = database.find_user_by_name_or_id(identifier)
             if not target:
                 return (
                     f"❌ 找不到使用者：`{identifier}`\n"
                     "━━━━━━━━━━━━━━\n"
-                    "請先用 `/user list` 查看目前已記錄的 ID 與名稱，再用 `/user log 名稱or id` 查詢。"
+                    "請先用 `/op user list` 查看目前已記錄的 ID 與名稱，再用 `/op user log 名稱or id` 查詢。"
                 )
 
             logs = database.get_user_interaction_logs(int(target["user_id"]), limit=20)
@@ -125,9 +132,9 @@ def cmd_user(text: str, user_id: int) -> str:
             return "\n".join(header + body)
 
         return (
-            f"❌ 未知的 /user 子指令：`{sub}`\n"
+            f"❌ 未知的 /op user 子指令：`{sub}`\n"
             "━━━━━━━━━━━━━━\n"
-            "可用：`/user list`、`/user log 名稱or id`\n\n"
+            "可用：`/op user list`、`/op user log 名稱or id`\n\n"
             f"{_user_admin_help()}"
         )
     except Exception as exc:
@@ -1057,6 +1064,10 @@ def cmd_set_model(text: str, user_id: int) -> str:
 def cmd_op(text: str, user_id: int) -> str:
     """處理隱藏指令 /op。"""
     logging.info(f"cmd_op called: text='{text}', user_id={user_id}")
+
+    if not _is_admin(user_id):
+        return "⛔ 權限不足：僅 ADMIN_ID 可使用 `/op` 隱藏指令。"
+
     parts = text.split()
     current_model = database.get_user_model_preference(user_id)
 
@@ -1098,8 +1109,8 @@ def cmd_op(text: str, user_id: int) -> str:
                 return f"❌ 清除日誌失敗：{e}"
         return "__TRIGGER_LOG__"
 
-    if sub == "quota":
-        return cmd_quota(user_id)
+    if sub == "user":
+        return cmd_user(text, user_id)
 
     return f"❓ 未知的隱藏指令：`{sub}`\n\n" f"請使用 `/op help` 查看完整的隱藏功能清單。"
 
