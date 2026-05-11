@@ -21,20 +21,22 @@ SYSTEM_PROMPT_TEMPLATE = """
 【核心處理原則與輸出限制】
 =========================================
 1. 語言規範：全程使用「繁體中文」回覆。除了原文網址與股票代號外，嚴禁簡體中文。
-2. 嚴格遵守格式：禁止使用 Markdown 表格或產生任何圖片。只能使用符號與縮排。
-3. 原子化輸出 (Atomic Output)：情報與分析必須精煉、直接給出重點。嚴禁任何起承轉合的廢話。
-4. 資訊不重複原則：在【戰術決策】中，嚴禁再次覆述上方儀表板已存在的數字。必須直接將這些數據轉化為「具體行動計畫」。
-5. 趨勢結構標籤：必須嚴格且僅能使用以下三種標籤之一：/上升趨勢/、/下跌趨勢/、/盤整區間/。
-6. 絕對完整性：請務必將所有分析細節講得非常透徹，確保輸出內容結構完整，將話講完為止。
-7. 深度內容：優先提供新聞深度摘要、核心催化劑、領頭羊公司動態、供應鏈風險、長中短期展望。
+2. 實時數據優先：你必須嚴格基於下方提供的「市場快照與量化指標」進行分析。若與你的內部訓練數據有衝突，請以提供的数据為準。嚴禁虛構股價或指標數值。
+3. 嚴格遵守格式：禁止使用 Markdown 表格或產生任何圖片。只能使用符號與縮排。
+4. 原子化輸出 (Atomic Output)：情報與分析必須精煉、直接給出重點。嚴禁任何起承轉合的廢話。
+5. 資訊不重複原則：在【戰術決策】中，嚴禁再次覆述上方儀表板已存在的數字。必須直接將這些數據轉化為「具體行動計畫」。
+6. 趨勢結構標籤：必須嚴格且僅能使用以下三種標籤之一：/上升趨勢/、/下跌趨勢/、/盤整區間/。
+7. 絕對完整性：請務必將所有分析細節講得非常透徹，確保輸出內容結構完整，將話講完為止。
+8. 深度內容：優先提供新聞深度摘要、核心催化劑、領頭羊公司動態、供應鏈風險、長中短期展望。
 
 =========================================
 【指標定義與 AI 推論邏輯庫】
 =========================================
 1. 多時間框架 (MTF) 協同邏輯：
-   - 1D (日 K)：決定宏觀大方向。
+   - 1D (日 K)：決定宏觀大方向與主要結構。
    - 4H (四小時 K)：尋找關鍵結構支撐/壓力與大級別 FVG。
    - 1H (小時 K)：尋找短線流動性掃蕩作為進場點。
+   註：若快照中未提供 4H/1H 數據，請基於 1D 趨勢與波幅 (ATR) 推論短期關鍵位。
 2. SMC 聰明錢核心概念：
    - FVG (公允價值缺口)：標註 /看漲 FVG/ 或 /看跌 FVG/。
    - 流動性掃蕩 (Liquidity Sweep)：主力刻意跌破前低或突破前高。
@@ -57,8 +59,8 @@ SYSTEM_PROMPT_TEMPLATE = """
 
 📊 【多時區量化與 SMC 儀表板】
 * ⏱️ 趨勢結構：日線 [填入標籤]｜4H [填入標籤]｜1H [填入標籤]
-* ⚔️ 進攻指標：[大買 / 中買 / 小買 / 觀察 / 小賣 / 中賣 / 大賣]
-* 🐋 主力籌碼：[大買 / 中買 / 小買 / 中立 / 小賣 / 中賣 / 大賣]
+* ⚔️ 進攻指標：[填入數值]
+* 🐋 主力籌碼：[填入數值]
 * 🛡️ 波幅風險：ATR = [數值] (VIX 狀態：[正常/恐慌])
 * 📍 控制點參考：POC = [數值]
 * 🧲 SMC 結構：[標註最近的關鍵 FVG 屬於 /看漲 FVG/ 或 /看跌 FVG/，價格區間]
@@ -161,14 +163,15 @@ def summarize_tech_news(symbol: str, news_item: dict[str, Any], user_name: str, 
     price_str = f"（當前股價：{price_info} USD）" if price_info != "N/A" else ""
 
     prompt = f"""
-請幫 {user_name} 總結這篇關於 {symbol} {price_str} 的科技/趨勢新聞。
+請幫 {user_name} 產出「消息面主導」的新聞戰報，主題為 {symbol} {price_str}。
 標題：{title}
 摘要：{desc}
 
 【嚴格要求】
-1. 分析對領頭羊公司地位、產業上下游供應鏈及技術護城河的影響。
-2. 結合 SMC 邏輯，評估此利多/利空是否可能觸發流動性掃蕩或回踩 FVG。
-3. 輸出必須詳細，講透徹，絕對禁止斷句。
+1. 這份回覆要以「新聞催化劑」為主，不要把重點放在技術指標教科書。
+2. 必須回答：事件本質、影響公司、影響產業鏈、短中期可能催化。
+3. 可補充 SMC 觀點，但僅作輔助，不可喧賓奪主。
+4. 固定段落：A消息重點、B多空催化、C風險點、D交易觀察。
 """
     return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=2500, urls=[url] if url else None)
 
@@ -185,14 +188,15 @@ def summarize_earnings_report(symbol: str, news_item: dict[str, Any], user_name:
     price_str = f"（當前股價：{price_info} USD）" if price_info != "N/A" else ""
 
     prompt = f"""
-{user_name}，這是 {symbol} {price_str} 的最新財報/業績新聞。
+{user_name}，這是 {symbol} {price_str} 的最新財報/業績新聞，請做「財報面主導」分析。
 標題：{title}
 摘要：{desc}
 
 【嚴格要求】
-1. 提取 EPS、營收與 Guidance。
-2. 評估財測對大級別趨勢結構的衝擊，以及是否會產生新的 FVG 缺口。
-3. 輸出必須長串且完整，細節講透徹，絕對禁止斷句。
+1. 必須先提取 EPS、營收、Guidance、YoY/QoQ（若新聞未提供則明確標示缺失）。
+2. 重點是估值與基本面變化：成長性、獲利品質、預期修正。
+3. 技術面只可放在最後「市場反應觀察」一句，不可主導全文。
+4. 固定段落：A關鍵數字、B財報解讀、C估值影響、D後續追蹤。
 """
     return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.2, max_output_tokens=2500, urls=[url] if url else None)
 
@@ -265,24 +269,87 @@ def ask_ai_investment_advice(
 
 {holding_info}
 
-市場快照與量化指標：
+市場快照與量化指標（實時數據）：
 - 現價：{_f(snapshot.get('last_price', snapshot.get('price')))}
 - 今日漲跌：{_f(snapshot.get('diff', 0))} ({_f(snapshot.get('pct', 0))}%)
+- 趨勢結構：{snapshot.get('ema_status', 'N/A')}
 - 支撐/壓力：{_f(snapshot.get('support'))} / {_f(snapshot.get('resistance'))}
-- 進攻指標：{snapshot.get('attack_status', '觀察')}
-- 主力籌碼：{snapshot.get('whale_status', '中立')} (倍率: {snapshot.get('vol_ratio', 1)})
+- 進攻指標 (Attack Gauge)：{snapshot.get('attack_status', '觀察')}
+- 主力籌碼 (Whale Volume)：{snapshot.get('whale_status', '中立')} (倍率: {snapshot.get('vol_ratio', 1)})
 - SMC 結構：{snapshot.get('fvg', {}).get('type', 'N/A')} ({snapshot.get('fvg', {}).get('range', 'N/A')})
 - 流動性掃蕩：{snapshot.get('sweep', '無')}
 - POC 控制點：{_f(snapshot.get('poc', 0))}
 - ATR 波幅：{_f(snapshot.get('atr', 0))}
+- RSI (14)：{_f(snapshot.get('rsi', 'N/A'))}
+- MACD：{snapshot.get('macd_status', 'N/A')}
 - 🛡️ VIX 指數：{vix_str}
 
 近期新聞：
 {news_text}
 
+本任務屬於「個股深度回答模式（/ask）」，請以深度與可執行性為最高優先。
 請嚴格套用【標準輸出模板】進行深度分析，並特別注意 VIX 濾網規則。
+請確保【多時區量化與 SMC 儀表板】中的數值與上述提供的一致。
 """.strip()
-    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=4000, urls=urls)
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=4000, urls=urls)
+
+
+def ask_stock_brief(
+    symbol: str,
+    query: str,
+    snapshot: dict[str, Any],
+    news_items: list[dict[str, Any]],
+    user_name: str,
+    *,
+    user_id: int | None = None,
+    model: str | None = None,
+) -> str:
+    """自然對話的個股初步分析：短、準、先給方向。"""
+    news_text = "\n".join(f"- {n.get('title','')}" for n in news_items[:2]) or "- 暫無重大新聞"
+    prompt = f"""
+{user_name} 的問題：{query}
+標的：{symbol}
+快照：{snapshot}
+最近消息：
+{news_text}
+
+請輸出「初步分析模式」：
+1. 先給一句結論（偏多/中性/偏空）。
+2. 再給 3 點重點：消息面、技術面、風險點。
+3. 保持精簡、可讀，不要寫成超長報告。
+4. 若數據不足要直接講，不可腦補。
+""".strip()
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=1600)
+
+
+def analyze_financial_snapshot(
+    symbol: str,
+    fundamentals: dict[str, Any],
+    news_items: list[dict[str, Any]],
+    user_name: str,
+    *,
+    user_id: int | None = None,
+    model: str | None = None,
+) -> str:
+    """/fin 單股專用：財報與估值主導，技術面僅輔助。"""
+    news_text = "\n".join(f"- {n.get('title','')} ({n.get('source','Unknown')})" for n in news_items[:2]) or "- 暫無近期新聞"
+    urls = [n.get("url") for n in news_items if n.get("url")]
+    prompt = f"""
+{user_name} 正在看 {symbol} 的財報快照，請輸出「財報面主導」分析。
+
+財務資料：
+{fundamentals}
+
+近期新聞：
+{news_text}
+
+請嚴格遵守：
+1. 先看基本面與估值，不要先談技術線圖。
+2. 固定段落：A財報關鍵數字、B獲利品質、C估值判斷、D後續觀察。
+3. 若資料缺失要明確標註「資料不足」。
+4. 技術面最多 1 段作輔助觀察。
+""".strip()
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=2200, urls=urls)
 
 
 def compare_financials(
@@ -394,11 +461,22 @@ def analyze_whale_insider(
 請以「頂尖交易副官」人格，針對上述「大鯨魚」動向進行深度解析。
 你的目標是找出「真情報」：結合技術面與基本面（假設目前已有良好表現），內部人與大機構的動作是否在背書目前的漲勢或預示反轉？
 
+【嚴格限制】
+1. 只能根據上方提供的「內線交易紀錄」與「機構持倉紀錄」下結論，不可憑空補資料。
+2. 若資料不足，必須直接標示「資料不足」，不可延伸猜測。
+3. 禁止泛談總經與無關新聞，重點必須鎖定：內部人 / 機構 / 資金方向。
+
 【分析要求】
 1. 內部人行為分析：CEO/CFO 是在「偷偷賣」還是「低位加倉」？這傳達了什麼信心訊號？
 2. 機構博弈分析：橋水、文藝復興或先鋒領航等大機構的近期動作代表了什麼資本流向？
 3. 「真情報」綜合判定：給出 1-10 分的「鯨魚信心指數」，並給出具體的戰術結論。
-4. 輸出必須詳細，講透徹，嚴格遵守副官標籤規範，絕對不要斷句。
+4. 固定輸出格式（不可改標題）：
+   A. 內部人重點
+   B. 機構重點
+   C. 資金方向結論（偏多/中性/偏空）
+   D. 鯨魚信心指數（1-10）
+   E. 戰術建議（僅 3 點）
+5. 輸出必須詳細，講透徹，嚴格遵守副官標籤規範，絕對不要斷句。
 """
     return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=3500)
 

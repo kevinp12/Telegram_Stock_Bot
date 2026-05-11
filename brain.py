@@ -37,6 +37,32 @@ stats = BrainStats()
 _client: genai.Client | None = None
 _last_alert_percent = 0
 
+
+def is_quota_exhausted_error(message: str) -> bool:
+    """判斷是否為 Gemini 配額耗盡/資源不足類錯誤。"""
+    msg = (message or "").lower()
+    return (
+        "429" in msg
+        or "resourceexhausted" in msg
+        or "resource_exhausted" in msg
+        or "quota exceeded" in msg
+        or "exceeded your current quota" in msg
+    )
+
+
+def format_status_error(message: str, max_len: int = 120) -> str:
+    """將錯誤訊息格式化為狀態頁可讀短訊，避免洗版。"""
+    raw = (message or "").replace("\n", " ").strip()
+    if not raw or raw == "N/A":
+        return "N/A"
+    if is_quota_exhausted_error(raw):
+        return "429 RESOURCE_EXHAUSTED（配額不足，請檢查 billing / rate limit）"
+
+    compact = " ".join(raw.split())
+    if len(compact) > max_len:
+        compact = compact[: max_len - 1].rstrip() + "…"
+    return compact
+
 AUDIT_LOG_PATH: Path = GEMINI_AUDIT_LOG_PATH
 AUDIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -279,7 +305,7 @@ def generate_text(
             log_gemini_error(user_id, clean_model, exc, urls=urls)
 
             # 若為配額耗盡錯誤
-            if "429" in msg or "ResourceExhausted" in msg:
+            if is_quota_exhausted_error(msg):
                 if stats.alert_callback:
                     if user_id is not None:
                         used_today, _ = database.get_daily_tokens(user_id)
@@ -325,12 +351,18 @@ def get_status_text(user_id: int) -> str:
 
     t_stats = database.get_token_stats(user_id)
 
-    return (
-        f"• 今日流量: {used_today:,} / {DAILY_TOKEN_LIMIT:,} ({percent:.1f}%)\n"
-        f"• 消耗統計: Min:{t_stats['min']:.0f} | Max:{t_stats['max']:.0f} | Avg:{t_stats['avg']:.1f}\n"
-        f"• 目前使用模型: `{current_model}`\n"
-        f"• Flash 備援清單: {', '.join(flash_ready[:3])}\n"
-        f"• Pro 備援清單: {', '.join(pro_ready[:3])}\n"
-        f"• 成功調用: {stats.success} 次\n"
-        f"• 最近錯誤: {stats.last_error}"
-    )
+    status_error = format_status_error(stats.last_error)
+
+    flash_text = ", ".join(flash_ready[:3]) if flash_ready else "N/A"
+    pro_text = ", ".join(pro_ready[:3]) if pro_ready else "N/A"
+
+    lines = [
+        f"• 今日流量: {used_today:,} / {DAILY_TOKEN_LIMIT:,} ({percent:.1f}%)",
+        f"• 消耗統計: Min:{t_stats['min']:.0f} | Max:{t_stats['max']:.0f} | Avg:{t_stats['avg']:.1f}",
+        f"• 目前使用模型: `{current_model}`",
+        f"• Flash 備援清單: {flash_text}",
+        f"• Pro 備援清單: {pro_text}",
+        f"• 成功調用: {stats.success} 次",
+        f"• 最近錯誤: {status_error}",
+    ]
+    return "\n".join(lines)

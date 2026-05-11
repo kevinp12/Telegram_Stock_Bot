@@ -138,13 +138,13 @@ def get_username(m) -> str:
     return ""
 
 
-def safe_send(chat_id, text: str | list[str], parse_mode: str | None = None, reply_markup: any = None):
+def safe_send(chat_id, text: str | list[str] | tuple[str, ...], parse_mode: str | None = "Markdown", reply_markup: any = None):
     if text is None:
         text = ""
-    if isinstance(text, list):
-        full_text = "\n\n".join(text)
+    if isinstance(text, (list, tuple)):
+        full_text = "\n\n".join(str(part) for part in text)
     else:
-        full_text = text
+        full_text = str(text)
     CHUNK_SIZE = min(MAX_TELEGRAM_MESSAGE_LENGTH, 3800)
 
     def _chunk_text(s: str, limit: int) -> list[str]:
@@ -206,7 +206,7 @@ def record_user_log_safely(
         logging.warning("record user.log failed: %s", exc)
 
 
-def reply(message, text: str | list[str], parse_mode: str | None = None, reply_markup: any = None):
+def reply(message, text: str | list[str], parse_mode: str | None = "Markdown", reply_markup: any = None):
     return safe_send(message.chat.id, text, parse_mode=parse_mode, reply_markup=reply_markup)
 
 
@@ -259,7 +259,7 @@ def get_cached_page_markup(token: str, current_page: int, total_pages: int) -> I
     return markup
 
 
-def send_paged_message(chat_id, pages: list[str] | tuple[str, ...], parse_mode: str | None = None) -> None:
+def send_paged_message(chat_id, pages: list[str] | tuple[str, ...], parse_mode: str | None = "Markdown") -> None:
     clean_pages = [str(p).strip() for p in pages if str(p).strip()]
     if not clean_pages:
         safe_send(chat_id, "⚠️ 沒有可顯示的內容。", parse_mode=parse_mode)
@@ -282,8 +282,9 @@ def notify_status(status_type: str) -> None:
     now_full = get_current_time_str()
     if status_type == "online":
         logging.info("🚀 [SYSTEM] 啟動中")
-        msg = f"🎯 美股顧問核心已啟動\n━━━━━━━━━━━━━━\n{command.cmd_status(int(ADMIN_ID))}\n\n🕒 啟動時間：{now_full}"
-        safe_send(ADMIN_ID, msg)
+        status_pages = command.cmd_status(int(ADMIN_ID))
+        startup_header = f"🎯 美股顧問核心已啟動\n\n🕒 啟動時間：{now_full}"
+        safe_send(ADMIN_ID, [*status_pages, startup_header])
     elif status_type == "offline":
         logging.info("🛑 [SYSTEM] 關閉中")
         safe_send(ADMIN_ID, f"⚠️ 美股顧問系統已下線\n🕒 關閉時間：{now_full}")

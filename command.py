@@ -981,12 +981,42 @@ def cmd_whale(text: str, user_id: int) -> str:
     user_name = database.get_user_display_name(user_id)
     model_pref = database.get_user_model_preference(user_id)
 
+    def _build_whale_focus_summary(insiders: list[dict[str, Any]], insts: list[dict[str, Any]]) -> str:
+        insider_buy = 0
+        insider_sell = 0
+        for item in insiders[:20]:
+            chg = float(item.get("change", 0) or 0)
+            if chg > 0:
+                insider_buy += 1
+            elif chg < 0:
+                insider_sell += 1
+
+        inst_add = 0
+        inst_reduce = 0
+        for item in insts[:20]:
+            chg = float(item.get("change", 0) or 0)
+            if chg > 0:
+                inst_add += 1
+            elif chg < 0:
+                inst_reduce += 1
+
+        insider_bias = "偏多" if insider_buy > insider_sell else "偏空" if insider_sell > insider_buy else "中性"
+        inst_bias = "偏多" if inst_add > inst_reduce else "偏空" if inst_reduce > inst_add else "中性"
+
+        return (
+            "🎯 **大戶與內部人重點（系統摘要）**\n"
+            f"• 內部人方向：{insider_bias}（買入 {insider_buy} / 賣出 {insider_sell}）\n"
+            f"• 機構方向：{inst_bias}（加倉 {inst_add} / 減倉 {inst_reduce}）\n"
+            "• 註：以上為最近資料筆數統計，AI 解讀需以名單細節為準。"
+        )
+
     # AI 分析
     ai_analysis = ai_core.analyze_whale_insider(
         symbol, insider_data, institutional_data, user_name, model=model_pref, user_id=user_id
     )
+    summary_text = _build_whale_focus_summary(insider_data, institutional_data)
 
-    return frame.whale_report(symbol, len(insider_data), len(institutional_data), ai_analysis)
+    return frame.whale_report(symbol, len(insider_data), len(institutional_data), ai_analysis, summary_text=summary_text)
 
 
 def cmd_fin(text: str, user_id: int) -> str:
@@ -1023,7 +1053,19 @@ def cmd_fin(text: str, user_id: int) -> str:
     fundamentals = market_api.get_stock_fundamentals(symbol)
     if not fundamentals:
         return f"❌ 無法取得 {symbol} 的財務資料，請確認代號是否正確。"
-    return frame.fin_report(fundamentals)
+    base_report = frame.fin_report(fundamentals)
+    user_name = database.get_user_display_name(user_id)
+    model_pref = database.get_user_model_preference(user_id)
+    fin_news = market_api.fetch_news_multi(symbol, limit=2)
+    ai_fin = ai_core.analyze_financial_snapshot(
+        symbol,
+        fundamentals,
+        fin_news,
+        user_name,
+        user_id=user_id,
+        model=model_pref,
+    )
+    return f"{base_report}\n\n🧠 **AI 財報重點解讀**\n━━━━━━━━━━━━━━\n{ai_fin}"
 
 
 def cmd_status(user_id: int) -> list[str]:
@@ -1031,7 +1073,17 @@ def cmd_status(user_id: int) -> list[str]:
         ok = brain.ping(user_id)
     except Exception:
         ok = False
+
+    # 429/配額耗盡不等於核心斷線：改為「連線正常但資源受限」
+    last_error = str(getattr(brain.stats, "last_error", "") or "")
+    quota_limited = brain.is_quota_exhausted_error(last_error)
+    if (not ok) and quota_limited:
+        ok = True
+
     brain_status = brain.get_status_text(user_id)
+    if quota_limited:
+        brain_status += "\n\n• ⚠️ 狀態補充：目前為 API 配額受限（429），核心可用但暫時無法生成新回覆。"
+
     model_pref = database.get_user_model_preference(user_id)
     bc_active, bc_timer, _ = database.get_bc_settings(user_id)
     sweep_count = len(database.get_sniper_list(user_id))
@@ -1341,19 +1393,16 @@ def handle_natural_language(text: str, user_name: str, user_id: int | None = Non
         news = market_api.fetch_news_multi(symbol, limit=3)
         holdings = database.get_aggregated_portfolio(user_id) if user_id is not None else {}
 
-        prompt = f"""
-{user_name} 提到股票代號：{symbol}。
-原文內容：{text}
-
-請以「頂尖交易副官」人格，針對該標的進行自動化深度分析。
-分析應嚴格遵循 SMC 邏輯與輸出模板。
-
-指標摘要：
-{snapshot}
-
-持倉評估：若使用者已持股（成本：{holdings.get(symbol, {}).get('avg_cost', '未知')}），給出具體戰術建議。
-"""
-        return ai_core.ask_model(prompt, user_name, model=model_pref, user_id=user_id, temperature=0.35, max_output_tokens=3000)
+        # 自然對話採「初步分析模式」：短、準、先給方向
+        return ai_core.ask_stock_brief(
+            symbol,
+            text,
+            snapshot,
+            news,
+            user_name,
+            user_id=user_id,
+            model=model_pref,
+        )
 
     # 一般日常對話
     model_pref = database.get_user_model_preference(user_id) if user_id is not None else None
