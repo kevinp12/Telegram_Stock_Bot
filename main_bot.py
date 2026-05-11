@@ -29,7 +29,7 @@ import database
 import frame
 from config import (
     AUTO_NEWS_INTERVAL_SECONDS,
-    CHAT_ID,
+    ADMIN_ID,
     GEMINI_AUDIT_LOG_PATH,
     LONG_POLLING_TIMEOUT,
     MAX_TELEGRAM_MESSAGE_LENGTH,
@@ -66,7 +66,7 @@ PAGED_MESSAGE_CACHE: dict[str, list[str]] = {}
 
 
 def get_user_display_name(m) -> str:
-    """從 Telegram message/channel_post 中提取顯示名稱。"""
+    """從 Telegram message 中提取顯示名稱。"""
     user = getattr(m, "from_user", None)
     if user:
         name = user.first_name or ""
@@ -108,14 +108,6 @@ def normalize_loose_command_text(text: str) -> str:
     return normalized
 
 
-def is_admin_user(user_id: int) -> bool:
-    try:
-        return CHAT_ID and str(user_id) == str(CHAT_ID).lstrip("-") or str(user_id) == str(CHAT_ID)
-    except Exception as exc:
-        logging.error(f"is_admin_user error: {exc}")
-        return False
-
-
 def read_hidden_log_lines(line_count: int = 40) -> list[str]:
     try:
         with open(GEMINI_AUDIT_LOG_PATH, "r", encoding="utf-8") as handle:
@@ -137,6 +129,13 @@ def register_user(m) -> tuple[int, str]:
         username = getattr(user, "username", "") or ""
     database.add_or_update_user(user_id, display_name, username)
     return user_id, display_name
+
+
+def get_username(m) -> str:
+    user = getattr(m, "from_user", None)
+    if user:
+        return getattr(user, "username", "") or ""
+    return ""
 
 
 def safe_send(chat_id, text: str | list[str], parse_mode: str | None = None, reply_markup: any = None):
@@ -172,6 +171,41 @@ def safe_send(chat_id, text: str | list[str], parse_mode: str | None = None, rep
         time.sleep(1.0)
 
 
+def stringify_response(text: str | list[str] | tuple[str, ...]) -> str:
+    if isinstance(text, (list, tuple)):
+        return "\n\n".join(str(part) for part in text)
+    return str(text or "")
+
+
+def record_qa_safely(user_id: int, question: str, answer: str | list[str] | tuple[str, ...]) -> None:
+    try:
+        database.record_qa_log(user_id, question, stringify_response(answer))
+    except Exception as exc:
+        logging.warning("record qa log failed: %s", exc)
+
+
+def record_user_log_safely(
+    user_id: int,
+    user_name: str,
+    username: str,
+    question: str,
+    answer: str | list[str] | tuple[str, ...] | None = None,
+    *,
+    source: str = "text",
+) -> None:
+    try:
+        database.record_user_interaction(
+            user_id,
+            question,
+            stringify_response(answer) if answer is not None else None,
+            display_name=user_name,
+            username=username,
+            source=source,
+        )
+    except Exception as exc:
+        logging.warning("record user.log failed: %s", exc)
+
+
 def reply(message, text: str | list[str], parse_mode: str | None = None, reply_markup: any = None):
     return safe_send(message.chat.id, text, parse_mode=parse_mode, reply_markup=reply_markup)
 
@@ -179,12 +213,14 @@ def reply(message, text: str | list[str], parse_mode: str | None = None, reply_m
 def setup_bot_commands() -> None:
     commands = [
         telebot.types.BotCommand("now", "⚡ 即時全景 + 總損益"),
-        telebot.types.BotCommand("total", "💰 總資產損益回顧"),
         telebot.types.BotCommand("list", "📋 持股詳細明細"),
         telebot.types.BotCommand("theme", "🚀 產業趨勢速報"),
         telebot.types.BotCommand("news", "📰 即時新聞與市場報告"),
         telebot.types.BotCommand("fin", "📊 個股財報與 EPS"),
+        telebot.types.BotCommand("whale", "🐋 大鯨魚/內部人追蹤"),
         telebot.types.BotCommand("tech", "📊 專業量化分析"),
+        telebot.types.BotCommand("risk", "🛡️ 市場風險雷達"),
+        telebot.types.BotCommand("marco", "📊 宏觀數據雷達"),
         telebot.types.BotCommand("sweep", "🎯 狙擊監控管理"),
         telebot.types.BotCommand("bc", "📢 自動推播設定"),
         telebot.types.BotCommand("data", "🧹 資料清除（需二次確認）"),
@@ -239,18 +275,18 @@ def send_paged_message(chat_id, pages: list[str] | tuple[str, ...], parse_mode: 
 
 
 def notify_status(status_type: str) -> None:
-    if not CHAT_ID:
+    if not ADMIN_ID:
         return
     from ai_core import get_current_time_str
 
     now_full = get_current_time_str()
     if status_type == "online":
         logging.info("🚀 [SYSTEM] 啟動中")
-        msg = f"🎯 美股顧問核心已啟動\n━━━━━━━━━━━━━━\n{command.cmd_status(int(CHAT_ID))}\n\n🕒 啟動時間：{now_full}"
-        safe_send(CHAT_ID, msg)
+        msg = f"🎯 美股顧問核心已啟動\n━━━━━━━━━━━━━━\n{command.cmd_status(int(ADMIN_ID))}\n\n🕒 啟動時間：{now_full}"
+        safe_send(ADMIN_ID, msg)
     elif status_type == "offline":
         logging.info("🛑 [SYSTEM] 關閉中")
-        safe_send(CHAT_ID, f"⚠️ 美股顧問系統已下線\n🕒 關閉時間：{now_full}")
+        safe_send(ADMIN_ID, f"⚠️ 美股顧問系統已下線\n🕒 關閉時間：{now_full}")
 
 
 def handle_shutdown(signum=None, frame_obj=None):
@@ -427,9 +463,9 @@ def log_cleanup_job() -> None:
 
 
 @bot.message_handler(commands=["tech"])
-@bot.channel_post_handler(commands=["tech"])
 def on_tech(m):
-    user_id, _ = register_user(m)
+    user_id, user_name = register_user(m)
+    record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/tech")
     result = command.cmd_tech(m.text or "", user_id)
     if isinstance(result, (list, tuple)):
         send_paged_message(m.chat.id, result)
@@ -437,18 +473,49 @@ def on_tech(m):
         safe_send(m.chat.id, result)
 
 
+@bot.message_handler(commands=["risk"])
+def on_risk(m):
+    user_id, user_name = register_user(m)
+    record_user_log_safely(user_id, user_name, get_username(m), m.text or "/risk", source="/risk")
+    loading = reply(m, "🛡️ 正在整理市場風險雷達...")
+    try:
+        result = command.cmd_risk(user_id=user_id, user_name=user_name)
+        if loading:
+            bot.delete_message(m.chat.id, loading.message_id)
+        reply(m, result)
+    except Exception as exc:
+        if loading:
+            bot.delete_message(m.chat.id, loading.message_id)
+        reply(m, f"⚠️ 風險雷達讀取失敗：{exc}")
+
+
+@bot.message_handler(commands=["marco"])
+def on_marco(m):
+    user_id, user_name = register_user(m)
+    record_user_log_safely(user_id, user_name, get_username(m), m.text or "/marco", source="/marco")
+    loading = reply(m, "📊 正在整理宏觀雷達...")
+    try:
+        pages = command.cmd_marco(user_id=user_id, user_name=user_name)
+        if loading:
+            bot.delete_message(m.chat.id, loading.message_id)
+        send_paged_message(m.chat.id, pages)
+    except Exception as exc:
+        if loading:
+            bot.delete_message(m.chat.id, loading.message_id)
+        reply(m, f"⚠️ 宏觀雷達讀取失敗：{exc}")
+
+
 @bot.message_handler(commands=["help"])
-@bot.channel_post_handler(commands=["help"])
 def on_help(m):
     help_parts = command.frame.help_text()
     send_paged_message(m.chat.id, help_parts)
 
 
 @bot.message_handler(commands=["now"])
-@bot.channel_post_handler(commands=["now"])
 def on_now(m):
     bot.send_chat_action(m.chat.id, "typing")
     user_id, user_name = register_user(m)
+    record_user_log_safely(user_id, user_name, get_username(m), m.text or "/now", source="/now")
     loading_message = reply(m, "⏳ 正在整理最新行情...")
     try:
         sections = command.cmd_now(user_id, user_name)
@@ -464,15 +531,7 @@ def on_now(m):
         reply(m, "⚠️ 讀取行情失敗。")
 
 
-@bot.message_handler(commands=["total"])
-@bot.channel_post_handler(commands=["total"])
-def on_total(m):
-    user_id, _ = register_user(m)
-    reply(m, command.cmd_total(user_id))
-
-
 @bot.message_handler(commands=["list"])
-@bot.channel_post_handler(commands=["list"])
 def on_list(m):
     user_id, _ = register_user(m)
     text, total_pages = command.cmd_list(user_id, page=1)
@@ -481,35 +540,30 @@ def on_list(m):
 
 
 @bot.message_handler(commands=["buy"])
-@bot.channel_post_handler(commands=["buy"])
 def on_buy(m):
     user_id, _ = register_user(m)
     reply(m, command.cmd_buy(m.text or "", user_id))
 
 
 @bot.message_handler(commands=["sell"])
-@bot.channel_post_handler(commands=["sell"])
 def on_sell(m):
     user_id, _ = register_user(m)
     reply(m, command.cmd_sell(m.text or "", user_id))
 
 
 @bot.message_handler(commands=["watch"])
-@bot.channel_post_handler(commands=["watch"])
 def on_watch(m):
     user_id, _ = register_user(m)
     reply(m, command.cmd_watch(m.text or "", user_id))
 
 
 @bot.message_handler(commands=["sweep"])
-@bot.channel_post_handler(commands=["sweep"])
 def on_sweep(m):
     user_id, _ = register_user(m)
     reply(m, command.cmd_sweep(m.text or "", user_id))
 
 
 @bot.message_handler(commands=["theme"])
-@bot.channel_post_handler(commands=["theme"])
 def on_theme(m):
     user_id, user_name = register_user(m)
     loading = reply(m, "🚀 正在整理產業趨勢速報，請稍候...")
@@ -525,9 +579,9 @@ def on_theme(m):
 
 
 @bot.message_handler(commands=["news"])
-@bot.channel_post_handler(commands=["news"])
 def on_news(m):
     user_id, user_name = register_user(m)
+    record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/news")
     loading = reply(m, "📰 正在讀取新聞...")
     try:
         msgs = command.cmd_news(m.text or "", user_name, user_id)
@@ -542,9 +596,10 @@ def on_news(m):
 
 
 @bot.message_handler(commands=["fin"])
-@bot.channel_post_handler(commands=["fin"])
 def on_fin(m):
     user_id, _ = register_user(m)
+    user_name = get_user_display_name(m)
+    record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/fin")
     text = m.text or ""
     is_compare = len(text.split()) >= 2 and text.split()[1].lower() == "compare"
     loading = reply(m, "📊 正在整理財報比較與 AI 評析，請稍候...") if is_compare else None
@@ -562,43 +617,64 @@ def on_fin(m):
         reply(m, f"⚠️ 財報查詢失敗：{exc}")
 
 
+@bot.message_handler(commands=["whale"])
+def on_whale(m):
+    user_id, user_name = register_user(m)
+    record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/whale")
+    loading = reply(m, "🐋 正在追蹤大鯨魚與內部人動向...")
+    try:
+        result = command.cmd_whale(m.text or "", user_id)
+        if loading:
+            bot.delete_message(m.chat.id, loading.message_id)
+        reply(m, result)
+    except Exception as exc:
+        if loading:
+            bot.delete_message(m.chat.id, loading.message_id)
+        reply(m, f"⚠️ 鯨魚情報查詢失敗：{exc}")
+
+
 @bot.message_handler(commands=["quota"])
-@bot.channel_post_handler(commands=["quota"])
 def on_quota(m):
     user_id, _ = register_user(m)
     reply(m, command.cmd_quota(user_id))
 
 
 @bot.message_handler(commands=["bc"])
-@bot.channel_post_handler(commands=["bc"])
 def on_bc(m):
     user_id, _ = register_user(m)
     reply(m, command.cmd_bc(m.text or "", user_id))
 
 
 @bot.message_handler(commands=["data"])
-@bot.channel_post_handler(commands=["data"])
 def on_data(m):
     user_id, _ = register_user(m)
     reply(m, command.cmd_data_clear(m.text or "", user_id))
 
 
 @bot.message_handler(commands=["ask"])
-@bot.channel_post_handler(commands=["ask"])
 def on_ask(m):
     user_id, user_name = register_user(m)
-    reply(m, command.cmd_ask(m.text or "", user_name, user_id))
+    result = command.cmd_ask(m.text or "", user_name, user_id)
+    reply(m, result)
+    record_qa_safely(user_id, m.text or "", result)
+    record_user_log_safely(user_id, user_name, get_username(m), m.text or "", result, source="/ask")
+
+
+@bot.message_handler(commands=["user"])
+def on_user(m):
+    user_id, _ = register_user(m)
+    result = command.cmd_user(m.text or "", user_id)
+    if result:
+        reply(m, result)
 
 
 @bot.message_handler(commands=["status"])
-@bot.channel_post_handler(commands=["status"])
 def on_status(m):
     user_id, _ = register_user(m)
     reply(m, command.cmd_status(user_id))
 
 
 @bot.message_handler(commands=["op"])
-@bot.channel_post_handler(commands=["op"])
 def on_op(m):
     user_id = get_user_id(m)
     res = command.cmd_op(m.text or "", user_id)
@@ -609,7 +685,6 @@ def on_op(m):
 
 
 @bot.message_handler(commands=["log"])
-@bot.channel_post_handler(commands=["log"])
 def on_log(m):
     log_lines = read_hidden_log_lines(40)
     if not log_lines:
@@ -656,7 +731,6 @@ def on_cached_page_callback(call):
 
 
 @bot.message_handler(func=lambda m: True)
-@bot.channel_post_handler(func=lambda m: True)
 def on_text(m):
     text_raw = getattr(m, "text", "") or ""
     text = normalize_loose_command_text(text_raw)
@@ -665,14 +739,53 @@ def on_text(m):
 
     # 補強：讓 ./bc、/ bc、./sweep 等輸入也可正常觸發
     if text.startswith("/"):
-        user_id, _ = register_user(m)
+        user_id, user_name = register_user(m)
         lowered = text.lower()
+
+        if lowered.startswith("/now"):
+            record_user_log_safely(user_id, user_name, get_username(m), text, source="/now")
+            result = command.cmd_now(user_id, user_name)
+            if isinstance(result, (list, tuple)):
+                send_paged_message(m.chat.id, result)
+            else:
+                reply(m, result)
+            return
+        if lowered.startswith("/tech"):
+            record_user_log_safely(user_id, user_name, get_username(m), text, source="/tech")
+            result = command.cmd_tech(text, user_id)
+            if isinstance(result, (list, tuple)):
+                send_paged_message(m.chat.id, result)
+            else:
+                reply(m, result)
+            return
+        if lowered.startswith("/news"):
+            record_user_log_safely(user_id, user_name, get_username(m), text, source="/news")
+            for msg in command.cmd_news(text, user_name, user_id):
+                safe_send(m.chat.id, msg)
+            return
+        if lowered.startswith("/risk"):
+            record_user_log_safely(user_id, user_name, get_username(m), text, source="/risk")
+            reply(m, command.cmd_risk(user_id=user_id, user_name=user_name))
+            return
+        if lowered.startswith("/marco"):
+            record_user_log_safely(user_id, user_name, get_username(m), text, source="/marco")
+            send_paged_message(m.chat.id, command.cmd_marco(user_id=user_id, user_name=user_name))
+            return
+        if lowered.startswith("/fin"):
+            record_user_log_safely(user_id, user_name, get_username(m), text, source="/fin")
+            result = command.cmd_fin(text, user_id)
+            if isinstance(result, (list, tuple)):
+                send_paged_message(m.chat.id, result)
+            else:
+                reply(m, result)
+            return
+        if lowered.startswith("/whale"):
+            record_user_log_safely(user_id, user_name, get_username(m), text, source="/whale")
+            reply(m, command.cmd_whale(text, user_id))
+            return
 
         if lowered.startswith("/bc"):
             reply(m, command.cmd_bc(text, user_id))
-            return
-        if lowered.startswith("/total"):
-            reply(m, command.cmd_total(user_id))
             return
         if lowered.startswith("/sweep"):
             reply(m, command.cmd_sweep(text, user_id))
@@ -691,15 +804,19 @@ def on_text(m):
     if " ".join(text.strip().split()).lower() == "data clear":
         reply(m, command.cmd_data_clear(text, user_id))
         return
-    reply(m, command.handle_natural_language(text, user_name, user_id=user_id))
+    result = command.handle_natural_language(text, user_name, user_id=user_id)
+    reply(m, result)
+    record_qa_safely(user_id, text, result)
+    record_user_log_safely(user_id, user_name, get_username(m), text, result, source="natural")
 
 
 if __name__ == "__main__":
     database.init_db()
+    database.reset_user_log()
     setup_bot_commands()
     import brain
 
-    brain.stats.alert_callback = lambda msg: safe_send(CHAT_ID, msg)
+    brain.stats.alert_callback = lambda msg: safe_send(ADMIN_ID, msg)
     threading.Thread(target=auto_news_job, daemon=True).start()
     threading.Thread(target=major_news_alert_job, daemon=True).start()
     threading.Thread(target=market_report_job, daemon=True).start()

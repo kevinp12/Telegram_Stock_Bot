@@ -20,7 +20,7 @@ except Exception:
     finnhub = None
 
 import ai_core
-from config import FINNHUB_KEY, NEWS_API_KEY
+from config import FINNHUB_KEY, FRED_API_KEY, NEWS_API_KEY
 
 finnhub_client = None
 if finnhub and FINNHUB_KEY:
@@ -294,6 +294,122 @@ def format_quote(q: dict[str, Any]) -> str:
 
 def get_macro_status(symbol_name: str) -> str:
     return format_quote(get_macro_quote(symbol_name))
+
+
+def get_fear_greed_index() -> dict[str, Any]:
+    """取得 CNN Fear & Greed Index；失敗時回傳 N/A。"""
+    try:
+        r = requests.get("https://production.dataviz.cnn.io/index/fearandgreed/graphdata", timeout=8)
+        data = r.json()
+        fg = data.get("fear_and_greed") or {}
+        value = fg.get("score") or fg.get("value")
+        rating = fg.get("rating") or fg.get("classification") or "N/A"
+        if value is None:
+            return {"value": "N/A", "rating": "N/A", "note": "資料暫時無法取得"}
+        return {"value": safe_round(float(value), 1), "rating": str(rating), "note": "CNN Fear & Greed"}
+    except Exception as exc:
+        logging.warning("get_fear_greed_index failed: %s", exc)
+        return {"value": "N/A", "rating": "N/A", "note": "資料暫時無法取得"}
+
+
+def get_options_flow_snapshot(limit: int = 3) -> list[dict[str, str]]:
+    """用新聞/公開資訊近似追蹤大額選擇權異動。"""
+    queries = [
+        "unusual options activity large call put buying stocks",
+        "options flow unusual call buying put buying stock market",
+    ]
+    items: list[dict[str, str]] = []
+    for query in queries:
+        try:
+            items.extend(fetch_news_filtered(query, limit=limit))
+        except Exception:
+            continue
+        if len(items) >= limit:
+            break
+    return items[:limit]
+
+
+def get_social_heat_snapshot(limit: int = 3) -> list[dict[str, str]]:
+    """用新聞搜尋近似偵測 Reddit WSB / X 熱門討論標的。"""
+    queries = [
+        "Reddit WallStreetBets trending stocks OR WSB stocks",
+        "X Twitter trending stocks retail traders",
+    ]
+    items: list[dict[str, str]] = []
+    for query in queries:
+        try:
+            items.extend(fetch_news_filtered(query, limit=limit))
+        except Exception:
+            continue
+        if len(items) >= limit:
+            break
+    return items[:limit]
+
+
+FRED_SERIES_MAP = {
+    "CPI": "CPIAUCSL",
+    "UNRATE": "UNRATE",
+    "US10Y": "GS10",
+}
+
+
+def _fetch_fred_latest_with_prev(series_id: str) -> dict[str, Any]:
+    if not FRED_API_KEY:
+        return {"value": "N/A", "prev": "N/A", "trend": "N/A", "date": "N/A", "note": "未設定 FRED_API_KEY"}
+    try:
+        params = {
+            "series_id": series_id,
+            "api_key": FRED_API_KEY,
+            "file_type": "json",
+            "sort_order": "desc",
+            "limit": 3,
+        }
+        r = requests.get("https://api.stlouisfed.org/fred/series/observations", params=params, timeout=10)
+        data = r.json()
+        obs = data.get("observations") or []
+        valid = [o for o in obs if o.get("value") not in {".", None, ""}]
+        if len(valid) < 1:
+            return {"value": "N/A", "prev": "N/A", "trend": "N/A", "date": "N/A", "note": "FRED 無有效資料"}
+
+        latest = float(valid[0]["value"])
+        prev = float(valid[1]["value"]) if len(valid) > 1 else latest
+        trend = "上升" if latest > prev else "下降" if latest < prev else "持平"
+        return {
+            "value": safe_round(latest, 2),
+            "prev": safe_round(prev, 2),
+            "trend": trend,
+            "date": valid[0].get("date", "N/A"),
+            "note": "FRED",
+        }
+    except Exception as exc:
+        logging.warning("_fetch_fred_latest_with_prev failed for %s: %s", series_id, exc)
+        return {"value": "N/A", "prev": "N/A", "trend": "N/A", "date": "N/A", "note": "抓取失敗"}
+
+
+def get_macro_core_snapshot() -> dict[str, Any]:
+    """宏觀核心資料：CPI、失業率、10Y殖利率 + DXY。"""
+    cpi = _fetch_fred_latest_with_prev(FRED_SERIES_MAP["CPI"])
+    unrate = _fetch_fred_latest_with_prev(FRED_SERIES_MAP["UNRATE"])
+    us10y = _fetch_fred_latest_with_prev(FRED_SERIES_MAP["US10Y"])
+
+    dxy_quote = {"symbol": "DXY", "price": "N/A", "diff": 0.0, "pct": 0.0, "volume_note": "N/A"}
+    try:
+        dxy_hist = yf.Ticker("DX-Y.NYB").history(period="5d")
+        if not dxy_hist.empty:
+            curr = float(dxy_hist["Close"].iloc[-1])
+            prev = float(dxy_hist["Close"].iloc[-2]) if len(dxy_hist) >= 2 else curr
+            diff = curr - prev
+            pct = (diff / prev * 100) if prev else 0.0
+            dxy_quote = {"symbol": "DXY", "price": safe_round(curr, 2), "diff": safe_round(diff, 2), "pct": safe_round(pct, 2), "volume_note": "N/A"}
+    except Exception as exc:
+        logging.warning("get_macro_core_snapshot DXY failed: %s", exc)
+
+    return {
+        "cpi": cpi,
+        "unrate": unrate,
+        "us10y": us10y,
+        "dxy": dxy_quote,
+    }
 
 
 def get_fast_price(symbol_name: str):
@@ -571,6 +687,39 @@ def fetch_portfolio_history(symbols: list[str]) -> dict[str, dict[str, float]]:
     except Exception as e:
         logging.warning(f"fetch_portfolio_history failed: {e}")
         return {}
+
+
+def fetch_insider_transactions(symbol: str, limit: int = 15) -> list[dict[str, Any]]:
+    """獲取內線交易紀錄 (Form 4)。"""
+    if not finnhub_client:
+        return []
+    try:
+        # 獲取最近一年的數據
+        end_date = datetime.now().strftime("%Y-%m-%d")
+        start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        res = finnhub_client.stock_insider_transactions(symbol, _from=start_date, to=end_date)
+        data = res.get("data", [])
+        # 按日期降序排列
+        data.sort(key=lambda x: x.get("filingDate", ""), reverse=True)
+        return data[:limit]
+    except Exception as exc:
+        logging.warning("fetch_insider_transactions failed for %s: %s", symbol, exc)
+        return []
+
+
+def fetch_institutional_ownership(symbol: str, limit: int = 10) -> list[dict[str, Any]]:
+    """獲取機構持倉紀錄 (13F)。"""
+    if not finnhub_client:
+        return []
+    try:
+        res = finnhub_client.institutional_ownership(symbol)
+        data = res.get("data", [])
+        # 按持股數量或最新報表日期排序
+        data.sort(key=lambda x: x.get("reportDate", ""), reverse=True)
+        return data[:limit]
+    except Exception as exc:
+        logging.warning("fetch_institutional_ownership failed for %s: %s", symbol, exc)
+        return []
 
 
 def fetch_news_multi(symbol: str, limit: int = 3) -> list[dict[str, str]]:

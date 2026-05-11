@@ -411,18 +411,18 @@ def calculate_indicators(symbol: str) -> dict[str, Any]:
         td_status = "序列進行中"
         if buy_count > 0:
             if buy_count == 9:
-                td_status = "🔥 買入結構 TD9 (強反轉預期)"
+                td_status = "🔥 下跌TD9 (強反轉預期)"
             elif buy_count > 9:
-                td_status = f"買入結構 TD9+ ({buy_count})"
+                td_status = f"下跌TD9+ ({buy_count})"
             else:
-                td_status = f"買入結構 TD{buy_count}"
+                td_status = f"下跌TD{buy_count}"
         elif sell_count > 0:
             if sell_count == 9:
-                td_status = "💀 賣出結構 TD9 (強反轉預期)"
+                td_status = "💀 上漲TD9 (強反轉預期)"
             elif sell_count > 9:
-                td_status = f"賣出結構 TD9+ ({sell_count})"
+                td_status = f"上漲TD9+ ({sell_count})"
             else:
-                td_status = f"賣出結構 TD{sell_count}"
+                td_status = f"上漲TD{sell_count}"
         else:
             td_status = "TD 序列中立"
 
@@ -475,11 +475,12 @@ def calculate_indicators(symbol: str) -> dict[str, Any]:
             sweep_status = "看跌流動性掃蕩 (掃高)"
 
         # 14. 建議停利位置 (Take Profit Targets)
-        # 使用 ATR 2 倍與 3 倍，以及 Fib 1.272 作為目標
-        tp_target_1 = last_price + (2 * atr) if last_price > ema21 else last_price - (2 * atr)
-        tp_target_2 = last_price + (3 * atr) if last_price > ema21 else last_price - (3 * atr)
-        # Fib 1.272 擴展位 (基於最近三個月波幅)
-        tp_fib = low_3mo + range_3mo * 1.272 if last_price > ema21 else high_3mo - range_3mo * 0.272
+        # 短線採 2x ATR；波段採 3x ATR 與 Fib Ext 中「距離更遠」的一個，避免波段目標短於短線目標。
+        is_bullish_context = last_price > ema21
+        tp_target_1 = last_price + (2 * atr) if is_bullish_context else last_price - (2 * atr)
+        tp_target_2 = last_price + (3 * atr) if is_bullish_context else last_price - (3 * atr)
+        fib_ext = low_3mo + range_3mo * 1.272 if is_bullish_context else high_3mo - range_3mo * 0.272
+        tp_fib = max(tp_target_2, fib_ext) if is_bullish_context else min(tp_target_2, fib_ext)
 
         # 15. Attack Gauge
         score = 0

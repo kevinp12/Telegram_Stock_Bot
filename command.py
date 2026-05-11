@@ -27,6 +27,118 @@ STOCK_RE = re.compile(r"\b[A-Z]{2,5}\b")
 FIN_COMPARE_STATE: dict[int, list[str]] = {}
 DATA_CLEAR_CONFIRM_STATE: dict[int, datetime] = {}
 
+# /user 是隱藏後台查詢指令，不依賴公開 menu/help。
+# 依需求固定只綁定指定 Telegram 帳號，避免 .env 的 ADMIN_ID/CHAT_ID 設錯時誤開權限。
+OWNER_USER_ID = 5788908737
+
+
+def _is_owner(user_id: int) -> bool:
+    return int(user_id) == OWNER_USER_ID
+
+
+def _clip_text(text: str, limit: int = 700) -> str:
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 20].rstrip() + "\n…（內容已截斷）"
+
+
+def _format_admin_user(row: dict) -> str:
+    uid = row.get("user_id", "")
+    name = row.get("display_name") or "未命名"
+    username = row.get("username") or ""
+    username_part = f" (@{username})" if username else ""
+    last_seen = row.get("last_seen") or "未知"
+    return f"• `{uid}`｜{name}{username_part}\n  └ 最後互動：{last_seen}"
+
+
+def _user_admin_help() -> str:
+    return (
+        "🔐 後台使用者查詢\n"
+        "━━━━━━━━━━━━━━\n"
+        "這是隱藏指令，不會出現在 /help 或 Telegram Menu。\n\n"
+        "✅ 可用指令：\n"
+        "• `/user list`：顯示所有使用者 ID、名稱、最後互動時間\n"
+        "• `/user log 名稱or id`：查詢該使用者 48 小時內問過的問題與回答/指令紀錄\n\n"
+        "📌 範例：\n"
+        "• `/user log 5788908737`\n"
+        "• `/user log Kevin`\n"
+        "• `/user log @username`"
+    )
+
+
+def cmd_user(text: str, user_id: int) -> str:
+    """後台使用者查詢。僅 owner 可用，且不加入公開指令清單。"""
+    if not _is_owner(user_id):
+        return ""
+
+    try:
+        parts = (text or "").split(maxsplit=2)
+        if len(parts) < 2:
+            return _user_admin_help()
+
+        sub = parts[1].lower()
+        if sub in {"help", "?", "教學", "說明"}:
+            return _user_admin_help()
+
+        if sub == "list":
+            users = database.get_all_users()
+            if not users:
+                return "🔐 使用者清單\n━━━━━━━━━━━━━━\n目前沒有使用者紀錄。"
+            lines = ["🔐 使用者清單", "━━━━━━━━━━━━━━", f"共 {len(users)} 位使用者\n"]
+            lines.extend(_format_admin_user(row) for row in users[:80])
+            if len(users) > 80:
+                lines.append(f"\n…另有 {len(users) - 80} 位未顯示。請用 `/user log 名稱or id` 查詢特定使用者。")
+            return "\n".join(lines)
+
+        if sub == "log":
+            if len(parts) < 3 or not parts[2].strip():
+                return (
+                    "❌ 缺少查詢目標。\n"
+                    "━━━━━━━━━━━━━━\n"
+                    "用法：`/user log 名稱or id`\n"
+                    "範例：`/user log 5788908737`、`/user log Kevin`、`/user log @username`"
+                )
+            identifier = parts[2].strip()
+            target = database.find_user_by_name_or_id(identifier)
+            if not target:
+                return (
+                    f"❌ 找不到使用者：`{identifier}`\n"
+                    "━━━━━━━━━━━━━━\n"
+                    "請先用 `/user list` 查看目前已記錄的 ID 與名稱，再用 `/user log 名稱or id` 查詢。"
+                )
+
+            logs = database.get_user_interaction_logs(int(target["user_id"]), limit=20)
+            header = ["🔐 使用者問答紀錄", "━━━━━━━━━━━━━━", _format_admin_user(target)]
+            if not logs:
+                return "\n".join(header + ["\n目前沒有 48 小時內的暫存紀錄。", "\n💡 user.log 是暫存區：bot 重啟會清空，超過 48 小時也會刪除。"])
+
+            body: list[str] = []
+            for idx, row in enumerate(logs, start=1):
+                answer = str(row.get("answer", "") or "").strip()
+                answer_block = f"\nA：{_clip_text(answer, 900)}" if answer else ""
+                body.append(
+                    f"\n#{idx}｜{row.get('created_at', '')}｜{row.get('source', 'text')}\n"
+                    f"Q：{_clip_text(str(row.get('question', '')), 500)}"
+                    f"{answer_block}"
+                )
+            return "\n".join(header + body)
+
+        return (
+            f"❌ 未知的 /user 子指令：`{sub}`\n"
+            "━━━━━━━━━━━━━━\n"
+            "可用：`/user list`、`/user log 名稱or id`\n\n"
+            f"{_user_admin_help()}"
+        )
+    except Exception as exc:
+        logging.exception("cmd_user failed")
+        return (
+            "⚠️ 後台查詢發生錯誤。\n"
+            "━━━━━━━━━━━━━━\n"
+            f"錯誤內容：`{exc}`\n\n"
+            f"{_user_admin_help()}"
+        )
+
 
 def _portfolio_snapshot_from_ledger(ledger: list[dict]) -> dict[str, dict[str, float]]:
     portfolio: dict[str, dict[str, float]] = {}
@@ -41,90 +153,6 @@ def _portfolio_snapshot_from_ledger(ledger: list[dict]) -> dict[str, dict[str, f
         item["total_cost"] += price * qty
     return portfolio
 
-
-def _compute_total_history_perf(user_id: int) -> dict[str, dict[str, Any]]:
-    """以目前庫存 + 歷史價格回看各週期損益（不含已賣出部位回補）。"""
-    portfolio = database.get_aggregated_portfolio(user_id)
-    if not portfolio:
-        return {}
-
-    symbols = list(portfolio.keys())
-    hist = market_api.fetch_portfolio_history(symbols)
-    periods = ["7d", "1mo", "6mo", "ytd", "1y"]
-
-    now = datetime.now()
-    period_dates = {
-        "7d": (now - timedelta(days=7)).strftime("%Y/%m/%d"),
-        "1mo": (now - timedelta(days=30)).strftime("%Y/%m/%d"),
-        "6mo": (now - timedelta(days=180)).strftime("%Y/%m/%d"),
-        "ytd": now.replace(month=1, day=1).strftime("%Y/%m/%d"),
-        "1y": (now - timedelta(days=365)).strftime("%Y/%m/%d"),
-    }
-
-    out: dict[str, dict[str, Any]] = {}
-
-    for period in periods:
-        current_value = 0.0
-        past_value = 0.0
-        valid = False
-        for symbol, item in portfolio.items():
-            shares = float(item.get("shares", 0.0) or 0.0)
-            if shares <= 0:
-                continue
-            curr = market_api.get_fast_price(symbol)
-            past = (hist.get(symbol) or {}).get(period)
-            if isinstance(curr, (int, float)) and isinstance(past, (int, float)) and past > 0:
-                current_value += float(curr) * shares
-                past_value += float(past) * shares
-                valid = True
-        if valid and past_value > 0:
-            diff = current_value - past_value
-            pct = diff / past_value * 100
-            out[period] = {"diff": safe_round(diff, 2), "pct": safe_round(pct, 2), "date_str": period_dates[period]}
-    return out
-
-
-def cmd_total(user_id: int) -> str:
-    portfolio = database.get_aggregated_portfolio(user_id)
-    if not portfolio:
-        return "📭 您沒有購買任何股票，沒有任何損益資料。"
-
-    join_date_raw = database.get_first_trade_date(user_id)
-    join_date = "N/A"
-    if join_date_raw:
-        try:
-            dt = datetime.strptime(join_date_raw.split(".")[0], "%Y-%m-%d %H:%M:%S")
-            join_date = dt.strftime("%Y/%m/%d")
-        except Exception:
-            join_date = str(join_date_raw)[:10].replace("-", "/")
-
-    today_date = datetime.now().strftime("%Y/%m/%d")
-
-    total_cost = 0.0
-    total_value = 0.0
-    for symbol, item in portfolio.items():
-        shares = float(item.get("shares", 0.0) or 0.0)
-        total_cost += float(item.get("total_cost", 0.0) or 0.0)
-        curr = market_api.get_fast_price(symbol)
-        if isinstance(curr, (int, float)):
-            total_value += float(curr) * shares
-
-    unrealized = total_value - total_cost
-    realized = database.get_realized_profit(user_id)
-    history_perf = _compute_total_history_perf(user_id)
-    max_diff = unrealized + realized
-    max_pct = (max_diff / total_cost * 100) if total_cost > 0 else 0.0
-    history_perf["max"] = {"diff": safe_round(max_diff, 2), "pct": safe_round(max_pct, 2), "date_str": join_date}
-
-    return frame.portfolio_total_report(
-        total_cost=safe_round(total_cost, 2),
-        total_value=safe_round(total_value, 2),
-        unrealized_profit=safe_round(unrealized, 2),
-        realized_profit=safe_round(realized, 2),
-        history_perf=history_perf,
-        join_date=join_date,
-        today_date=today_date,
-    )
 
 
 def cmd_data_clear(text: str, user_id: int) -> str:
@@ -229,6 +257,7 @@ def build_portfolio_summary(user_id: int) -> dict[str, float]:
         "pl_val": safe_round(pl_val, 2),
         "pl_pct": safe_round(pl_pct, 2),
     }
+
 
 
 def resolve_news_target(query: str) -> tuple[str, str]:
@@ -437,14 +466,132 @@ def build_risk_section(quotes: list[dict[str, Any]]) -> str:
     )
 
 
+def _format_news_briefs(items: list[dict[str, str]], empty_text: str) -> str:
+    if not items:
+        return f"• {empty_text}"
+    lines: list[str] = []
+    for idx, item in enumerate(items[:3], start=1):
+        title = (item.get("title") or "無標題").strip()
+        source = item.get("source") or "未知來源"
+        lines.append(f"{idx}. {title}（{source}）")
+    return "\n".join(lines)
+
+
+def cmd_risk(user_id: int | None = None, user_name: str = "User") -> str:
+    """市場風險儀表板：VIX、指數風險、恐懼貪婪、選擇權與社群熱度。"""
+    sp_quote = market_api.get_macro_quote("標普500")
+    nasdaq_quote = market_api.get_macro_quote("納斯達克")
+    vix_quote = market_api.get_macro_quote("VIX")
+    fg = market_api.get_fear_greed_index()
+    options_items = market_api.get_options_flow_snapshot(limit=3)
+    social_items = market_api.get_social_heat_snapshot(limit=3)
+
+    risk_notes: list[str] = []
+    sp_pct = float(sp_quote.get("pct", 0) or 0)
+    ndx_pct = float(nasdaq_quote.get("pct", 0) or 0)
+    vix_price = vix_quote.get("price")
+    vix_diff = float(vix_quote.get("diff", 0) or 0)
+    if sp_pct < -1 or ndx_pct < -1:
+        risk_notes.append("標普500或納斯達克跌幅超過 1%，短線風險升溫。")
+    if isinstance(vix_price, (int, float)):
+        if vix_price >= 25:
+            risk_notes.append("VIX 高於 25，市場進入高波動/恐慌區，倉位宜保守。")
+        elif vix_price >= 18:
+            risk_notes.append("VIX 位於警戒區，留意避險需求升溫。")
+        else:
+            risk_notes.append("VIX 仍在相對溫和區，系統性恐慌尚未明顯擴散。")
+        if vix_diff > 0:
+            risk_notes.append("VIX 日內上升，代表避險情緒正在增強。")
+    if fg.get("value") != "N/A":
+        try:
+            fg_val = float(fg.get("value"))
+            if fg_val <= 25:
+                risk_notes.append("Fear & Greed 偏恐懼，容易出現去槓桿但也可能接近情緒低點。")
+            elif fg_val >= 75:
+                risk_notes.append("Fear & Greed 偏貪婪，追高風險提高。")
+        except Exception:
+            pass
+    if not risk_notes:
+        risk_notes.append("目前風險訊號中性，仍需觀察指數與波動率是否同步轉弱。")
+
+    return (
+        "🛡️ 市場風險雷達 /risk\n"
+        "━━━━━━━━━━━━━━\n"
+        "📊 指數風險\n"
+        f"• 標普500：{market_api.format_quote(sp_quote)}\n"
+        f"• 納斯達克：{market_api.format_quote(nasdaq_quote)}\n"
+        f"• VIX：{market_api.format_quote(vix_quote)}\n\n"
+        "😨 恐懼與貪婪指數\n"
+        f"• Fear & Greed：`{fg.get('value', 'N/A')}`｜{fg.get('rating', 'N/A')}（{fg.get('note', 'N/A')}）\n\n"
+        "📈 期權選擇權異動（Options Flow 近似追蹤）\n"
+        f"{_format_news_briefs(options_items, '暫無可用的大額 Call/Put 異動新聞。')}\n\n"
+        "🔥 社交媒體熱度（Reddit WSB / X 近似追蹤）\n"
+        f"{_format_news_briefs(social_items, '暫無可用的社群熱度暴增資料。')}\n\n"
+        "⚠️ 風險判讀\n"
+        + "\n".join(f"• {note}" for note in risk_notes)
+    )
+
+
+def _macro_trend_text(item: dict[str, Any], unit: str = "") -> str:
+    value = item.get("value", "N/A")
+    prev = item.get("prev", "N/A")
+    trend = item.get("trend", "N/A")
+    date = item.get("date", "N/A")
+    suffix = unit if isinstance(value, (int, float)) else ""
+    return f"{value}{suffix}｜前值 {prev}{suffix}｜{trend}｜{date}"
+
+
+def cmd_marco(user_id: int | None = None, user_name: str = "User") -> list[str]:
+    """宏觀指令：第1頁即時數據，第2頁指標教學與高低影響。"""
+    snap = market_api.get_macro_core_snapshot()
+    cpi = snap.get("cpi", {})
+    unrate = snap.get("unrate", {})
+    us10y = snap.get("us10y", {})
+    dxy = snap.get("dxy", {})
+
+    dxy_text = market_api.format_quote(dxy) if isinstance(dxy, dict) else "N/A"
+    page1 = (
+        "📊 宏觀雷達 /marco (1/2)\n"
+        "━━━━━━━━━━━━━━\n"
+        "A. 通膨類 (Inflation)\n"
+        f"• CPI (CPIAUCSL)：{_macro_trend_text(cpi)}\n"
+        "• PCE：本版未串接（可後續加上 PCEPI）\n\n"
+        "B. 就業類 (Employment)\n"
+        f"• 失業率 (UNRATE)：{_macro_trend_text(unrate, '%')}\n"
+        "• NFP / 平均時薪：本版未串接（可加 BLS API）\n\n"
+        "C. 利率與美元 (Rates & Dollar)\n"
+        f"• US10Y (GS10)：{_macro_trend_text(us10y, '%')}\n"
+        f"• DXY (DX-Y.NYB)：{dxy_text}\n\n"
+        "💡 趨勢說明：上升/下降為相較前一期（通常前月）變化。"
+    )
+
+    page2 = (
+        "📘 宏觀指標教學 /marco (2/2)\n"
+        "━━━━━━━━━━━━━━\n"
+        "【A. 通膨類】\n"
+        "• CPI / Core CPI / PCE：越高代表通膨壓力大，市場會擔心降息延後。\n"
+        "• 一般來說：通膨高於預期 → 美債殖利率與美元易走強 → 成長股壓力增加。\n\n"
+        "【B. 就業類】\n"
+        "• NFP、失業率、平均時薪是景氣與薪資通膨風向球。\n"
+        "• 就業過熱且時薪過快上升，通膨較難降，風險資產估值容易被壓縮。\n\n"
+        "【C. 利率與美元】\n"
+        "• FOMC 利率：偏鷹通常壓估值；偏鴿通常支撐風險資產。\n"
+        "• DXY：美元太強常壓抑股市表現。\n"
+        "• US10Y：殖利率急升時，科技成長股（如 NVDA）通常壓力較大。\n\n"
+        "⚠️ 常用判讀\n"
+        "• CPI/PCE 高 + US10Y 升 + DXY 升：偏 Bearish\n"
+        "• CPI/PCE 降 + US10Y 穩/降 + DXY 回落：偏 Bullish"
+    )
+    return [page1, page2]
+
+
 def build_now_dashboard(user_name: str, user_id: int, with_ai: bool = True) -> list[str]:
-    targets = ["標普500", "納斯達克", "黃金", "原油", "比特幣", "VIX"]
+    targets = ["標普500", "納斯達克", "黃金", "原油", "比特幣"]
     quotes = [market_api.get_macro_quote(t) for t in targets]
     portfolio = build_portfolio_summary(user_id)
 
     macro_section = build_macro_section(quotes)
     fib_section = build_fibonacci_section()
-    risk_section = build_risk_section(quotes)
 
     tactical = "暫時無法產生 AI 戰術建議。"
     if with_ai:
@@ -463,7 +610,7 @@ def build_now_dashboard(user_name: str, user_id: int, with_ai: bool = True) -> l
             logging.warning("AI tactical failed: %s", exc)
 
     ai_section = "🤖 AI 交易副官結語\n━━━━━━━━━━━━━━\n" + tactical
-    return [macro_section, fib_section, risk_section, ai_section]
+    return [macro_section, fib_section, ai_section]
 
 
 def cmd_now(user_id: int, user_name: str):
@@ -810,6 +957,31 @@ def cmd_news_help() -> str:
     return frame.news_help_text()
 
 
+def cmd_whale(text: str, user_id: int) -> str:
+    """處理 /whale 指令：大鯨魚/內部人情報追蹤。"""
+    parts = text.split()
+    if len(parts) < 2:
+        return "🐋 **「大鯨魚/內部人」情報追蹤**\n━━━━━━━━━━━━━━\n用法：`/whale [股票代號]`\n範例：`/whale NVDA`\n\n內容包含：\n• SEC Form 4：追蹤公司內部人 (CEO/CFO 等) 買賣動態\n• 13F 報告：大機構 (橋水、文藝復興等) 持倉變動\n• AI 判斷：結合量價與籌碼的「真情報」判定"
+
+    symbol = parts[1].strip().upper()
+    if not re.fullmatch(r"[A-Z0-9\.\-]{1,6}", symbol):
+        return f"❌ 錯誤的代號格式：{symbol}。請輸入正確的美股代號。"
+
+    # 獲取內線與機構數據
+    insider_data = market_api.fetch_insider_transactions(symbol)
+    institutional_data = market_api.fetch_institutional_ownership(symbol)
+
+    user_name = database.get_user_display_name(user_id)
+    model_pref = database.get_user_model_preference(user_id)
+
+    # AI 分析
+    ai_analysis = ai_core.analyze_whale_insider(
+        symbol, insider_data, institutional_data, user_name, model=model_pref, user_id=user_id
+    )
+
+    return frame.whale_report(symbol, len(insider_data), len(institutional_data), ai_analysis)
+
+
 def cmd_fin(text: str, user_id: int) -> str:
     parts = text.split(maxsplit=2)
     if len(parts) < 2 or not parts[1].strip():
@@ -1141,6 +1313,11 @@ def handle_natural_language(text: str, user_name: str, user_id: int | None = Non
     symbol = syms[0].upper() if syms else None
 
     if symbol:
+        # 偵測關鍵字，決定是否切換到 /whale 模式
+        whale_keywords = ["大鯨魚", "內部人", "內線", "13F", "whale", "insider", "機構持倉", "CEO買", "CEO賣"]
+        if any(kw in text.lower() for kw in whale_keywords):
+            return cmd_whale(f"/whale {symbol}", user_id)
+
         # 偵測到代號，自動切換為股票深度分析模式
         # 使用量化分析作為快照
         snapshot = tech_indicators.calculate_indicators(symbol)

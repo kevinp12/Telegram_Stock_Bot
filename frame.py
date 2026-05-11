@@ -20,7 +20,6 @@ def help_text() -> list[str]:
         "━━━━━━━━━━━━━━\n"
         "⚡ **行情與損益**\n"
         "• /now - 宏觀數據、帳戶總盈虧、AI 戰術短評\n\n"
-        "• /total - 總資產損益（含 7d/1mo/6mo/ytd/1y/max）\n\n"
         "📋 **資產明細**\n"
         "• /list - 詳細股數、平均成本與獲利\n"
         "• /buy [代號] [價格] [股數] - 記錄買入\n"
@@ -45,10 +44,13 @@ def help_text() -> list[str]:
         "• /theme [主題] - 產生產業趨勢深度速報 (如: AI, 核能)\n\n"
         "【財務基本面】\n"
         "• /fin [代號] - 查詢個股財報、EPS、營收、估值與關鍵數字\n"
-        "• /fin compare [股票A] [股票B] - 比較 2 到 3 支股票的財務健康與最新消息。\n\n"
+        "• /fin compare [股票A] [股票B] - 比較 2 到 3 支股票的財務健康與最新消息。\n"
+        "• /whale [代號] - 追蹤「大鯨魚/內部人」情報 (SEC Form 4 & 13F)\n\n"
         "【技術量化面】\n"
         "• /tech [代號] - 產出專業量化指標儀表板與戰術策略\n"
-        "• /tech compare [代號1] [代號2] - 量化數據橫向對比\n\n"
+        "• /tech compare [代號1] [代號2] - 量化數據橫向對比\n"
+        "• /risk - 市場風險雷達：VIX、恐懼貪婪、期權異動、社群熱度\n\n"
+        "• /marco - 宏觀雷達：CPI、失業率、US10Y、DXY\n\n"
         "【狙擊監控】\n"
         "• /sweep add NVDA - 啟動價格掃蕩與 FVG 監控\n"
         "• /sweep del TSLA - 停止監控該標的\n"
@@ -114,6 +116,35 @@ def tech_report(data: dict[str, Any]) -> list[str]:
     tdst = data.get("tdst", {}) or {}
     signal = data.get("confluence_payload") or data.get("confluence_signal", {}) or {}
 
+    def _format_take_profit_targets() -> tuple[str, str]:
+        """確保波段目標距離現價一定大於短線目標，並顯示距離避免多空方向誤解。"""
+        short_target = tp.get("tp1", "N/A")
+        swing_target = tp.get("tp_fib", "N/A")
+        try:
+            price_f = float(price)
+            atr_f = float(atr or 0)
+            short_f = float(short_target)
+            swing_f = float(swing_target)
+            short_dist = abs(short_f - price_f)
+            swing_dist = abs(swing_f - price_f)
+            bullish_context = short_f >= price_f
+
+            if swing_dist <= short_dist:
+                fallback_dist = max(short_dist * 1.5, atr_f * 3, short_dist + max(atr_f, price_f * 0.01))
+                swing_f = price_f + fallback_dist if bullish_context else price_f - fallback_dist
+                swing_dist = abs(swing_f - price_f)
+
+            short_pct = (short_dist / price_f * 100) if price_f else 0
+            swing_pct = (swing_dist / price_f * 100) if price_f else 0
+            return (
+                f"{safe_round(short_f, 2)}（距現價 {safe_round(short_pct, 2)}%）",
+                f"{safe_round(swing_f, 2)}（距現價 {safe_round(swing_pct, 2)}%）",
+            )
+        except Exception:
+            return (str(short_target), str(swing_target))
+
+    short_tp_text, swing_tp_text = _format_take_profit_targets()
+
     def get_status_icon(status: str) -> str:
         if "大買" in status:
             return "🔥"
@@ -146,8 +177,8 @@ def tech_report(data: dict[str, Any]) -> list[str]:
         f"• 錨定成本 (VWAP)：`{vwap}`\n"
         f"• 支撐位：`{sup}`\n\n"
         f"💰 **獲利目標測算 (Take Profit)**\n"
-        f"• 短線 (2x ATR)：`{tp.get('tp1', 'N/A')}`\n"
-        f"• 波段 (Fib Ext)：`{tp.get('tp_fib', 'N/A')}`\n"
+        f"• 短線 (2x ATR)：`{short_tp_text}`\n"
+        f"• 波段 (較遠目標)：`{swing_tp_text}`\n"
         f"━━━━━━━━━━━━━━\n"
         f"💡 下一頁：SMC 結構與共振狙擊訊號"
     )
@@ -266,51 +297,6 @@ def sweep_list(symbols: list[str]) -> str:
         return "🎯 **狙擊監控名單**\n━━━━━━━━━━━━━━\n目前為空 🈳\n\n💡 提示：使用 `/sweep add [代號]` 開始監控結構共振。"
     return "🎯 **當前狙擊名單：**\n" + ", ".join([f"`{s}`" for s in symbols])
 
-
-def portfolio_total_report(
-    total_cost: float,
-    total_value: float,
-    unrealized_profit: float,
-    realized_profit: float,
-    history_perf: dict[str, dict[str, Any]] | None = None,
-    join_date: str = "N/A",
-    today_date: str = "N/A",
-) -> str:
-    total_all_profit = unrealized_profit + realized_profit
-    unrealized_pct = (unrealized_profit / total_cost * 100) if total_cost > 0 else 0.0
-
-    sign_u = "+" if unrealized_profit >= 0 else ""
-    sign_r = "+" if realized_profit >= 0 else ""
-    sign_a = "+" if total_all_profit >= 0 else ""
-
-    lines = [
-        "💰 **全球資產總盈虧報告**",
-        "━━━━━━━━━━━━━━",
-        f"📦 總持倉成本：`${total_cost:,.2f}`",
-        f"🏦 目前總市值：`${total_value:,.2f}`",
-        "",
-        f"💵 未實現損益：`{sign_u}${unrealized_profit:,.2f}` ({sign_u}{unrealized_pct:.2f}%)",
-        f"💰 已實現損益：`{sign_r}${realized_profit:,.2f}`",
-        f"📈 累計總盈虧：`{sign_a}${total_all_profit:,.2f}`",
-        "━━━━━━━━━━━━━━",
-    ]
-
-    if history_perf:
-        lines.append(f"⏳ **歷史表現回溯** (加入日: `{join_date}` ~ 今日: `{today_date}`)")
-        periods = [("7d", "7 Day"), ("1mo", "1 Month"), ("6mo", "6 Month"), ("ytd", "YTD"), ("1y", "1 Year"), ("max", "MAX")]
-        for key, label in periods:
-            perf = history_perf.get(key)
-            if perf:
-                diff = perf["diff"]
-                pct = perf["pct"]
-                date_str = perf.get("date_str", "N/A")
-                s = "+" if diff >= 0 else ""
-                lines.append(f"├ {label} ({date_str})：`{s}${diff:,.2f}` ({s}{pct:.2f}%)")
-            else:
-                lines.append(f"├ {label}：`N/A` (`N/A`)")
-        lines.append("━━━━━━━━━━━━━━")
-
-    return "\n".join(lines)
 
 
 def bc_settings_status(enabled: bool, interval: int) -> str:
@@ -453,6 +439,18 @@ def fin_report(data: dict[str, Any]) -> str:
             if data.get("latest_quarter")
             else ""
         )
+    )
+
+
+def whale_report(symbol: str, insider_count: int, inst_count: int, ai_analysis: str) -> str:
+    return (
+        f"🐋 **「大鯨魚/內部人」情報：{symbol}**\n"
+        "━━━━━━━━━━━━━━\n"
+        f"📊 數據統計：\n"
+        f"• 近期內線交易：`{insider_count}` 筆\n"
+        f"• 主要機構持倉變動：`{inst_count}` 筆\n\n"
+        "🧠 **AI 深度解讀與「真情報」判定**：\n"
+        f"{ai_analysis}"
     )
 
 

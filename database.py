@@ -7,8 +7,13 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime
+from pathlib import Path
+import json
 
-from config import DB_NAME
+from config import BASE_DIR, DB_NAME
+
+USER_LOG_PATH = Path(BASE_DIR) / "user.log"
+USER_LOG_TTL_SECONDS = 48 * 60 * 60
 
 
 def _to_ts(dt: datetime) -> float:
@@ -17,6 +22,89 @@ def _to_ts(dt: datetime) -> float:
 
 def get_conn():
     return sqlite3.connect(DB_NAME)
+
+
+def _now_ts() -> float:
+    return datetime.now().timestamp()
+
+
+def _read_user_log_entries() -> list[dict]:
+    if not USER_LOG_PATH.exists():
+        return []
+    entries: list[dict] = []
+    cutoff = _now_ts() - USER_LOG_TTL_SECONDS
+    try:
+        with USER_LOG_PATH.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                ts = float(item.get("ts", 0) or 0)
+                if ts >= cutoff:
+                    entries.append(item)
+    except FileNotFoundError:
+        return []
+    return entries
+
+
+def prune_user_log() -> None:
+    """清除 user.log 中超過 48 小時的暫存紀錄。"""
+    entries = _read_user_log_entries()
+    if not entries:
+        try:
+            USER_LOG_PATH.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return
+    with USER_LOG_PATH.open("w", encoding="utf-8") as handle:
+        for item in entries:
+            handle.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+
+def reset_user_log() -> None:
+    """重啟 bot 時清空暫存 user.log。"""
+    USER_LOG_PATH.write_text("", encoding="utf-8")
+
+
+def record_user_interaction(
+    user_id: int,
+    question: str,
+    answer: str | None = None,
+    *,
+    display_name: str = "",
+    username: str = "",
+    source: str = "text",
+) -> None:
+    """寫入 48 小時暫存互動紀錄。自然語言與 /ask 可附 answer；其他指令只記 question。"""
+    question = (question or "").strip()
+    answer = (answer or "").strip() if answer is not None else ""
+    if not question:
+        return
+    prune_user_log()
+    item = {
+        "ts": _now_ts(),
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "user_id": int(user_id),
+        "display_name": (display_name or "").strip(),
+        "username": (username or "").strip(),
+        "source": source,
+        "question": question[:4000],
+        "answer": answer[:12000],
+    }
+    with USER_LOG_PATH.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+
+def get_user_interaction_logs(user_id: int, limit: int = 10) -> list[dict]:
+    """讀取指定使用者 48 小時內的暫存互動紀錄。"""
+    prune_user_log()
+    entries = [item for item in _read_user_log_entries() if int(item.get("user_id", 0) or 0) == int(user_id)]
+    entries.sort(key=lambda item: (float(item.get("ts", 0) or 0), int(item.get("id", 0) or 0)), reverse=True)
+    return entries[: int(limit)]
 
 
 def init_db() -> None:
@@ -82,6 +170,17 @@ def init_db() -> None:
                 total_tokens INTEGER,
                 urls TEXT,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """)
+
+        # 使用者問答紀錄：供後台 /user log 查詢
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS qa_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """)
 
@@ -218,6 +317,94 @@ def get_all_user_ids() -> list[int]:
         return sorted({int(r[0]) for r in rows if r and r[0] is not None})
 
 
+def get_all_users() -> list[dict]:
+    """取得所有曾經互動過的使用者，用於後台查詢。"""
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT user_id, username, display_name, first_seen, last_seen
+            FROM users
+            ORDER BY last_seen DESC, user_id ASC
+            """
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def find_user_by_name_or_id(identifier: str) -> dict | None:
+    """用 user_id、username 或 display_name 尋找使用者。"""
+    target = (identifier or "").strip()
+    if not target:
+        return None
+
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        if target.isdigit():
+            row = conn.execute(
+                "SELECT user_id, username, display_name, first_seen, last_seen FROM users WHERE user_id=?",
+                (int(target),),
+            ).fetchone()
+            if row:
+                return dict(row)
+
+        username = target[1:] if target.startswith("@") else target
+        row = conn.execute(
+            """
+            SELECT user_id, username, display_name, first_seen, last_seen
+            FROM users
+            WHERE lower(username)=lower(?) OR lower(display_name)=lower(?)
+            ORDER BY last_seen DESC
+            LIMIT 1
+            """,
+            (username, target),
+        ).fetchone()
+        if row:
+            return dict(row)
+
+        row = conn.execute(
+            """
+            SELECT user_id, username, display_name, first_seen, last_seen
+            FROM users
+            WHERE lower(display_name) LIKE lower(?) OR lower(username) LIKE lower(?)
+            ORDER BY last_seen DESC
+            LIMIT 1
+            """,
+            (f"%{target}%", f"%{username}%"),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def record_qa_log(user_id: int, question: str, answer: str) -> None:
+    """記錄使用者問題與 bot 回答。"""
+    question = (question or "").strip()
+    answer = (answer or "").strip()
+    if not question or not answer:
+        return
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO qa_logs (user_id, question, answer) VALUES (?, ?, ?)",
+            (user_id, question[:4000], answer[:12000]),
+        )
+        conn.commit()
+
+
+def get_user_qa_logs(user_id: int, limit: int = 10) -> list[dict]:
+    """取得指定使用者最近問答紀錄。"""
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT id, question, answer, created_at
+            FROM qa_logs
+            WHERE user_id=?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (user_id, int(limit)),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def get_daily_tokens(user_id: int) -> tuple[int, str]:
     """獲取指定使用者今日已用 Token 與上次紀錄日期。"""
     with get_conn() as conn:
@@ -301,7 +488,7 @@ def get_first_trade_date(user_id: int) -> str | None:
 
 
 def get_trade_ledger(user_id: int) -> list[dict]:
-    """取得使用者完整交易流水（含時間），用於 total 歷史損益計算。"""
+    """取得使用者完整交易流水（含時間）。"""
     with get_conn() as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(

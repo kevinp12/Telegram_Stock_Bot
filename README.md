@@ -11,7 +11,7 @@
     <img src="https://img.shields.io/badge/STATUS-ACTIVE-brightgreen?style=for-the-badge" alt="Status">
   </p>
   <p align="center">
-    <b>量化。智能。極速。</b><br>
+<b>量化。智能。極速。</b><br>
     <i>「用 AI 為您的資產護航，在波動中尋找必然。」</i>
   </p>
 </div>
@@ -26,10 +26,62 @@
 
 ## 🆕 最新功能更新
 
+### 📌 2026-05-11 今日變更整理（help/menu/config/.env）
+
+#### 1) `/help` 與 Telegram Menu 對齊
+
+- 新增並公開：`/risk`、`/marco`、`/whale`
+- `/help`（`frame.help_text()`）目前重點指令：
+  - `/now` `/list` `/buy` `/sell`
+  - `/news` `/theme`
+  - `/fin` `/fin compare` `/whale`
+  - `/tech` `/tech compare`
+  - `/risk` `/marco`
+  - `/sweep` `/bc` `/status` `/ask`
+- Telegram Menu（`main_bot.setup_bot_commands()`）目前指令：
+  - `now`, `list`, `theme`, `news`, `fin`, `whale`, `tech`, `risk`, `marco`, `sweep`, `bc`, `data`, `quota`, `status`, `help`
+
+> 註：`/user` 為隱藏後台指令，不會加入 help/menu。
+
+#### 2) 今日功能更動摘要
+
+- ✅ 新增 `/risk` 市場風險雷達
+  - 指數風險（標普500、納斯達克、VIX）
+  - Fear & Greed
+  - Options Flow（新聞近似追蹤）
+  - 社群熱度（Reddit / X 近似追蹤）
+- ✅ 新增 `/marco` 宏觀兩頁模式
+  - 第1頁：CPI、UNRATE、US10Y、DXY（含前值與趨勢）
+  - 第2頁：各指標意義與高低對市場影響教學
+- ✅ `/now` 已移除 VIX（VIX 移至 `/risk`）
+- ✅ 修正 Tech 目標顯示邏輯：波段目標距離永遠比短線更遠（多空皆適用）
+- ✅ `ADMIN_ID` 管理模式收斂（不再回退 `CHAT_ID`）
+
+#### 3) 環境變數更新（config / .env）
+
+- `config.py`
+  - `ADMIN_ID = os.getenv("ADMIN_ID", "").strip()`
+  - 新增 `FRED_API_KEY`
+- `.env` 建議最小設定：
+
+```env
+TELEGRAM_TOKEN=...
+ADMIN_ID=5788908737
+
+NEWS_API_KEY=...
+FINNHUB_KEY=...
+FRED_API_KEY=...
+
+GEMINI_API_KEY=...
+DB_NAME=sniper_trades.db
+```
+
+- 已移除舊式 `CHAT_ID` 頻道型設定，改採 `ADMIN_ID`。
+
 ### 🚀 1. UI/UX 動態分頁與歷史表現回溯
 > **從終端到畫面的極致體驗，用最俐落的版面呈現最深度的數據。**
 
-*   **⏳ Time-Machine 歷史表現回溯**：`/total` 總損益介面全新升級！以您**首次買入的日期**為系統基準點，精準回推 `7天`、`1個月`、`6個月`、`YTD` 與 `1年` 的投資組合相對損益，並附加精確日期時間戳，讓您的資產成長具備清晰的時空脈絡。
+*   **📦 全球資產總覽**：`/now` 提供宏觀數據、帳戶總損益與 AI 戰術短評，讓您一眼掌握全局。
 *   **📱 動態分頁顯示 (Paged UX)**：全面重構 `/tech`、`/news` 與 `/status` 顯示邏輯。將傳統動能（EMA/RSI）與進階 SMC 結構（FVG/Sweep）分離至獨立分頁，解決資訊過載，提供最純粹、不干擾的閱讀體驗。
 *   **✨ 全局底層優化**：全專案導入 `Black` 與 `isort` 進行 PEP-8 標準化重構，清除冗餘依賴，效能與穩定性大幅提升。
 
@@ -234,16 +286,15 @@ graph TB
 | 💰 買入紀錄 | `/buy NVDA 130 10` | 建立持倉與成本紀錄 |
 | 💸 賣出紀錄 | `/sell NVDA 150 5` | FIFO 自動結算已實現損益 |
 | 📋 持股列表 | `/list` | 持股明細、分頁、未實現損益 |
-| 💼 總損益 | `/total` | 總資產損益與多週期回顧 |
 | 👀 雷達清單 | `/watch add NVDA` | 重大新聞與追蹤名單管理 |
 | 📢 自動推播 | `/bc on` / `/bc timer 120` | 個人化定時情報推播 |
 | 🧠 AI 問答 | `/ask NVDA 現在是否過熱？` | 指定標的深度戰術拆解 |
 | 🔍 系統狀態 | `/status` | Gemini 連線、模型、伺服器與推播狀態 |
 | 💳 配額查詢 | `/quota` | Gemini Token 今日用量 |
-| �️ 隱藏管理 | `/op help` | 模型切換、Log、Quota 等進階功能 |
+| 🔒 隱藏管理 | `/op help` | 模型切換、Log、Quota 等進階功能 |
 | 🧹 資料清除 | `data clear` | 二次確認後清除個人資產資料 |
 
-### �📈 技術分析與量化作戰 (`/tech`)
+### 📈 技術分析與量化作戰 (`/tech`)
 *   **⚡ 單標的深度報告**：`/tech [代號]`  
     > 產出完整 SMC 儀表板，包含 **FVG**、**POC**、**ATR**、**TP 獲利目標**、**進攻評級**、**主力籌碼**、**TD9 序列**，以及最新 **MA20/50/200 × TDST × FVG 共振狙擊訊號**。
 *   **🔍 多標的快速掃描**：`/tech [代號1] [代號2] [代號3]`  
@@ -293,7 +344,7 @@ graph TB
 
 ### ⚡ 即時全景
 *   **⚡ /now** — **即時全景 + 總損益**  
-    > 宏觀即時觀測（標普500、納斯達克、黃金、原油、比特幣、VIX）
+    > 宏觀即時觀測（標普500、納斯達克、黃金、原油、比特幣）
     > 斐波那契位置參考、當前風險評估、AI 交易副官結語
 
 ### ⚙️ 管理與系統設定
@@ -358,8 +409,8 @@ FINNHUB_KEY=您的_Finnhub_API_Key
 # NewsAPI Key (必填，用於新聞推送)
 NEWS_API_KEY=您的_NewsAPI_Key
 
-# 管理員 Telegram Chat ID (必填，用於系統通知)
-CHAT_ID=您的_Telegram_Chat_ID
+# 管理員 Telegram ID (必填，用於系統通知)
+ADMIN_ID=您的_Telegram_ID
 
 # Token 配額設定 (選填，預設 500,000)
 DAILY_TOKEN_LIMIT=500000
@@ -377,7 +428,7 @@ python main_bot.py
 ```
 
 ### 4. 驗證啟動
-機器人啟動後會自動發送啟動通知到管理員 Chat ID，包含：
+機器人啟動後會自動發送啟動通知到管理員 ADMIN_ID，包含：
 *   系統狀態檢查
 *   CPU/RAM/硬碟使用率
 *   AI 核心連線狀態

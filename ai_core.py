@@ -346,6 +346,63 @@ def compare_financials(
     return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=4000, urls=all_urls)
 
 
+def analyze_whale_insider(
+    symbol: str,
+    insider_data: list[dict[str, Any]],
+    institutional_data: list[dict[str, Any]],
+    user_name: str,
+    model: str | None = None,
+    user_id: int | None = None,
+) -> str:
+    """分析「大鯨魚/內部人」情報，給出綜合判斷。"""
+    current_time = get_current_time_str()
+
+    # 格式化內線交易
+    insider_lines = []
+    for item in insider_data[:10]:
+        name = item.get("name", "Unknown")
+        share = item.get("share", 0)
+        change = item.get("change", 0)
+        price = item.get("transactionPrice", 0)
+        date = item.get("filingDate", "N/A")
+        action = "買入" if change > 0 else "賣出"
+        insider_lines.append(f"- {date}｜{name}｜{action} {abs(change):,} 股 @ ${price}")
+    insider_text = "\n".join(insider_lines) or "暫無近期重大內線交易紀錄。"
+
+    # 格式化機構持倉
+    inst_lines = []
+    for item in institutional_data[:10]:
+        name = item.get("name", "Unknown")
+        share = item.get("share", 0)
+        change = item.get("change", 0)
+        date = item.get("reportDate", "N/A")
+        action = "加倉" if change > 0 else "減倉"
+        inst_lines.append(f"- {date}｜{name}｜{action} {abs(change):,} 股 (持股: {share:,})")
+    inst_text = "\n".join(inst_lines) or "暫無近期重大機構持倉變動紀錄。"
+
+    prompt = f"""
+【報告產生時間：{current_time}】
+標的：{symbol}
+「大鯨魚/內部人」實時追蹤分析
+
+【內線交易紀錄 (SEC Form 4)】
+{insider_text}
+
+【機構持倉紀錄 (13F/Ownership)】
+{inst_text}
+
+請以「頂尖交易副官」人格，針對上述「大鯨魚」動向進行深度解析。
+你的目標是找出「真情報」：結合技術面與基本面（假設目前已有良好表現），內部人與大機構的動作是否在背書目前的漲勢或預示反轉？
+
+【分析要求】
+1. 內部人行為分析：CEO/CFO 是在「偷偷賣」還是「低位加倉」？這傳達了什麼信心訊號？
+2. 機構博弈分析：橋水、文藝復興或先鋒領航等大機構的近期動作代表了什麼資本流向？
+3. 「真情報」綜合判定：給出 1-10 分的「鯨魚信心指數」，並給出具體的戰術結論。
+4. 輸出必須詳細，講透徹，嚴格遵守副官標籤規範，絕對不要斷句。
+"""
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=3500)
+
+
 def chat_with_user(
     query: str,
     user_name: str,
