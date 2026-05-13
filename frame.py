@@ -4,49 +4,45 @@
 
 from __future__ import annotations
 
-import html
 from typing import Any
 
 from utils import safe_round
 
 
-def escape_html(text: Any) -> str:
-    return html.escape(str(text), quote=False)
-
-
 def help_text() -> list[str]:
     part1 = (
-        "🎯 **美股顧問 | 指揮手冊 (1/2)**\n"
+        "🎯 **美股顧問｜完整指揮手冊 (1/2)**\n"
         "━━━━━━━━━━━━━━━━━\n"
-        "⚡ **即時行情與分析**\n"
-        "• `/now`   - 宏觀全景、總盈虧與 AI 短評\n"
-        "• `/risk`  - 市場風險雷達 (VIX/恐貪/期權/熱度)\n"
-        "• `/marco` - 宏觀雷達 (CPI/失業率/10Y/DXY)\n"
-        "• `直接輸入` (如: NVDA) - AI 自動分析\n\n"
-        "📋 **資產與雷達管理**\n"
-        "• `/list`  - 詳細持股明細、成本與獲利\n"
-        "• `/buy [代號] [價] [股]`  - 記錄買入\n"
-        "• `/sell [代號] [價] [股]` - 記錄賣出\n"
-        "• `/watch [add|del|list]` - 雷達名單管理\n"
-        "• `/data clear` - 清空個人資產資料\n"
+        "⚡ **A. 即時市場總覽**\n"
+        "• `/now`：即時大盤 + 斐波位置 + AI 戰術短評\n"
+        "• `/risk`：風險雷達（VIX、恐貪、期權異動、社群熱度）\n"
+        "• `/marco`：宏觀儀表板（CPI/PCE/PPI/NFP/US10Y/DXY/PCR）\n"
+        "• `直接輸入代號`（例：`NVDA`）：快速 AI 初步分析\n\n"
+        "📋 **B. 資產紀錄與管理**\n"
+        "• `/list`：持股明細、未實現與已實現損益\n"
+        "• `/buy [代號] [價格] [股數]`：新增買入紀錄\n"
+        "• `/sell [代號] [價格] [股數]`：賣出與 FIFO 結算\n"
+        "• `/watch add|del|list|clear`：新聞雷達清單管理\n"
+        "• `/data clear`：60 秒雙重確認後清空個人資料\n"
     )
     part2 = (
-        "🎯 **美股顧問 | 指揮手冊 (2/2)**\n"
+        "🎯 **美股顧問｜完整指揮手冊 (2/2)**\n"
         "━━━━━━━━━━━━━━━━━\n"
-        "🚀 **專業深度情報**\n"
-        "• `/news [代號]` - 即時新聞摘要與趨勢分析\n"
-        "• `/theme [主題]` - 產業深度速報 (如: AI, 核能)\n"
-        "• `/fin [代號]` - 財報、EPS、估值與財務健康\n"
-        "• `/whale [代號]` - 追蹤大鯨魚與內部人 (13F/F4)\n"
-        "• `/tech [代號]` - 專業量化指標儀表板 (TD9/EMA)\n"
-        "• `/sweep [add|del|list]` - FVG 價格掃蕩監控\n\n"
-        "🛠️ **系統與設定**\n"
-        "• `/ask [代號] [問]` - 啟動 Pro 深度戰術對話\n"
-        "• `/bc [on|off|timer]` - 個人化自動推播設定\n"
-        "• `/quota` - 查詢今日 API 使用配額\n"
-        "• `/status` - 驗證 AI 模型連線狀態\n"
+        "🚀 **C. 深度分析模組**\n"
+        "• `/news [代號/主題]`：新聞摘要 + AI 影響解讀\n"
+        "• `/theme [主題]`：產業趨勢快報（如 AI、核能）\n"
+        "• `/fin [代號]`：財務快照、估值、財報重點\n"
+        "• `/fin compare A B`：多標的財務橫向比較\n"
+        "• `/tech [代號]`：量化與 SMC 結構儀表板\n"
+        "• `/whale [代號]`：內部人與機構持倉追蹤\n"
+        "• `/sweep add|del|list|clear`：狙擊監控清單\n\n"
+        "🛠️ **D. 系統設定**\n"
+        "• `/ask [代號] [問題]`：深度戰術問答\n"
+        "• `/bc on|off|timer`：自動推播開關與週期\n"
+        "• `/quota`：今日 Token 配額使用\n"
+        "• `/status`：系統與模型狀態\n"
         "━━━━━━━━━━━━━━━━━\n"
-        "💡 _提示：點擊指令可快速複製_"
+        "💡 _提示：可先用 /now 看全局，再用 /tech、/fin、/news 深挖單一標的。_"
     )
     return [part1, part2]
 
@@ -229,22 +225,22 @@ def tech_compare_report(data_list: list[dict[str, Any]]) -> str:
     return "\n".join(sections)
 
 
-def menu_registered_text() -> str:
-    return "✅ Telegram Menu 指令已註冊完成"
-
-
 def status_text(version: str, brain_status: str, system_status: str, ping_ok: bool) -> list[str]:
     icon = "🟢" if ping_ok else "🔴"
     page1 = (
         f"🔍 **顧問系統狀態報告 (1/2)**\n"
         f"━━━━━━━━━━━━━━━━━\n"
-        f"版本：{version}\n"
+        f"🏷️ 版本：`{version}`\n"
         f"🧠 核心連線：{icon} {'運行中' if ping_ok else '連線異常'}\n\n"
-        f"🖥️ **伺服器資源狀況**\n"
+        f"【系統資源】🖥️\n"
         f"{system_status}"
     )
 
-    page2 = f"🤖 **個人化 AI 與推播設定 (2/2)**\n" f"━━━━━━━━━━━━━━━━━\n" f"{brain_status}"
+    page2 = (
+        "🤖 **個人化 AI 與推播設定 (2/2)**\n"
+        "━━━━━━━━━━━━━━━━━\n"
+        f"{brain_status}"
+    )
 
     return [page1, page2]
 
@@ -440,22 +436,6 @@ def whale_report(symbol: str, insider_count: int, inst_count: int, ai_analysis: 
         + "\n"
         "🧠 **AI 深度解讀與「真情報」判定**\n"
         f"{ai_analysis}"
-    )
-
-
-def news_help_text() -> str:
-    return (
-        "📰 **新聞功能指南**\n"
-        "━━━━━━━━━━━━━━━━━\n"
-        "提供即時市場新聞、個股相關新聞及 AI 深度解析。\n\n"
-        "📌 **指令用法**\n"
-        "• `/news` - 預設推送持股或關注標的的新聞\n"
-        "• `/news [代號]` - 查詢指定股票的即時解讀\n"
-        "• `/news [關鍵詞]` - 搜尋特定主題新聞\n"
-        "• `/news list` - 查看新聞來源清單\n\n"
-        "🧠 **AI 深度解析**\n"
-        "包含重要程度評級、新聞大綱、專業觀點及 SMC 結構影響分析。\n\n"
-        "📊 祝您投資順利！"
     )
 
 

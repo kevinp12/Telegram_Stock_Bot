@@ -147,21 +147,6 @@ def cmd_user(text: str, user_id: int) -> str:
         )
 
 
-def _portfolio_snapshot_from_ledger(ledger: list[dict]) -> dict[str, dict[str, float]]:
-    portfolio: dict[str, dict[str, float]] = {}
-    for row in ledger:
-        symbol = str(row.get("symbol", "")).upper()
-        price = float(row.get("buy_price", 0.0) or 0.0)
-        qty = float(row.get("quantity", 0.0) or 0.0)
-        if not symbol or qty <= 0:
-            continue
-        item = portfolio.setdefault(symbol, {"shares": 0.0, "total_cost": 0.0})
-        item["shares"] += qty
-        item["total_cost"] += price * qty
-    return portfolio
-
-
-
 def cmd_data_clear(text: str, user_id: int) -> str:
     """雙重確認刪除：第一次警告，60秒內再次輸入 data clear 才執行。"""
     normalized = " ".join((text or "").strip().split()).lower()
@@ -522,19 +507,20 @@ def cmd_risk(user_id: int | None = None, user_name: str = "User") -> str:
         risk_notes.append("目前風險訊號中性，仍需觀察指數與波動率是否同步轉弱。")
 
     return (
-        "🛡️ 市場風險雷達 /risk\n"
-        "━━━━━━━━━━━━━━\n"
-        "📊 指數風險\n"
-        f"• 標普500：{market_api.format_quote(sp_quote)}\n"
-        f"• 納斯達克：{market_api.format_quote(nasdaq_quote)}\n"
+        "🛡️ 風險儀表板 /risk\n"
+        "━━━━━━━━━━━━━━━━━\n"
+        "【1】📊 指數與波動\n"
+        f"• S&P 500：{market_api.format_quote(sp_quote)}\n"
+        f"• Nasdaq：{market_api.format_quote(nasdaq_quote)}\n"
         f"• VIX：{market_api.format_quote(vix_quote)}\n\n"
-        "😨 恐懼與貪婪指數\n"
-        f"• Fear & Greed：`{fg.get('value', 'N/A')}`｜{fg.get('rating', 'N/A')}（{fg.get('note', 'N/A')}）\n\n"
-        "📈 期權選擇權異動（Options Flow 近似追蹤）\n"
+        "【2】😨 情緒溫度\n"
+        f"• Fear & Greed：`{fg.get('value', 'N/A')}` / 100\n"
+        f"• 評級：`{fg.get('rating', 'N/A')}`（{fg.get('note', 'N/A')}）\n\n"
+        "【3】📈 選擇權異動（近似）\n"
         f"{_format_news_briefs(options_items, '暫無可用的大額 Call/Put 異動新聞。')}\n\n"
-        "🔥 社交媒體熱度（Reddit WSB / X 近似追蹤）\n"
+        "【4】🔥 社群熱度（近似）\n"
         f"{_format_news_briefs(social_items, '暫無可用的社群熱度暴增資料。')}\n\n"
-        "⚠️ 風險判讀\n"
+        "【5】⚠️ 風險判讀重點\n"
         + "\n".join(f"• {note}" for note in risk_notes)
     )
 
@@ -552,41 +538,78 @@ def cmd_marco(user_id: int | None = None, user_name: str = "User") -> list[str]:
     """宏觀指令：第1頁即時數據，第2頁指標教學與高低影響。"""
     snap = market_api.get_macro_core_snapshot()
     cpi = snap.get("cpi", {})
+    core_cpi = snap.get("core_cpi", {})
+    pce = snap.get("pce", {})
+    ppi = snap.get("ppi", {})
+    retail_sales = snap.get("retail_sales", {})
     unrate = snap.get("unrate", {})
+    nfp = snap.get("nfp", {})
+    avg_hourly_earnings = snap.get("avg_hourly_earnings", {})
     us10y = snap.get("us10y", {})
     dxy = snap.get("dxy", {})
+    vix = snap.get("vix", {})
+    vix_score = snap.get("vix_score", "N/A")
+    put_call_ratio = snap.get("put_call_ratio", {})
+    fear_greed = snap.get("fear_greed", {})
+    earnings_calendar = snap.get("earnings_calendar", [])
 
     dxy_text = market_api.format_quote(dxy) if isinstance(dxy, dict) else "N/A"
+    vix_text = market_api.format_quote(vix) if isinstance(vix, dict) else "N/A"
+    pcr_value = put_call_ratio.get("value", "N/A") if isinstance(put_call_ratio, dict) else "N/A"
+    fg_value = fear_greed.get("value", "N/A") if isinstance(fear_greed, dict) else "N/A"
+    fg_rating = fear_greed.get("rating", "N/A") if isinstance(fear_greed, dict) else "N/A"
+    earnings_text = "\n".join(f"  - {row.get('symbol', 'N/A')}: {row.get('date', 'N/A')}" for row in earnings_calendar[:5]) or "  - N/A"
     page1 = (
         "📊 宏觀雷達 /marco (1/2)\n"
-        "━━━━━━━━━━━━━━\n"
-        "A. 通膨類 (Inflation)\n"
+        "━━━━━━━━━━━━━━━━━\n"
+        "【A】通膨 (Inflation)\n"
         f"• CPI (CPIAUCSL)：{_macro_trend_text(cpi)}\n"
-        "• PCE：本版未串接（可後續加上 PCEPI）\n\n"
-        "B. 就業類 (Employment)\n"
+        f"• Core CPI (CPILFESL)：{_macro_trend_text(core_cpi)}\n"
+        f"• PCE (PCEPI)：{_macro_trend_text(pce)}\n"
+        f"• PPI (PPIACO)：{_macro_trend_text(ppi)}\n\n"
+        "【B】就業 (Employment)\n"
         f"• 失業率 (UNRATE)：{_macro_trend_text(unrate, '%')}\n"
-        "• NFP / 平均時薪：本版未串接（可加 BLS API）\n\n"
-        "C. 利率與美元 (Rates & Dollar)\n"
+        f"• NFP 非農就業 (BLS CES0000000001)：{_macro_trend_text(nfp)}\n"
+        f"• 平均時薪 (BLS CES0500000003)：{_macro_trend_text(avg_hourly_earnings)}\n\n"
+        "【C】消費與景氣 (Demand)\n"
+        f"• 零售銷售 (RSAFS)：{_macro_trend_text(retail_sales)}\n\n"
+        "【D】利率與美元 (Rates & Dollar)\n"
         f"• US10Y (GS10)：{_macro_trend_text(us10y, '%')}\n"
-        f"• DXY (DX-Y.NYB)：{dxy_text}\n\n"
+        f"• DXY (DX-Y.NYB)：{dxy_text}\n"
+        f"• VIX：{vix_text}｜風險分數：{vix_score}/10\n\n"
+        "【E】衍生品與情緒 (Derivatives & Sentiment)\n"
+        f"• Put/Call Ratio（SPY+QQQ OI）：{pcr_value}\n"
+        f"• Fear & Greed：{fg_value} / 100（{fg_rating}）\n\n"
+        "【F】近期財報日曆 (Earnings Calendar)\n"
+        f"{earnings_text}\n\n"
         "💡 趨勢說明：上升/下降為相較前一期（通常前月）變化。"
     )
 
     page2 = (
         "📘 宏觀指標教學 /marco (2/2)\n"
-        "━━━━━━━━━━━━━━\n"
+        "━━━━━━━━━━━━━━━━━\n"
         "【A. 通膨類】\n"
         "• CPI / Core CPI / PCE：越高代表通膨壓力大，市場會擔心降息延後。\n"
+        "• PPI：上游成本壓力指標，若持續上升常會傳導到終端通膨。\n"
         "• 一般來說：通膨高於預期 → 美債殖利率與美元易走強 → 成長股壓力增加。\n\n"
         "【B. 就業類】\n"
         "• NFP、失業率、平均時薪是景氣與薪資通膨風向球。\n"
         "• 就業過熱且時薪過快上升，通膨較難降，風險資產估值容易被壓縮。\n\n"
-        "【C. 利率與美元】\n"
+        "【C. 消費與景氣】\n"
+        "• Retail Sales 可觀察消費者支出動能，是美國內需是否轉弱的重要領先訊號。\n\n"
+        "【D. 利率與美元】\n"
         "• FOMC 利率：偏鷹通常壓估值；偏鴿通常支撐風險資產。\n"
         "• DXY：美元太強常壓抑股市表現。\n"
-        "• US10Y：殖利率急升時，科技成長股（如 NVDA）通常壓力較大。\n\n"
+        "• US10Y：殖利率急升時，科技成長股（如 NVDA）通常壓力較大。\n"
+        "• VIX 1~10：分數越高代表波動風險越高。\n\n"
+        "【E. 衍生品與事件】\n"
+        "• Put/Call Ratio 異常升高，常代表機構避險需求上升，需提防假突破。\n"
+        "• 財報日前後，技術面訊號（如 FVG/TD）可能短暫失真，需降低槓桿。\n"
+        "• Fear & Greed 可快速判斷市場處於過度恐懼或過度貪婪。\n\n"
         "⚠️ 常用判讀\n"
-        "• CPI/PCE 高 + US10Y 升 + DXY 升：偏 Bearish\n"
+        "• CPI/PCE/PPI 高 + US10Y 升 + DXY 升：偏 Bearish\n"
+        "• PCR 飆高 + VIX 分數上行：優先風控，降低追價。\n"
+        "• CPI/PCE 回落 + Retail Sales 穩健 + US10Y 穩/降：偏 Soft Landing\n"
         "• CPI/PCE 降 + US10Y 穩/降 + DXY 回落：偏 Bullish"
     )
     return [page1, page2]
@@ -960,10 +983,6 @@ def cmd_theme(text: str, user_name: str, user_id: int) -> str:
     return f"🚀 【{matched_key} 未來趨勢速報】\n━━━━━━━━━━━━━━\n{report}"
 
 
-def cmd_news_help() -> str:
-    return frame.news_help_text()
-
-
 def cmd_whale(text: str, user_id: int) -> str:
     """處理 /whale 指令：大鯨魚/內部人情報追蹤。"""
     parts = text.split()
@@ -1098,19 +1117,6 @@ def cmd_status(user_id: int) -> list[str]:
         f"💡 提示：使用 `/op model pro` 切換模型，使用 `/bc on` 開啟推播。"
     )
     return frame.status_text(VERSION, brain_status, get_system_status(), ok)
-
-
-def cmd_set_model(text: str, user_id: int) -> str:
-    parts = text.split()
-    if len(parts) == 1:
-        current = database.get_user_model_preference(user_id)
-        return f"目前回覆模型：{current}\n使用 /model flash 或 /model pro 來切換。"
-
-    choice = parts[1].strip().lower()
-    if choice not in {"flash", "pro"}:
-        return "可設定模型：flash 或 pro。範例：/model pro"
-    database.set_user_model_preference(user_id, choice)
-    return f"✅ 已將回覆模型切換為：{choice}"
 
 
 def cmd_op(text: str, user_id: int) -> str:

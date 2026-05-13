@@ -9,6 +9,7 @@ Gemini Brain：只負責和 Gemini API 溝通。
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -62,6 +63,38 @@ def format_status_error(message: str, max_len: int = 120) -> str:
     if len(compact) > max_len:
         compact = compact[: max_len - 1].rstrip() + "…"
     return compact
+
+
+def extract_status_error_code(message: str) -> str:
+    """狀態頁只顯示錯誤碼數字（例如 429 / 404）；無錯誤時回傳 0。"""
+    raw = (message or "").strip()
+    if not raw or raw == "N/A":
+        return "0"
+
+    if is_quota_exhausted_error(raw):
+        return "429"
+
+    match = re.search(r"\b([1-5]\d{2})\b", raw)
+    if match:
+        return match.group(1)
+    return "0"
+
+
+def get_next_fallback_model(current_model: str, chain: Iterable[str]) -> str:
+    """依目前模型回傳下一順位 fallback；若無法判定則回傳首個候選。"""
+    normalized_chain = [normalize_model_name(m) for m in chain if normalize_model_name(m)]
+    if not normalized_chain:
+        return "未設定"
+
+    current = normalize_model_name(current_model)
+    if current in normalized_chain:
+        idx = normalized_chain.index(current)
+        if idx + 1 < len(normalized_chain):
+            return normalized_chain[idx + 1]
+        return "無（已是最後順位）"
+
+    # 若目前模型不在該鏈上（例如 flash-latest），嘗試用關鍵字猜測鏈別，回傳首選備援
+    return normalized_chain[0]
 
 AUDIT_LOG_PATH: Path = GEMINI_AUDIT_LOG_PATH
 AUDIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -351,17 +384,17 @@ def get_status_text(user_id: int) -> str:
 
     t_stats = database.get_token_stats(user_id)
 
-    status_error = format_status_error(stats.last_error)
+    status_error = extract_status_error_code(stats.last_error)
 
-    flash_text = ", ".join(flash_ready[:3]) if flash_ready else "N/A"
-    pro_text = ", ".join(pro_ready[:3]) if pro_ready else "N/A"
+    flash_next = get_next_fallback_model(current_model, FLASH_FALLBACK_MODELS)
+    pro_next = get_next_fallback_model(current_model, PRO_FALLBACK_MODELS)
 
     lines = [
         f"• 今日流量: {used_today:,} / {DAILY_TOKEN_LIMIT:,} ({percent:.1f}%)",
         f"• 消耗統計: Min:{t_stats['min']:.0f} | Max:{t_stats['max']:.0f} | Avg:{t_stats['avg']:.1f}",
         f"• 目前使用模型: `{current_model}`",
-        f"• Flash 備援清單: {flash_text}",
-        f"• Pro 備援清單: {pro_text}",
+        f"• Flash 下一個模型: {flash_next}",
+        f"• Pro 下一個模型: {pro_next}",
         f"• 成功調用: {stats.success} 次",
         f"• 最近錯誤: {status_error}",
     ]

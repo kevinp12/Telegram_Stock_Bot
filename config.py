@@ -28,6 +28,7 @@ ADMIN_ID = os.getenv("ADMIN_ID", "").strip()
 NEWS_API_KEY = os.getenv("NEWS_API_KEY", "").strip()
 FINNHUB_KEY = os.getenv("FINNHUB_KEY", "").strip()
 FRED_API_KEY = os.getenv("FRED_API_KEY", "").strip()
+BLS_API_KEY = os.getenv("BLS_API_KEY", "").strip()
 
 # Gemini
 # 兼容 README 舊版範例的 GOOGLE_API_KEY，同時保留正式 GEMINI_API_KEY。

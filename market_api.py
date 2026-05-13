@@ -20,7 +20,7 @@ except Exception:
     finnhub = None
 
 import ai_core
-from config import FINNHUB_KEY, FRED_API_KEY, NEWS_API_KEY
+from config import BLS_API_KEY, FINNHUB_KEY, FRED_API_KEY, NEWS_API_KEY
 
 finnhub_client = None
 if finnhub and FINNHUB_KEY:
@@ -332,10 +332,108 @@ def get_social_heat_snapshot(limit: int = 3) -> list[dict[str, str]]:
     return items[:limit]
 
 
+def get_put_call_ratio(symbols: list[str] | None = None) -> dict[str, Any]:
+    """估算大盤 Put/Call Open Interest Ratio（預設 SPY+QQQ）。"""
+    targets = symbols or ["SPY", "QQQ"]
+    put_oi_total = 0.0
+    call_oi_total = 0.0
+
+    for symbol in targets:
+        try:
+            ticker = yf.Ticker(symbol)
+            expirations = list(getattr(ticker, "options", []) or [])
+            if not expirations:
+                continue
+            expiry = expirations[0]
+            chain = ticker.option_chain(expiry)
+            puts = getattr(chain, "puts", None)
+            calls = getattr(chain, "calls", None)
+            if puts is None or calls is None:
+                continue
+            put_oi_total += float(puts.get("openInterest", 0).fillna(0).sum())
+            call_oi_total += float(calls.get("openInterest", 0).fillna(0).sum())
+        except Exception as exc:
+            logging.debug("get_put_call_ratio failed for %s: %s", symbol, exc)
+
+    if call_oi_total <= 0:
+        return {"value": "N/A", "puts": 0, "calls": 0, "note": "選擇權資料不足"}
+
+    ratio = put_oi_total / call_oi_total
+    return {
+        "value": safe_round(ratio, 3),
+        "puts": int(put_oi_total),
+        "calls": int(call_oi_total),
+        "note": "SPY+QQQ 近月 OI 估算",
+    }
+
+
+def get_vix_risk_score(vix_quote: dict[str, Any]) -> int | str:
+    """將 VIX 轉換為 1~10 風險分數。"""
+    try:
+        vix_price = float(vix_quote.get("price", 0) or 0)
+    except Exception:
+        return "N/A"
+    if vix_price <= 0:
+        return "N/A"
+
+    score = int(round((vix_price - 10) / 2.5))
+    if score < 1:
+        score = 1
+    if score > 10:
+        score = 10
+    return score
+
+
+def get_earnings_calendar(symbols: list[str] | None = None, limit: int = 5) -> list[dict[str, str]]:
+    """取得近期財報日曆（優先用 yfinance calendar）。"""
+    targets = symbols or ["NVDA", "AAPL", "MSFT", "AMZN", "META", "TSLA", "GOOGL"]
+    rows: list[dict[str, str]] = []
+
+    for symbol in targets:
+        try:
+            ticker = yf.Ticker(symbol)
+            cal = getattr(ticker, "calendar", None)
+            if cal is None:
+                continue
+
+            earning_date = "N/A"
+            try:
+                # yfinance 新版多為 DataFrame，舊版可能是 dict
+                if hasattr(cal, "index") and hasattr(cal, "columns"):
+                    if "Earnings Date" in cal.index and len(cal.columns) > 0:
+                        raw = cal.loc["Earnings Date"].iloc[0]
+                        earning_date = str(raw)[:10]
+                elif isinstance(cal, dict):
+                    raw = cal.get("Earnings Date")
+                    if isinstance(raw, (list, tuple)) and raw:
+                        earning_date = str(raw[0])[:10]
+                    elif raw:
+                        earning_date = str(raw)[:10]
+            except Exception:
+                pass
+
+            if earning_date != "N/A":
+                rows.append({"symbol": symbol, "date": earning_date})
+        except Exception as exc:
+            logging.debug("get_earnings_calendar failed for %s: %s", symbol, exc)
+
+    rows.sort(key=lambda x: x.get("date", "9999-99-99"))
+    return rows[:limit]
+
+
 FRED_SERIES_MAP = {
     "CPI": "CPIAUCSL",
+    "CORE_CPI": "CPILFESL",
+    "PCE": "PCEPI",
+    "PPI": "PPIACO",
+    "RETAIL_SALES": "RSAFS",
     "UNRATE": "UNRATE",
     "US10Y": "GS10",
+}
+
+BLS_SERIES_MAP = {
+    "NFP": "CES0000000001",  # Total Nonfarm Payrolls
+    "AHE": "CES0500000003",  # Avg Hourly Earnings of All Employees: Private
 }
 
 
@@ -372,11 +470,63 @@ def _fetch_fred_latest_with_prev(series_id: str) -> dict[str, Any]:
         return {"value": "N/A", "prev": "N/A", "trend": "N/A", "date": "N/A", "note": "抓取失敗"}
 
 
+def _fetch_bls_latest_with_prev(series_id: str) -> dict[str, Any]:
+    """抓取 BLS 指標最新值與前值；失敗時回傳 N/A。"""
+    try:
+        end_year = datetime.now().year
+        start_year = end_year - 1
+        payload: dict[str, Any] = {
+            "seriesid": [series_id],
+            "startyear": str(start_year),
+            "endyear": str(end_year),
+        }
+        if BLS_API_KEY:
+            payload["registrationkey"] = BLS_API_KEY
+
+        r = requests.post("https://api.bls.gov/publicAPI/v2/timeseries/data/", json=payload, timeout=12)
+        data = r.json()
+        results = ((data or {}).get("Results") or {}).get("series") or []
+        if not results:
+            return {"value": "N/A", "prev": "N/A", "trend": "N/A", "date": "N/A", "note": "BLS 無資料"}
+
+        entries = results[0].get("data") or []
+        valid = [e for e in entries if e.get("period", "").startswith("M") and e.get("value") not in {None, "", "."}]
+        if not valid:
+            return {"value": "N/A", "prev": "N/A", "trend": "N/A", "date": "N/A", "note": "BLS 無有效資料"}
+
+        latest = float(valid[0]["value"])
+        prev = float(valid[1]["value"]) if len(valid) > 1 else latest
+        trend = "上升" if latest > prev else "下降" if latest < prev else "持平"
+        year = str(valid[0].get("year", "N/A"))
+        period = str(valid[0].get("period", ""))
+        month = period[1:] if period.startswith("M") else ""
+        date = f"{year}-{month}-01" if year != "N/A" and month.isdigit() else "N/A"
+
+        return {
+            "value": safe_round(latest, 2),
+            "prev": safe_round(prev, 2),
+            "trend": trend,
+            "date": date,
+            "note": "BLS",
+        }
+    except Exception as exc:
+        logging.warning("_fetch_bls_latest_with_prev failed for %s: %s", series_id, exc)
+        return {"value": "N/A", "prev": "N/A", "trend": "N/A", "date": "N/A", "note": "抓取失敗"}
+
+
 def get_macro_core_snapshot() -> dict[str, Any]:
-    """宏觀核心資料：CPI、失業率、10Y殖利率 + DXY。"""
+    """宏觀核心資料：通膨/就業/利率與美元。"""
     cpi = _fetch_fred_latest_with_prev(FRED_SERIES_MAP["CPI"])
+    core_cpi = _fetch_fred_latest_with_prev(FRED_SERIES_MAP["CORE_CPI"])
+    pce = _fetch_fred_latest_with_prev(FRED_SERIES_MAP["PCE"])
+    ppi = _fetch_fred_latest_with_prev(FRED_SERIES_MAP["PPI"])
+    retail_sales = _fetch_fred_latest_with_prev(FRED_SERIES_MAP["RETAIL_SALES"])
     unrate = _fetch_fred_latest_with_prev(FRED_SERIES_MAP["UNRATE"])
     us10y = _fetch_fred_latest_with_prev(FRED_SERIES_MAP["US10Y"])
+    nfp = _fetch_bls_latest_with_prev(BLS_SERIES_MAP["NFP"])
+    avg_hourly_earnings = _fetch_bls_latest_with_prev(BLS_SERIES_MAP["AHE"])
+    put_call_ratio = get_put_call_ratio(["SPY", "QQQ"])
+    fear_greed = get_fear_greed_index()
 
     dxy_quote = {"symbol": "DXY", "price": "N/A", "diff": 0.0, "pct": 0.0, "volume_note": "N/A"}
     try:
@@ -390,11 +540,26 @@ def get_macro_core_snapshot() -> dict[str, Any]:
     except Exception as exc:
         logging.warning("get_macro_core_snapshot DXY failed: %s", exc)
 
+    vix_quote = get_macro_quote("VIX")
+    vix_score = get_vix_risk_score(vix_quote)
+    earnings_calendar = get_earnings_calendar(limit=5)
+
     return {
         "cpi": cpi,
+        "core_cpi": core_cpi,
+        "pce": pce,
+        "ppi": ppi,
+        "retail_sales": retail_sales,
         "unrate": unrate,
+        "nfp": nfp,
+        "avg_hourly_earnings": avg_hourly_earnings,
         "us10y": us10y,
         "dxy": dxy_quote,
+        "vix": vix_quote,
+        "vix_score": vix_score,
+        "put_call_ratio": put_call_ratio,
+        "fear_greed": fear_greed,
+        "earnings_calendar": earnings_calendar,
     }
 
 
