@@ -13,7 +13,7 @@ import json
 from config import BASE_DIR, DB_NAME
 
 USER_LOG_PATH = Path(BASE_DIR) / "user.log"
-USER_LOG_TTL_SECONDS = 48 * 60 * 60
+USER_LOG_TTL_SECONDS = 7 * 24 * 60 * 60
 
 
 def _to_ts(dt: datetime) -> float:
@@ -52,7 +52,7 @@ def _read_user_log_entries() -> list[dict]:
 
 
 def prune_user_log() -> None:
-    """清除 user.log 中超過 48 小時的暫存紀錄。"""
+    """清除 user.log 中超過 7 天的暫存紀錄。"""
     entries = _read_user_log_entries()
     if not entries:
         try:
@@ -66,8 +66,8 @@ def prune_user_log() -> None:
 
 
 def reset_user_log() -> None:
-    """重啟 bot 時清空暫存 user.log。"""
-    USER_LOG_PATH.write_text("", encoding="utf-8")
+    """保留 user.log，不因重啟清空；僅清理超過 7 天的紀錄。"""
+    prune_user_log()
 
 
 def record_user_interaction(
@@ -79,7 +79,7 @@ def record_user_interaction(
     username: str = "",
     source: str = "text",
 ) -> None:
-    """寫入 48 小時暫存互動紀錄。自然語言與 /ask 可附 answer；其他指令只記 question。"""
+    """寫入 7 天暫存互動紀錄。自然語言與 /ask 可附 answer；其他指令只記 question。"""
     question = (question or "").strip()
     answer = (answer or "").strip() if answer is not None else ""
     if not question:
@@ -99,12 +99,18 @@ def record_user_interaction(
         handle.write(json.dumps(item, ensure_ascii=False) + "\n")
 
 
-def get_user_interaction_logs(user_id: int, limit: int = 10) -> list[dict]:
-    """讀取指定使用者 48 小時內的暫存互動紀錄。"""
+def get_user_interaction_logs(user_id: int, limit: int = 10, page: int = 1) -> tuple[list[dict], int]:
+    """讀取指定使用者 7 天內暫存互動紀錄（支援分頁）。"""
     prune_user_log()
     entries = [item for item in _read_user_log_entries() if int(item.get("user_id", 0) or 0) == int(user_id)]
     entries.sort(key=lambda item: (float(item.get("ts", 0) or 0), int(item.get("id", 0) or 0)), reverse=True)
-    return entries[: int(limit)]
+    size = max(1, int(limit))
+    total = len(entries)
+    total_pages = max(1, (total + size - 1) // size)
+    current_page = min(max(1, int(page)), total_pages)
+    start = (current_page - 1) * size
+    end = start + size
+    return entries[start:end], total_pages
 
 
 def init_db() -> None:

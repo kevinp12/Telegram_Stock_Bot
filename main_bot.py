@@ -696,6 +696,13 @@ def on_log(m):
         safe_send(m.chat.id, "🔒 系統日誌\n" + "\n".join(log_lines))
 
 
+@bot.message_handler(commands=["ulog"])
+def on_ulog(m):
+    user_id, user_name = register_user(m)
+    record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/ulog")
+    reply(m, command.cmd_ulog(m.text or "", user_id))
+
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("list_page_"))
 def on_list_callback(call):
     try:
@@ -798,6 +805,10 @@ def on_text(m):
             return
         if lowered.startswith("/help"):
             send_paged_message(m.chat.id, command.frame.help_text())
+            return
+        if lowered.startswith("/ulog"):
+            record_user_log_safely(user_id, user_name, get_username(m), text, source="/ulog")
+            reply(m, command.cmd_ulog(text, user_id))
             return
 
         # 其他斜線指令交由既有 command handler，這裡直接略過

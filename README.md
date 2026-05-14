@@ -141,6 +141,7 @@ gemini_stock_bot_full/
 
 ## B. Deep Analysis
 - `/tech [symbol]`：技術結構與訊號
+- `/tech compare A B [C]`：多標的技術面比較（AI 失敗時自動 fallback 至比較報表）
 - `/fin [symbol]`：財報與估值快照
 - `/fin compare A B [C]`：多標的比較
 - `/whale [symbol]`：內部人/機構動向
@@ -155,6 +156,7 @@ gemini_stock_bot_full/
 ## D. Ops & Governance
 - `/status`：系統狀態與資源
 - `/quota`：Token 使用量
+- `/ulog [page] [id/name]`：管理者快速查詢 user.log（7天、分頁）
 - `/op ...`：管理員隱藏指令
 
 ---
@@ -164,9 +166,9 @@ gemini_stock_bot_full/
 | Domain | Commands |
 |---|---|
 | Market | `/now`, `/risk`, `/marco`, `/news`, `/theme` |
-| Analysis | `/tech`, `/fin`, `/fin compare`, `/whale`, `/ask` |
+| Analysis | `/tech`, `/tech compare`, `/fin`, `/fin compare`, `/whale`, `/ask` |
 | Portfolio | `/buy`, `/sell`, `/list`, `/watch ...`, `/sweep ...` |
-| System | `/status`, `/quota`, `/bc ...`, `/help`, `/op ...` |
+| System | `/status`, `/quota`, `/bc ...`, `/help`, `/op ...`, `/ulog ...` |
 
 更完整的映射請見：[`docs/COMMANDS.md`](docs/COMMANDS.md)
 

@@ -25,6 +25,7 @@
 | `/bc` | 自動推播設定 | `command.cmd_bc` |
 | `/status` | 系統狀態 | `command.cmd_status` |
 | `/quota` | Token 配額 | `command.cmd_quota` |
+| `/ulog` | 管理者快速查 user.log（支援頁數） | `main_bot.on_ulog` → `command.cmd_ulog` |
 | `/help` | 指令教學頁 | `frame.help_text` |
 
 ---
@@ -36,7 +37,8 @@
 | `/op help` | 查看隱藏指令 |
 | `/op model flash|pro` | 切換模型偏好 |
 | `/op user list` | 查看使用者清單 |
-| `/op user log [id/名稱]` | 查看使用者互動紀錄 |
+| `/op user log [頁數] [id/名稱]` | 查看使用者互動紀錄（7 天、分頁） |
+| `/ulog [頁數] [id/名稱]` | 快速查詢 user.log（僅 ADMIN） |
 | `/op log` | 查看審計日誌 |
 | `/op log clear` | 清除審計日誌 |
 
@@ -60,3 +62,4 @@
 2. 檢查 `.env`：`TELEGRAM_TOKEN / GEMINI_API_KEY / NEWS_API_KEY / FRED_API_KEY / BLS_API_KEY`
 3. 若是宏觀資料異常：優先檢查 `market_api.get_macro_core_snapshot()`
 4. 若是指令沒反應：確認 `main_bot.py` 對應 handler 是否存在
+5. `/tech compare` 若 AI 分析失敗，現在會自動 fallback：至少回傳技術比較報表

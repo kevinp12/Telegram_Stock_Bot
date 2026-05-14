@@ -269,13 +269,16 @@ def format_quote(q: dict[str, Any]) -> str:
     price = q.get("price", "N/A")
     if not isinstance(price, (int, float)):
         return "N/A"
+    symbol = str(q.get("symbol", "") or "").upper()
     diff = float(q.get("diff", 0))
     pct = float(q.get("pct", 0))
     sign = "+" if diff >= 0 else ""
     p_val = safe_round(price, 2)
     d_val = safe_round(diff, 2)
     pct_val = safe_round(pct, 2)
-    return f"{p_val:.2f} USD ({sign}{d_val:.2f}) ({sign}{pct_val:.2f}%)"
+    # VIX 為波動率指數，顯示時不加 USD 單位
+    unit = "" if symbol == "VIX" else " USD"
+    return f"{p_val:.2f}{unit} ({sign}{d_val:.2f}) ({sign}{pct_val:.2f}%)"
 
 
 def get_macro_status(symbol_name: str) -> str:

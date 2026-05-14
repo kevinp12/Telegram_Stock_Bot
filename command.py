@@ -60,12 +60,63 @@ def _user_admin_help() -> str:
         "這是隱藏指令，不會出現在 /help 或 Telegram Menu。\n\n"
         "✅ 可用指令：\n"
         "• `/op user list`：顯示所有使用者 ID、名稱、最後互動時間\n"
-        "• `/op user log 名稱or id`：查詢該使用者 48 小時內問過的問題與回答/指令紀錄\n\n"
+        "• `/op user log [頁數] 名稱or id`：查詢該使用者 7 天內問過的問題與回答/指令紀錄\n"
+        "• `/ulog [頁數] 名稱or id`：快速查詢（僅 ADMIN）\n\n"
         "📌 範例：\n"
         "• `/op user log 5788908737`\n"
-        "• `/op user log Kevin`\n"
-        "• `/op user log @username`"
+        "• `/op user log 2 Kevin`\n"
+        "• `/ulog 2 @username`"
     )
+
+
+def _render_user_logs_page(target: dict, logs: list[dict], page: int, total_pages: int) -> str:
+    header = [
+        "🔐 使用者問答紀錄",
+        "━━━━━━━━━━━━━━",
+        _format_admin_user(target),
+        f"📄 第 {page}/{total_pages} 頁（每頁 20 筆）",
+    ]
+    if not logs:
+        return "\n".join(header + ["\n目前沒有 7 天內的暫存紀錄。", "\n💡 user.log 為 7 天暫存，重啟不會清空。"])
+
+    body: list[str] = []
+    for idx, row in enumerate(logs, start=1):
+        answer = str(row.get("answer", "") or "").strip()
+        answer_block = f"\nA：{_clip_text(answer, 900)}" if answer else ""
+        body.append(
+            f"\n#{idx}｜{row.get('created_at', '')}｜{row.get('source', 'text')}\n"
+            f"Q：{_clip_text(str(row.get('question', '')), 500)}"
+            f"{answer_block}"
+        )
+    return "\n".join(header + body)
+
+
+def cmd_ulog(text: str, user_id: int) -> str:
+    """快速查詢 user log：/ulog [頁數] 名稱orid（僅 ADMIN）。"""
+    if not _is_admin(user_id):
+        return "⛔ 權限不足：僅 ADMIN_ID 可使用 `/ulog`。"
+    parts = (text or "").split(maxsplit=2)
+    if len(parts) < 2:
+        return "用法：`/ulog [頁數] 名稱orid` 或 `/ulog 名稱orid`\n範例：`/ulog 2 Kevin`"
+
+    page = 1
+    identifier = ""
+    if len(parts) == 2:
+        identifier = parts[1].strip()
+    else:
+        if parts[1].isdigit():
+            page = max(1, int(parts[1]))
+            identifier = parts[2].strip()
+        else:
+            identifier = f"{parts[1]} {parts[2]}".strip()
+
+    target = database.find_user_by_name_or_id(identifier)
+    if not target:
+        return f"❌ 找不到使用者：`{identifier}`\n請先用 `/op user list` 查看清單。"
+
+    logs, total_pages = database.get_user_interaction_logs(int(target["user_id"]), limit=20, page=page)
+    safe_page = min(max(1, page), total_pages)
+    return _render_user_logs_page(target, logs, safe_page, total_pages)
 
 
 def cmd_user(text: str, user_id: int) -> str:
@@ -103,10 +154,17 @@ def cmd_user(text: str, user_id: int) -> str:
                 return (
                     "❌ 缺少查詢目標。\n"
                     "━━━━━━━━━━━━━━\n"
-                    "用法：`/op user log 名稱or id`\n"
-                    "範例：`/op user log 5788908737`、`/op user log Kevin`、`/op user log @username`"
+                    "用法：`/op user log [頁數] 名稱or id`\n"
+                    "範例：`/op user log 5788908737`、`/op user log 2 Kevin`、`/op user log 3 @username`"
                 )
-            identifier = normalized_parts[2].strip()
+
+            page = 1
+            identifier_raw = normalized_parts[2].strip()
+            if len(normalized_parts) >= 4 and normalized_parts[2].isdigit():
+                page = max(1, int(normalized_parts[2]))
+                identifier_raw = normalized_parts[3].strip()
+            identifier = identifier_raw
+
             target = database.find_user_by_name_or_id(identifier)
             if not target:
                 return (
@@ -115,21 +173,9 @@ def cmd_user(text: str, user_id: int) -> str:
                     "請先用 `/op user list` 查看目前已記錄的 ID 與名稱，再用 `/op user log 名稱or id` 查詢。"
                 )
 
-            logs = database.get_user_interaction_logs(int(target["user_id"]), limit=20)
-            header = ["🔐 使用者問答紀錄", "━━━━━━━━━━━━━━", _format_admin_user(target)]
-            if not logs:
-                return "\n".join(header + ["\n目前沒有 48 小時內的暫存紀錄。", "\n💡 user.log 是暫存區：bot 重啟會清空，超過 48 小時也會刪除。"])
-
-            body: list[str] = []
-            for idx, row in enumerate(logs, start=1):
-                answer = str(row.get("answer", "") or "").strip()
-                answer_block = f"\nA：{_clip_text(answer, 900)}" if answer else ""
-                body.append(
-                    f"\n#{idx}｜{row.get('created_at', '')}｜{row.get('source', 'text')}\n"
-                    f"Q：{_clip_text(str(row.get('question', '')), 500)}"
-                    f"{answer_block}"
-                )
-            return "\n".join(header + body)
+            logs, total_pages = database.get_user_interaction_logs(int(target["user_id"]), limit=20, page=page)
+            safe_page = min(max(1, page), total_pages)
+            return _render_user_logs_page(target, logs, safe_page, total_pages)
 
         return (
             f"❌ 未知的 /op user 子指令：`{sub}`\n"
@@ -1270,12 +1316,15 @@ def cmd_tech(text: str, user_id: int) -> str:
             data = tech_indicators.calculate_indicators(sym)
             data_list.append(data)
 
-        # AI 戰術分析整合
+        # AI 戰術分析整合（若 AI 失敗，至少回傳比較報表，避免看起來「沒反應」）
         user_name = database.get_user_display_name(user_id)
         report = frame.tech_compare_report(data_list)
-        ai_insight = ai_core.analyze_tech_comparison(data_list, user_name, user_id=user_id)
-
-        return f"{report}\n\n🤖 AI 戰術評析：\n{ai_insight}"
+        try:
+            ai_insight = ai_core.analyze_tech_comparison(data_list, user_name, user_id=user_id)
+            return f"{report}\n\n🤖 AI 戰術評析：\n{ai_insight}"
+        except Exception as exc:
+            logging.warning("/tech compare AI analysis failed: %s", exc)
+            return f"{report}\n\n⚠️ AI 戰術評析暫時失敗，已先提供技術面比較結果。"
 
     # 處理批量查詢 (最多 3 隻)
     symbols = [s.strip().upper() for s in parts[1:4]]

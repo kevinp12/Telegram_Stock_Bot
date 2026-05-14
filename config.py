@@ -33,27 +33,36 @@ BLS_API_KEY = os.getenv("BLS_API_KEY", "").strip()
 # Gemini
 # 兼容 README 舊版範例的 GOOGLE_API_KEY，同時保留正式 GEMINI_API_KEY。
 GEMINI_API_KEY = (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "").strip()
-GEMINI_FLASH_MODEL = os.getenv("GEMINI_FLASH_MODEL", "gemini-2.5-flash").strip()
-GEMINI_PRO_MODEL = os.getenv("GEMINI_PRO_MODEL", "gemini-2.5-pro").strip()
+GEMINI_FLASH_MODEL = os.getenv("GEMINI_FLASH_MODEL", "gemini-3.1-flash-lite").strip()
+GEMINI_PRO_MODEL = os.getenv("GEMINI_PRO_MODEL", "gemini-3.1-pro").strip()
 GEMINI_AUDIT_LOG_PATH = BASE_DIR / ".gemini_audit.log"
 
 # Fallbacks：基本對話優先 Flash；深度對話優先 Pro。
+# 2026年5月更新：納入 3.1, 3.0, 2.5 全系列。
 FLASH_FALLBACK_MODELS = [
     GEMINI_FLASH_MODEL,
+    "gemini-3.1-flash-lite",
+    "gemini-3.1-flash",
+    "gemini-3-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
     "gemini-flash-latest",
     "gemini-2.0-flash",
     "gemini-1.5-flash",
-    "gemini-1.5-flash-latest",
-    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash-8b",
+    "gemini-2.0-flash-lite",  # 已進入過渡期/404
 ]
 
 PRO_FALLBACK_MODELS = [
     GEMINI_PRO_MODEL,
+    "gemini-3.1-pro",
+    "gemini-3-pro",
+    "gemini-2.5-pro",
     "gemini-pro-latest",
     "gemini-2.0-pro-exp-02-05",
     "gemini-1.5-pro",
-    "gemini-1.5-pro-latest",
     "gemini-3.1-pro-preview",
+    "gemini-2.0-flash-thinking-exp-01-21",
 ]
 
 # Telegram settings
