@@ -26,6 +26,7 @@ from utils import safe_round
 STOCK_RE = re.compile(r"\b[A-Z]{2,5}\b")
 FIN_COMPARE_STATE: dict[int, list[str]] = {}
 DATA_CLEAR_CONFIRM_STATE: dict[int, datetime] = {}
+OP_DELETE_CONFIRM_STATE: dict[int, tuple[str, datetime]] = {}
 
 def _is_admin(user_id: int) -> bool:
     """僅允許 .env ADMIN_ID 使用後台隱藏功能。"""
@@ -1215,6 +1216,56 @@ def cmd_op(text: str, user_id: int) -> str:
 
     if sub == "user":
         return cmd_user(text, user_id)
+
+    if sub == "del":
+        if len(parts) < 3:
+            return (
+                "🗑️ /op del 用法\n"
+                "━━━━━━━━━━━━━━\n"
+                "請輸入：`/op del uid或username`\n"
+                "例如：`/op del 5788908737` 或 `/op del @kevin`\n"
+                "⚠️ 需在 60 秒內重複輸入同一條指令才會真的刪除。"
+            )
+
+        identifier = " ".join(parts[2:]).strip()
+        if not identifier:
+            return "❌ 缺少刪除目標，請輸入：`/op del uid或username`"
+
+        target = database.find_user_by_name_or_id(identifier)
+        if not target:
+            return f"❌ 找不到使用者：`{identifier}`\n請先用 `/op user list` 確認。"
+
+        now = datetime.now()
+        prev = OP_DELETE_CONFIRM_STATE.get(user_id)
+        confirm_key = str(int(target.get("user_id", 0)))
+        if not prev or prev[0] != confirm_key or (now - prev[1]).total_seconds() > 60:
+            OP_DELETE_CONFIRM_STATE[user_id] = (confirm_key, now)
+            display = target.get("display_name") or "未命名"
+            username = target.get("username") or ""
+            uname_text = f" (@{username})" if username else ""
+            return (
+                "⚠️ 二次確認刪除\n"
+                "━━━━━━━━━━━━━━\n"
+                f"目標：`{confirm_key}`｜{display}{uname_text}\n"
+                "此操作將刪除該使用者的交易、雷達、狙擊、問答、token 與統計資料。\n\n"
+                "請在 60 秒內再輸入一次相同指令確認：\n"
+                f"`/op del {identifier}`"
+            )
+
+        OP_DELETE_CONFIRM_STATE.pop(user_id, None)
+        deleted = database.delete_user_all_data_by_admin(identifier)
+        if not deleted:
+            return f"❌ 刪除失敗：找不到使用者 `{identifier}`。"
+
+        uid = deleted.get("user_id")
+        name = deleted.get("display_name") or "未命名"
+        username = deleted.get("username") or ""
+        uname_text = f" (@{username})" if username else ""
+        return (
+            "✅ 刪除完成\n"
+            "━━━━━━━━━━━━━━\n"
+            f"已清除使用者資料：`{uid}`｜{name}{uname_text}"
+        )
 
     return f"❓ 未知的隱藏指令：`{sub}`\n\n" f"請使用 `/op help` 查看完整的隱藏功能清單。"
 

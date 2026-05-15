@@ -141,6 +141,7 @@ gemini_stock_bot_full/
 
 ## B. Deep Analysis
 - `/tech [symbol]`：技術結構與訊號
+- `/tech [symbol]`：除文字分析外，額外回傳 SMC + TD 戰術 K 線圖（90天計算、60天顯示）
 - `/tech compare A B [C]`：多標的技術面比較（AI 失敗時自動 fallback 至比較報表）
 - `/fin [symbol]`：財報與估值快照
 - `/fin compare A B [C]`：多標的比較
@@ -244,6 +245,14 @@ python3 -m py_compile main_bot.py command.py frame.py market_api.py ai_core.py b
 - `ruff` / `flake8`：靜態規範
 - `mypy`：型別檢查
 - `pytest`：行為測試
+
+### /tech 圖表生成備註
+
+- 圖表引擎：`mplfinance`
+- 效能策略：
+  - 使用 `io.BytesIO()`，不落地檔案
+  - `mpf.plot(..., closefig=True)` 強制釋放畫布
+  - Telegram 發送採 `try...finally`，在 `finally` 內 `buf.close()`
 
 ---
 

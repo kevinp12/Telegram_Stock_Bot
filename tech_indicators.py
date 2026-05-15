@@ -3,6 +3,7 @@
 """
 
 import logging
+import io
 from typing import Any
 
 import numpy as np
@@ -10,6 +11,122 @@ import pandas as pd
 import yfinance as yf
 
 from utils import safe_round
+
+
+# /tech 文字分析後的原始日K暫存，供同次請求繪圖復用，避免重抓資料
+_TECH_DF_CACHE: dict[str, pd.DataFrame] = {}
+
+
+def clear_tech_df_cache(symbol: str | None = None) -> None:
+    """清理 /tech 圖表資料快取，避免長時間記憶體累積。"""
+    if symbol:
+        _TECH_DF_CACHE.pop(symbol.upper().strip(), None)
+        return
+    _TECH_DF_CACHE.clear()
+
+
+def generate_tech_chart_buffer(symbol: str, dpi: int = 130) -> io.BytesIO:
+    """生成 /tech 戰術圖表（90天計算，60天顯示），回傳 BytesIO。"""
+    try:
+        import mplfinance as mpf
+    except Exception as exc:
+        raise RuntimeError("缺少 mplfinance 套件，請先安裝 requirements.txt") from exc
+
+    symbol = symbol.upper().strip()
+    cached_df = _TECH_DF_CACHE.get(symbol)
+    if cached_df is not None and not cached_df.empty:
+        df = cached_df.copy()
+    else:
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(period="90d", interval="1d")
+
+    # 圖表規格固定用最近 90 天資料做計算基底
+    if len(df) > 90:
+        df = df.tail(90).copy()
+    if df.empty or len(df) < 30:
+        raise ValueError("數據不足，無法生成技術圖表")
+
+    df = df.copy()
+    df["MA20"] = df["Close"].rolling(window=20).mean()
+    df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
+
+    # TD9 序列標記（僅在計數 == 9 時打點）
+    td_buy_raw = (df["Close"] < df["Close"].shift(4)).astype(int)
+    td_sell_raw = (df["Close"] > df["Close"].shift(4)).astype(int)
+    buy_markers = pd.Series(np.nan, index=df.index)
+    sell_markers = pd.Series(np.nan, index=df.index)
+    buy_count = 0
+    sell_count = 0
+    for i in range(len(df)):
+        if int(td_buy_raw.iloc[i]) == 1:
+            buy_count += 1
+        else:
+            buy_count = 0
+        if int(td_sell_raw.iloc[i]) == 1:
+            sell_count += 1
+        else:
+            sell_count = 0
+
+        if buy_count == 9:
+            buy_markers.iloc[i] = float(df["Low"].iloc[i]) * 0.995
+        if sell_count == 9:
+            sell_markers.iloc[i] = float(df["High"].iloc[i]) * 1.005
+
+    # 僅顯示最後 60 根
+    df_plot = df.tail(60).copy()
+    buy_plot = buy_markers.reindex(df_plot.index)
+    sell_plot = sell_markers.reindex(df_plot.index)
+
+    ap = [
+        mpf.make_addplot(df_plot["MA20"], color="yellow", width=1.2),
+        mpf.make_addplot(df_plot["EMA50"], color="pink", width=1.2),
+        mpf.make_addplot(buy_plot, type="scatter", marker="^", color="green", markersize=70),
+        mpf.make_addplot(sell_plot, type="scatter", marker="v", color="red", markersize=70),
+    ]
+
+    # 最近一組「尚未完全填補」FVG 區
+    fvg_zone = None
+    fvg_candidates = detect_recent_fvgs(df, lookback=min(60, len(df) - 2))
+    for fvg in fvg_candidates:
+        low_b = float(fvg.get("low_b", 0) or 0)
+        high_b = float(fvg.get("high_b", 0) or 0)
+        idx = int(fvg.get("index", 0) or 0)
+        after = df.iloc[idx + 1 :]
+        if fvg.get("direction") == "BULLISH":
+            filled = bool((after["Low"] <= low_b).any()) if not after.empty else False
+        else:
+            filled = bool((after["High"] >= high_b).any()) if not after.empty else False
+        if not filled:
+            fvg_zone = (low_b, high_b)
+            break
+
+    fill_between = None
+    if fvg_zone:
+        zone_low, zone_high = fvg_zone
+        y1 = np.full(len(df_plot), zone_high)
+        y2 = np.full(len(df_plot), zone_low)
+        fill_between = dict(y1=y1, y2=y2, color="blue", alpha=0.2)
+
+    mc = mpf.make_marketcolors(up="g", down="r", inherit=True)
+    style = mpf.make_mpf_style(marketcolors=mc)
+
+    buf = io.BytesIO()
+    safe_dpi = max(72, min(int(dpi), 180))
+    mpf.plot(
+        df_plot,
+        type="candle",
+        volume=True,
+        style=style,
+        addplot=ap,
+        fill_between=fill_between,
+        title=f"{symbol} | SMC + TD9",
+        ylabel="Price",
+        ylabel_lower="Volume",
+        savefig=dict(fname=buf, format="png", dpi=safe_dpi, bbox_inches="tight"),
+        closefig=True,
+    )
+    buf.seek(0)
+    return buf
 
 
 def _format_price_zone(low: float, high: float) -> str:
@@ -328,6 +445,9 @@ def calculate_indicators(symbol: str) -> dict[str, Any]:
 
         if df.empty or len(df) < 20:
             return {"error": "數據不足，無法進行分析"}
+
+        # 給圖表模組重用（同一個 /tech 請求就不必再抓一次）
+        _TECH_DF_CACHE[symbol] = df.copy()
 
         # 1. EMA 系統
         df["EMA21"] = df["Close"].ewm(span=21, adjust=False).mean()

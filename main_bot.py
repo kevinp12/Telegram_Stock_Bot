@@ -14,6 +14,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import telebot
+import psutil
 from telebot.apihelper import ApiTelegramException
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -25,6 +26,7 @@ except ImportError:
 import command
 import database
 import frame
+import tech_indicators
 from config import (
     AUTO_NEWS_INTERVAL_SECONDS,
     ADMIN_ID,
@@ -61,6 +63,8 @@ if not TELEGRAM_TOKEN or len(TELEGRAM_TOKEN) < 10:
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=True)
 PAGED_MESSAGE_CACHE: dict[str, list[str]] = {}
+TECH_CHART_COOLDOWN_SECONDS = 45
+_TECH_CHART_LAST_TS: dict[tuple[int, str], float] = {}
 
 
 def get_user_display_name(m) -> str:
@@ -206,6 +210,53 @@ def record_user_log_safely(
 
 def reply(message, text: str | list[str], parse_mode: str | None = "Markdown", reply_markup: any = None):
     return safe_send(message.chat.id, text, parse_mode=parse_mode, reply_markup=reply_markup)
+
+
+def maybe_send_tech_chart(chat_id: int, text: str) -> None:
+    """僅在 /tech 單一代號模式時發送戰術圖表。"""
+    parts = (text or "").split()
+    if len(parts) < 2:
+        return
+
+    sub = parts[1].strip().lower()
+    if sub in {"compare", "help"}:
+        return
+    if len(parts) != 2:
+        return
+
+    symbol = parts[1].strip().upper()
+    if not symbol:
+        return
+
+    # 冷卻機制：同 chat + symbol 短時間內不重繪，降低 CPU/RAM
+    now_ts = time.time()
+    key = (int(chat_id), symbol)
+    last_ts = _TECH_CHART_LAST_TS.get(key, 0.0)
+    if now_ts - last_ts < TECH_CHART_COOLDOWN_SECONDS:
+        return
+
+    buf = None
+    try:
+        cpu_now = psutil.cpu_percent(interval=0.05)
+        ram_now = psutil.virtual_memory().percent
+        # 超載保護：高 CPU / RAM 時降低圖表 DPI，減少運算與記憶體壓力
+        dpi = 100 if (cpu_now >= 70 or ram_now >= 80) else 130
+        buf = tech_indicators.generate_tech_chart_buffer(symbol, dpi=dpi)
+        bot.send_photo(chat_id, photo=buf, caption=f"📊 {symbol} SMC & TD 戰術圖表")
+        _TECH_CHART_LAST_TS[key] = now_ts
+    except Exception as exc:
+        logging.warning("maybe_send_tech_chart failed for %s: %s", symbol, exc)
+    finally:
+        if buf is not None:
+            try:
+                buf.close()
+            except Exception:
+                pass
+        # 發送後立即清掉該 symbol 快取，降低記憶體占用
+        try:
+            tech_indicators.clear_tech_df_cache(symbol)
+        except Exception:
+            pass
 
 
 def run_with_loading(message, loading_text: str, task_fn, error_prefix: str = "處理失敗"):
@@ -485,6 +536,7 @@ def on_tech(m):
         send_paged_message(m.chat.id, result)
     else:
         safe_send(m.chat.id, result)
+    maybe_send_tech_chart(m.chat.id, m.text or "")
 
 
 @bot.message_handler(commands=["risk"])
@@ -767,6 +819,7 @@ def on_text(m):
                 send_paged_message(m.chat.id, result)
             else:
                 reply(m, result)
+            maybe_send_tech_chart(m.chat.id, text)
             return
         if lowered.startswith("/news"):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/news")

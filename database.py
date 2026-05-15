@@ -249,6 +249,25 @@ def clear_user_all_data(user_id: int) -> None:
         conn.commit()
 
 
+def delete_user_all_data_by_admin(identifier: str) -> dict | None:
+    """依 user_id / username / display_name 找到使用者後，刪除其主要資料並回傳目標資訊。"""
+    target = find_user_by_name_or_id(identifier)
+    if not target:
+        return None
+
+    uid = int(target["user_id"])
+    with get_conn() as conn:
+        conn.execute("DELETE FROM trades WHERE user_id=?", (uid,))
+        conn.execute("DELETE FROM watchlist WHERE user_id=?", (uid,))
+        conn.execute("DELETE FROM sniper_list WHERE user_id=?", (uid,))
+        conn.execute("DELETE FROM qa_logs WHERE user_id=?", (uid,))
+        conn.execute("DELETE FROM token_logs WHERE user_id=?", (uid,))
+        conn.execute("DELETE FROM stats WHERE user_id=?", (uid,))
+        conn.commit()
+
+    return target
+
+
 def get_bc_settings(user_id: int) -> tuple[int, int, float]:
     with get_conn() as conn:
         row = conn.execute("SELECT bc_active, bc_timer, last_bc_ts FROM users WHERE user_id=?", (user_id,)).fetchone()
