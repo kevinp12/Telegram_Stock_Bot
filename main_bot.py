@@ -257,7 +257,8 @@ def maybe_send_tech_chart(
         cpu_now = psutil.cpu_percent(interval=0.05)
         ram_now = psutil.virtual_memory().percent
         # 超載保護：高 CPU / RAM 時降低圖表 DPI，減少運算與記憶體壓力
-        dpi = 100 if (cpu_now >= 70 or ram_now >= 80) else 130
+        # 提高至 200 DPI 以接近 1080p 視覺品質
+        dpi = 140 if (cpu_now >= 70 or ram_now >= 80) else 200
         buf = tech_indicators.generate_tech_chart_buffer(symbol, dpi=dpi, theme=theme)
         
         # 發送圖表並提取 file_id
