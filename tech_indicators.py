@@ -206,33 +206,22 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
 
     # 左上角：出圖時間 + watermark
     plot_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # 集中在左上角顯示
     price_ax.text(
         0.01,
         0.98,
-        f"Chart Time: {plot_ts}",
+        f"Time: {plot_ts}",
         transform=price_ax.transAxes,
         ha="left",
         va="top",
         fontsize=8,
         color="white",
-        bbox=dict(facecolor="black", alpha=0.35, edgecolor="none", pad=2),
+        bbox=dict(facecolor="black", alpha=0.5, edgecolor="none", pad=2),
     )
-    price_ax.text(
-        0.01,
-        0.92,
-        "TelegramBot_By_Kevin",
-        transform=price_ax.transAxes,
-        ha="left",
-        va="top",
-        fontsize=8,
-        color="lightgray",
-        alpha=0.8,
-    )
-
-    # MA/VWAP 標示
-    price_ax.text(0.99, 0.98, "MA20", transform=price_ax.transAxes, ha="right", va="top", fontsize=8, color="#FFD166", weight="bold")
-    price_ax.text(0.99, 0.93, "MA50", transform=price_ax.transAxes, ha="right", va="top", fontsize=8, color="#FF4D9D", weight="bold")
-    price_ax.text(0.99, 0.88, "VWAP(anchor)", transform=price_ax.transAxes, ha="right", va="top", fontsize=8, color="#C7CED6", weight="bold")
+    # 將 MA/VWAP 標籤移至左上角
+    price_ax.text(0.01, 0.92, "MA20", transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#FFD166", weight="bold")
+    price_ax.text(0.01, 0.87, "EMA50", transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#FF4D9D", weight="bold")
+    price_ax.text(0.01, 0.82, "VWAP (anchor)", transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#C7CED6", weight="bold")
 
     # 成交量座標改成 K/M/B 單位
     from matplotlib.ticker import FuncFormatter
@@ -256,33 +245,13 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
     resistance_line = (tdst.get("resistance") or {}).get("price")
     try:
         if support_line is not None:
-            support_color = "#35D07F" if theme_name == "dark" else "#0F9D58"
+            # 使用純綠色
+            support_color = "#00FF00" if theme_name == "dark" else "#0F9D58"
             price_ax.axhline(float(support_line), linestyle="--", linewidth=1.15, color=support_color, alpha=0.95)
-            price_ax.text(
-                0.01,
-                0.05,
-                f"TDST Support: {safe_round(float(support_line), 2)}",
-                transform=price_ax.transAxes,
-                ha="left",
-                va="bottom",
-                fontsize=8,
-                color=support_color,
-                weight="bold",
-            )
         if resistance_line is not None:
-            resistance_color = "#FF7B7B" if theme_name == "dark" else "#DB4437"
+            # 使用鮮紅色
+            resistance_color = "#FF0000" if theme_name == "dark" else "#DB4437"
             price_ax.axhline(float(resistance_line), linestyle="--", linewidth=1.15, color=resistance_color, alpha=0.95)
-            price_ax.text(
-                0.01,
-                0.10,
-                f"TDST Resistance: {safe_round(float(resistance_line), 2)}",
-                transform=price_ax.transAxes,
-                ha="left",
-                va="bottom",
-                fontsize=8,
-                color=resistance_color,
-                weight="bold",
-            )
     except Exception:
         pass
 
@@ -298,8 +267,8 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
         bcnt = bcnt + 1 if int(td_buy_plot.iloc[i]) == 1 else 0
         scnt = scnt + 1 if int(td_sell_plot.iloc[i]) == 1 else 0
 
-        # TD 數字（1~9）標在 K 棒上方，紅綠區分
-        if 1 <= bcnt <= 9:
+        # 僅在計數為 9 時顯示數字
+        if bcnt == 9:
             price_ax.text(
                 xvals[i],
                 float(df_plot["High"].iloc[i]) * 1.01,
@@ -311,7 +280,7 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
                 weight="bold",
                 bbox=dict(facecolor="#0B1020", edgecolor="none", alpha=0.75, pad=0.3),
             ).set_path_effects([pe.withStroke(linewidth=2.6, foreground="#FFD6D6", alpha=0.9)])
-        if 1 <= scnt <= 9:
+        if scnt == 9:
             price_ax.text(
                 xvals[i],
                 float(df_plot["High"].iloc[i]) * 1.02,
