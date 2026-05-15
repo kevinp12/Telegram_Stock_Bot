@@ -81,8 +81,8 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
     # 成交量均線（讓量柱有基準線可參考）
     df_plot["VOL_MA20"] = df_plot["Volume"].rolling(window=20).mean()
 
-    # 灰色 VWAP 線：從近期趨勢底部（60根中的最低 Low）開始累積
-    anchor_label = df_plot["Low"].idxmin() if len(df_plot) else None
+    # 灰色 VWAP 線：從更近期的趨勢底部（最近 20 根的最低 Low）開始累積
+    anchor_label = df_plot["Low"].tail(20).idxmin() if len(df_plot) else None
     if anchor_label is None:
         anchor_pos = 0
     else:
@@ -223,6 +223,16 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
     price_ax.text(0.01, 0.87, "EMA50", transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#FF4D9D", weight="bold")
     price_ax.text(0.01, 0.82, "VWAP (anchor)", transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#C7CED6", weight="bold")
 
+    # 在 FVG 藍色區間中間加上 FVG 字樣
+    if fvg_zone:
+        zl, zh = fvg_zone
+        # 標在區間右側 3/4 處，避免被 K 棒遮擋
+        price_ax.text(
+            len(df_plot) - 5, (zl + zh) / 2, "FVG",
+            color="#2D6CDF", fontsize=9, weight="bold",
+            ha="right", va="center", alpha=0.7
+        )
+
     # 成交量座標改成 K/M/B 單位
     from matplotlib.ticker import FuncFormatter
 
@@ -273,25 +283,25 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
                 xvals[i],
                 float(df_plot["High"].iloc[i]) * 1.01,
                 str(bcnt),
-                color="#FF4D4D",
+                color="#BF00FF",  # 亮紫色
                 fontsize=7.5,
                 ha="center",
                 va="bottom",
                 weight="bold",
                 bbox=dict(facecolor="#0B1020", edgecolor="none", alpha=0.75, pad=0.3),
-            ).set_path_effects([pe.withStroke(linewidth=2.6, foreground="#FFD6D6", alpha=0.9)])
+            ).set_path_effects([pe.withStroke(linewidth=2.6, foreground="#E0B0FF", alpha=0.8)])
         if scnt == 9:
             price_ax.text(
                 xvals[i],
                 float(df_plot["High"].iloc[i]) * 1.02,
                 str(scnt),
-                color="#7CFC00",
+                color="#BF00FF",  # 亮紫色
                 fontsize=7.5,
                 ha="center",
                 va="bottom",
                 weight="bold",
                 bbox=dict(facecolor="#0B1020", edgecolor="none", alpha=0.75, pad=0.3),
-            ).set_path_effects([pe.withStroke(linewidth=2.6, foreground="#D9FFD0", alpha=0.9)])
+            ).set_path_effects([pe.withStroke(linewidth=2.6, foreground="#E0B0FF", alpha=0.8)])
 
         if bcnt == 9 or scnt == 9:
             o = float(df_plot["Open"].iloc[i])
@@ -793,24 +803,28 @@ def calculate_indicators(symbol: str) -> dict[str, Any]:
 
         # 15. Attack Gauge
         score = 0
-        if last_price > ema21:
-            score += 1
-        if last_price < ema21:
-            score -= 1
-        if macd_val > signal_val:
-            score += 1
-        if macd_val < signal_val:
-            score -= 1
-        if rsi > 50:
-            score += 1
-        if rsi < 50:
-            score -= 1
-        if last_price > vwap:
-            score += 1
-        if last_price < vwap:
-            score -= 1
+        # 趨勢分 (加入 21/60 雙均線判斷)
+        if last_price > ema21: score += 1
+        if last_price > ema60: score += 1
+        if ema21 > ema60: score += 1
+        
+        # 動能分
+        if macd_val > signal_val: score += 1
+        if rsi > 50: score += 1
+        if last_price > vwap: score += 1
+        
+        # 負向扣分
+        if last_price < ema21: score -= 1
+        if last_price < ema60: score -= 1
+        if ema21 < ema60: score -= 1
+        if macd_val < signal_val: score -= 1
+        if rsi < 50: score -= 1
+        if last_price < vwap: score -= 1
 
-        attack_map = {4: "大買", 3: "中買", 2: "小買", 1: "小買", 0: "觀察", -1: "小賣", -2: "小賣", -3: "中賣", -4: "大賣"}
+        attack_map = {
+            6: "強力攻擊", 5: "大買", 4: "大買", 3: "中買", 2: "小買", 1: "小買",
+            0: "觀察", -1: "小賣", -2: "小賣", -3: "中賣", -4: "大賣", -5: "大賣", -6: "強力拋售"
+        }
         attack_status = attack_map.get(score, "觀察")
 
         # 16. 文件需求：MA20/50/200 + TDST + 當前 FVG 共振狙擊訊號
