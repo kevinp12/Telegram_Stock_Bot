@@ -774,13 +774,41 @@ def on_data(m):
     reply(m, command.cmd_data_clear(m.text or "", user_id))
 
 
+CHART_KEYWORDS = ["chart", "圖表", "線圖", "走勢圖", "分析圖"]
+
+
+def check_and_send_auto_chart(chat_id, query_text, symbol, user_id, user_name, username):
+    """偵測問題中是否包含圖表關鍵字，若是則自動補發戰術圖。"""
+    if any(kw in query_text.lower() for kw in CHART_KEYWORDS) and symbol:
+        logging.info(f"Auto-chart triggered for {symbol} by query: {query_text}")
+        # 延遲一下下，確保文字回覆先到
+        time.sleep(0.5)
+        maybe_send_tech_chart(
+            chat_id, 
+            f"/chart {symbol}", 
+            cmd_prefix="/chart", 
+            user_id=user_id, 
+            user_name=user_name, 
+            username=username
+        )
+
+
 @bot.message_handler(commands=["ask"])
 def on_ask(m):
     user_id, user_name = register_user(m)
-    result = command.cmd_ask(m.text or "", user_name, user_id)
+    username = get_username(m)
+    query_text = m.text or ""
+    
+    result = command.cmd_ask(query_text, user_name, user_id)
     reply(m, result)
-    record_qa_safely(user_id, m.text or "", result)
-    record_user_log_safely(user_id, user_name, get_username(m), m.text or "", result, source="/ask")
+    record_qa_safely(user_id, query_text, result)
+    record_user_log_safely(user_id, user_name, username, query_text, result, source="/ask")
+    
+    # 自動圖表觸發
+    parts = query_text.split(maxsplit=2)
+    if len(parts) >= 2:
+        symbol = parts[1].upper().strip()
+        check_and_send_auto_chart(m.chat.id, query_text, symbol, user_id, user_name, username)
 
 
 @bot.message_handler(commands=["status"])
@@ -961,7 +989,13 @@ def on_text(m):
     result = command.handle_natural_language(text, user_name, user_id=user_id)
     reply(m, result)
     record_qa_safely(user_id, text, result)
-    record_user_log_safely(user_id, user_name, get_username(m), text, result, source="natural")
+    username = get_username(m)
+    record_user_log_safely(user_id, user_name, username, text, result, source="natural")
+
+    # 自然對話自動圖表觸發
+    syms = command.STOCK_RE.findall(text)
+    if syms:
+        check_and_send_auto_chart(m.chat.id, text, syms[0].upper(), user_id, user_name, username)
 
 
 if __name__ == "__main__":

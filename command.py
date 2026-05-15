@@ -80,7 +80,10 @@ def _render_user_logs_content(target: dict, logs: list[dict], page: int, total_p
     if not logs:
         return ["\n".join(header + ["\n目前沒有 7 天內的暫存紀錄。", "\n💡 user.log 為 7 天暫存，重啟不會清空。"])]
 
-    results: list[str | dict] = ["\n".join(header)]
+    # 批量發送：將 20 筆紀錄合併為一段或少數幾段文字，減少洗版
+    text_entries = ["\n".join(header)]
+    photo_items = []
+
     for idx, row in enumerate(logs, start=1):
         answer = str(row.get("answer", "") or "").strip()
         answer_block = f"\nA：{_clip_text(answer, 900)}" if answer else ""
@@ -89,17 +92,21 @@ def _render_user_logs_content(target: dict, logs: list[dict], page: int, total_p
             f"Q：{_clip_text(str(row.get('question', '')), 500)}"
             f"{answer_block}"
         )
-        results.append(log_entry)
+        text_entries.append(log_entry)
 
-        # Module B: 零硬碟讀取：若有 file_id 則加入 photo 項目供 Bot 轉發
+        # 若有 file_id 則加入 photo 項目供 Bot 轉發
         file_id = row.get("file_id")
         if file_id:
-            results.append({
+            photo_items.append({
                 "type": "photo",
                 "file_id": file_id,
                 "caption": f"#{idx} 歷史圖表: {row.get('question', '')[:50]}"
             })
-    return results
+
+    # 合併文字部分
+    combined_text = "\n".join(text_entries)
+    # 返回 [文字區塊, 圖片1, 圖片2, ...]
+    return [combined_text] + photo_items
 
 
 def cmd_ulog(text: str, user_id: int) -> str | list[str | dict]:
