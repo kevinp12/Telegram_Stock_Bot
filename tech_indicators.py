@@ -80,9 +80,12 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130) -> io.BytesIO:
     ap = [
         mpf.make_addplot(df_plot["MA20"], color="yellow", width=1.2),
         mpf.make_addplot(df_plot["EMA50"], color="pink", width=1.2),
-        mpf.make_addplot(buy_plot, type="scatter", marker="^", color="green", markersize=70),
-        mpf.make_addplot(sell_plot, type="scatter", marker="v", color="red", markersize=70),
     ]
+    # mplfinance 在全 NaN scatter 會觸發 zero-size array 錯誤，需先判斷再加入
+    if not buy_plot.isna().all():
+        ap.append(mpf.make_addplot(buy_plot, type="scatter", marker="^", color="green", markersize=70))
+    if not sell_plot.isna().all():
+        ap.append(mpf.make_addplot(sell_plot, type="scatter", marker="v", color="red", markersize=70))
 
     # 最近一組「尚未完全填補」FVG 區
     fvg_zone = None
