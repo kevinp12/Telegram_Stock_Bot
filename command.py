@@ -70,7 +70,7 @@ def _user_admin_help() -> str:
     )
 
 
-def _render_user_logs_page(target: dict, logs: list[dict], page: int, total_pages: int) -> str:
+def _render_user_logs_content(target: dict, logs: list[dict], page: int, total_pages: int) -> list[str | dict]:
     header = [
         "🔐 使用者問答紀錄",
         "━━━━━━━━━━━━━━",
@@ -78,21 +78,31 @@ def _render_user_logs_page(target: dict, logs: list[dict], page: int, total_page
         f"📄 第 {page}/{total_pages} 頁（每頁 20 筆）",
     ]
     if not logs:
-        return "\n".join(header + ["\n目前沒有 7 天內的暫存紀錄。", "\n💡 user.log 為 7 天暫存，重啟不會清空。"])
+        return ["\n".join(header + ["\n目前沒有 7 天內的暫存紀錄。", "\n💡 user.log 為 7 天暫存，重啟不會清空。"])]
 
-    body: list[str] = []
+    results: list[str | dict] = ["\n".join(header)]
     for idx, row in enumerate(logs, start=1):
         answer = str(row.get("answer", "") or "").strip()
         answer_block = f"\nA：{_clip_text(answer, 900)}" if answer else ""
-        body.append(
+        log_entry = (
             f"\n#{idx}｜{row.get('created_at', '')}｜{row.get('source', 'text')}\n"
             f"Q：{_clip_text(str(row.get('question', '')), 500)}"
             f"{answer_block}"
         )
-    return "\n".join(header + body)
+        results.append(log_entry)
+
+        # Module B: 零硬碟讀取：若有 file_id 則加入 photo 項目供 Bot 轉發
+        file_id = row.get("file_id")
+        if file_id:
+            results.append({
+                "type": "photo",
+                "file_id": file_id,
+                "caption": f"#{idx} 歷史圖表: {row.get('question', '')[:50]}"
+            })
+    return results
 
 
-def cmd_ulog(text: str, user_id: int) -> str:
+def cmd_ulog(text: str, user_id: int) -> str | list[str | dict]:
     """快速查詢 user log：/ulog [頁數] 名稱orid（僅 ADMIN）。"""
     if not _is_admin(user_id):
         return "⛔ 權限不足：僅 ADMIN_ID 可使用 `/ulog`。"
@@ -117,7 +127,7 @@ def cmd_ulog(text: str, user_id: int) -> str:
 
     logs, total_pages = database.get_user_interaction_logs(int(target["user_id"]), limit=20, page=page)
     safe_page = min(max(1, page), total_pages)
-    return _render_user_logs_page(target, logs, safe_page, total_pages)
+    return _render_user_logs_content(target, logs, safe_page, total_pages)
 
 
 def cmd_user(text: str, user_id: int) -> str:
@@ -176,7 +186,7 @@ def cmd_user(text: str, user_id: int) -> str:
 
             logs, total_pages = database.get_user_interaction_logs(int(target["user_id"]), limit=20, page=page)
             safe_page = min(max(1, page), total_pages)
-            return _render_user_logs_page(target, logs, safe_page, total_pages)
+            return _render_user_logs_content(target, logs, safe_page, total_pages)
 
         return (
             f"❌ 未知的 /op user 子指令：`{sub}`\n"

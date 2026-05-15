@@ -194,6 +194,7 @@ def record_user_log_safely(
     answer: str | list[str] | tuple[str, ...] | None = None,
     *,
     source: str = "text",
+    file_id: str | None = None,
 ) -> None:
     try:
         database.record_user_interaction(
@@ -203,6 +204,7 @@ def record_user_log_safely(
             display_name=user_name,
             username=username,
             source=source,
+            file_id=file_id,
         )
     except Exception as exc:
         logging.warning("record user.log failed: %s", exc)
@@ -219,6 +221,8 @@ def maybe_send_tech_chart(
     *,
     user_id: int | None = None,
     theme_override: str | None = None,
+    user_name: str = "User",
+    username: str = "",
 ) -> None:
     """在 /tech 或 /chart 單一代號模式時發送戰術圖表。"""
     parts = (text or "").split()
@@ -255,7 +259,15 @@ def maybe_send_tech_chart(
         # 超載保護：高 CPU / RAM 時降低圖表 DPI，減少運算與記憶體壓力
         dpi = 100 if (cpu_now >= 70 or ram_now >= 80) else 130
         buf = tech_indicators.generate_tech_chart_buffer(symbol, dpi=dpi, theme=theme)
-        bot.send_photo(chat_id, photo=buf, caption=f"📊 {symbol} SMC & TD 戰術圖表｜Theme: {theme}")
+        
+        # 發送圖表並提取 file_id
+        msg = bot.send_photo(chat_id, photo=buf, caption=f"📊 {symbol} SMC & TD 戰術圖表｜Theme: {theme}")
+        
+        # 紀錄 Log (包含 file_id)
+        if user_id:
+            file_id = msg.photo[-1].file_id if msg and msg.photo else None
+            record_user_log_safely(user_id, user_name, username, text, source="chart", file_id=file_id)
+            
         _TECH_CHART_LAST_TS[key] = now_ts
     except Exception as exc:
         logging.warning("maybe_send_tech_chart failed for %s: %s", symbol, exc)
@@ -550,7 +562,7 @@ def on_tech(m):
         send_paged_message(m.chat.id, result)
     else:
         safe_send(m.chat.id, result)
-    maybe_send_tech_chart(m.chat.id, m.text or "")
+    maybe_send_tech_chart(m.chat.id, m.text or "", user_id=user_id, user_name=user_name, username=get_username(m))
 
 
 @bot.message_handler(commands=["chart"])
@@ -584,7 +596,7 @@ def on_chart(m):
         reply(m, "❌ 代號格式錯誤，請輸入英數代號，例如：`/chart NVDA`")
         return
     record_user_log_safely(user_id, user_name, get_username(m), text, source="/chart")
-    maybe_send_tech_chart(m.chat.id, text, cmd_prefix="/chart", user_id=user_id)
+    maybe_send_tech_chart(m.chat.id, text, cmd_prefix="/chart", user_id=user_id, user_name=user_name, username=get_username(m))
 
 
 @bot.message_handler(commands=["risk"])
@@ -777,6 +789,29 @@ def on_status(m):
     reply(m, command.cmd_status(user_id))
 
 
+def reply_multi_modal(message, result):
+    """處理多模態回覆 (文字、圖片轉發)。"""
+    if result is None:
+        return
+    if isinstance(result, str):
+        reply(message, result)
+    elif isinstance(result, (list, tuple)):
+        for item in result:
+            if isinstance(item, str):
+                safe_send(message.chat.id, item)
+            elif isinstance(item, dict) and item.get("type") == "photo":
+                file_id = item.get("file_id")
+                caption = item.get("caption", "")
+                if file_id:
+                    try:
+                        bot.send_photo(message.chat.id, photo=file_id, caption=caption)
+                    except Exception as exc:
+                        logging.warning("send_photo by file_id failed: %s", exc)
+                        safe_send(message.chat.id, f"🖼️ (圖片轉發失敗，請確認 CDN 權限) {caption}")
+    else:
+        reply(message, str(result))
+
+
 @bot.message_handler(commands=["op"])
 def on_op(m):
     user_id = get_user_id(m)
@@ -784,7 +819,7 @@ def on_op(m):
     if res == "__TRIGGER_LOG__":
         on_log(m)
     else:
-        reply(m, res)
+        reply_multi_modal(m, res)
 
 
 @bot.message_handler(commands=["log"])
@@ -800,7 +835,7 @@ def on_log(m):
 def on_ulog(m):
     user_id, user_name = register_user(m)
     record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/ulog")
-    reply(m, command.cmd_ulog(m.text or "", user_id))
+    reply_multi_modal(m, command.cmd_ulog(m.text or "", user_id))
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("list_page_"))
@@ -867,11 +902,11 @@ def on_text(m):
                 send_paged_message(m.chat.id, result)
             else:
                 reply(m, result)
-            maybe_send_tech_chart(m.chat.id, text)
+            maybe_send_tech_chart(m.chat.id, text, user_id=user_id, user_name=user_name, username=get_username(m))
             return
         if lowered.startswith("/chart"):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/chart")
-            maybe_send_tech_chart(m.chat.id, text, cmd_prefix="/chart")
+            maybe_send_tech_chart(m.chat.id, text, cmd_prefix="/chart", user_id=user_id, user_name=user_name, username=get_username(m))
             return
         if lowered.startswith("/news"):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/news")

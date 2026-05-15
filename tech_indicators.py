@@ -198,7 +198,7 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
         ylabel="Price",
         ylabel_lower="Volume (K/M/B)",
         returnfig=True,
-        closefig=False,
+        closefig=True,
     )
 
     price_ax = axes[0]

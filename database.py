@@ -78,8 +78,9 @@ def record_user_interaction(
     display_name: str = "",
     username: str = "",
     source: str = "text",
+    file_id: str | None = None,
 ) -> None:
-    """寫入 7 天暫存互動紀錄。自然語言與 /ask 可附 answer；其他指令只記 question。"""
+    """寫入 7 天暫存互動紀錄。自然語言與 /ask 可附 answer；其他指令只記 question；可選附 file_id。"""
     question = (question or "").strip()
     answer = (answer or "").strip() if answer is not None else ""
     if not question:
@@ -94,6 +95,7 @@ def record_user_interaction(
         "source": source,
         "question": question[:4000],
         "answer": answer[:12000],
+        "file_id": file_id,
     }
     with USER_LOG_PATH.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(item, ensure_ascii=False) + "\n")
