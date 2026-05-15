@@ -76,10 +76,10 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
         if sell_count == 9:
             sell_markers.iloc[i] = float(df["High"].iloc[i]) * 1.005
 
+    # 成交量均線（先在原始 df 計算，確保 df_plot 截取後能完整顯示）
+    df["VOL_MA20"] = df["Volume"].rolling(window=20).mean()
     # 僅顯示最後 60 根
     df_plot = df.tail(60).copy()
-    # 成交量均線（讓量柱有基準線可參考）
-    df_plot["VOL_MA20"] = df_plot["Volume"].rolling(window=20).mean()
 
     # 灰色 VWAP 線：從更近期的趨勢底部（最近 20 根的最低 Low）開始累積
     anchor_label = df_plot["Low"].tail(20).idxmin() if len(df_plot) else None
@@ -226,11 +226,11 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
     # 在 FVG 藍色區間中間加上 FVG 字樣
     if fvg_zone:
         zl, zh = fvg_zone
-        # 標在區間右側 3/4 處，避免被 K 棒遮擋
+        # 移至圖表水平正中央
         price_ax.text(
-            len(df_plot) - 5, (zl + zh) / 2, "FVG",
+            len(df_plot) // 2, (zl + zh) / 2, "FVG",
             color="#2D6CDF", fontsize=9, weight="bold",
-            ha="right", va="center", alpha=0.7
+            ha="center", va="center", alpha=0.7
         )
 
     # 成交量座標改成 K/M/B 單位
@@ -258,10 +258,24 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
             # 使用純綠色
             support_color = "#00FF00" if theme_name == "dark" else "#0F9D58"
             price_ax.axhline(float(support_line), linestyle="--", linewidth=1.15, color=support_color, alpha=0.95)
+            # 在中間顯示標籤
+            price_ax.text(
+                len(df_plot)//2, float(support_line), "---Sup---",
+                color=support_color, ha="center", va="center",
+                fontsize=7, weight="bold", 
+                bbox=dict(facecolor="#0B1020" if theme_name == "dark" else "#FFFFFF", alpha=0.8, edgecolor="none", pad=0)
+            )
         if resistance_line is not None:
             # 使用鮮紅色
             resistance_color = "#FF0000" if theme_name == "dark" else "#DB4437"
             price_ax.axhline(float(resistance_line), linestyle="--", linewidth=1.15, color=resistance_color, alpha=0.95)
+            # 在中間顯示標籤
+            price_ax.text(
+                len(df_plot)//2, float(resistance_line), "---Res---",
+                color=resistance_color, ha="center", va="center",
+                fontsize=7, weight="bold",
+                bbox=dict(facecolor="#0B1020" if theme_name == "dark" else "#FFFFFF", alpha=0.8, edgecolor="none", pad=0)
+            )
     except Exception:
         pass
 
