@@ -220,6 +220,8 @@ def init_db() -> None:
             c.execute("ALTER TABLE users ADD COLUMN bc_timer INTEGER DEFAULT 120")
         if "last_bc_ts" not in existing_columns:
             c.execute("ALTER TABLE users ADD COLUMN last_bc_ts REAL DEFAULT 0")
+        if "chart_theme" not in existing_columns:
+            c.execute("ALTER TABLE users ADD COLUMN chart_theme TEXT DEFAULT 'dark'")
 
         conn.commit()
 
@@ -326,6 +328,23 @@ def get_user_model_preference(user_id: int) -> str:
         if row and row[0]:
             return str(row[0])
         return "flash"
+
+
+def set_user_chart_theme(user_id: int, theme: str) -> None:
+    choice = (theme or "dark").strip().lower()
+    if choice not in {"dark", "light"}:
+        choice = "dark"
+    with get_conn() as conn:
+        conn.execute("UPDATE users SET chart_theme = ? WHERE user_id = ?", (choice, user_id))
+        conn.commit()
+
+
+def get_user_chart_theme(user_id: int) -> str:
+    with get_conn() as conn:
+        row = conn.execute("SELECT chart_theme FROM users WHERE user_id = ?", (user_id,)).fetchone()
+        if row and row[0] in {"dark", "light"}:
+            return str(row[0])
+        return "dark"
 
 
 def get_user_display_name(user_id: int) -> str:

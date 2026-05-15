@@ -4,6 +4,7 @@
 
 import logging
 import io
+from datetime import datetime
 from typing import Any
 
 import numpy as np
@@ -25,8 +26,8 @@ def clear_tech_df_cache(symbol: str | None = None) -> None:
     _TECH_DF_CACHE.clear()
 
 
-def generate_tech_chart_buffer(symbol: str, dpi: int = 130) -> io.BytesIO:
-    """生成 /tech 戰術圖表（90天計算，60天顯示），回傳 BytesIO。"""
+def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark") -> io.BytesIO:
+    """生成 /tech 戰術圖表（90天計算，60天顯示），回傳 BytesIO。theme: dark|light"""
     try:
         import mplfinance as mpf
     except Exception as exc:
@@ -47,6 +48,9 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130) -> io.BytesIO:
         raise ValueError("數據不足，無法生成技術圖表")
 
     df = df.copy()
+    theme_name = (theme or "dark").strip().lower()
+    if theme_name not in {"dark", "light"}:
+        theme_name = "dark"
     df["MA20"] = df["Close"].rolling(window=20).mean()
     df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
 
@@ -74,18 +78,36 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130) -> io.BytesIO:
 
     # 僅顯示最後 60 根
     df_plot = df.tail(60).copy()
+    # 成交量均線（讓量柱有基準線可參考）
+    df_plot["VOL_MA20"] = df_plot["Volume"].rolling(window=20).mean()
+
+    # 灰色 VWAP 線：從近期趨勢底部（60根中的最低 Low）開始累積
+    anchor_label = df_plot["Low"].idxmin() if len(df_plot) else None
+    if anchor_label is None:
+        anchor_pos = 0
+    else:
+        anchor_pos = int(df_plot.index.get_loc(anchor_label))
+    vwap_series = pd.Series(np.nan, index=df_plot.index)
+    if anchor_pos < len(df_plot):
+        seg = df_plot.iloc[anchor_pos:].copy()
+        pv = (seg["Close"] * seg["Volume"]).cumsum()
+        vv = seg["Volume"].cumsum().replace(0, np.nan)
+        vwap_series.iloc[anchor_pos:] = pv / vv
+
     buy_plot = buy_markers.reindex(df_plot.index)
     sell_plot = sell_markers.reindex(df_plot.index)
 
     ap = [
-        mpf.make_addplot(df_plot["MA20"], color="yellow", width=1.2),
-        mpf.make_addplot(df_plot["EMA50"], color="pink", width=1.2),
+        mpf.make_addplot(df_plot["MA20"], color="#FFD166", width=1.35, panel=0),
+        mpf.make_addplot(df_plot["EMA50"], color="#FF4D9D", width=1.35, panel=0),
+        mpf.make_addplot(vwap_series, color="#AEB6BF", width=1.2, panel=0),
+        mpf.make_addplot(df_plot["VOL_MA20"], color="#46C2FF", width=1.1, panel=1),
     ]
     # mplfinance 在全 NaN scatter 會觸發 zero-size array 錯誤，需先判斷再加入
     if not buy_plot.isna().all():
-        ap.append(mpf.make_addplot(buy_plot, type="scatter", marker="^", color="green", markersize=70))
+        ap.append(mpf.make_addplot(buy_plot, type="scatter", marker="^", color="#7CFC00", markersize=78))
     if not sell_plot.isna().all():
-        ap.append(mpf.make_addplot(sell_plot, type="scatter", marker="v", color="red", markersize=70))
+        ap.append(mpf.make_addplot(sell_plot, type="scatter", marker="v", color="#FF5C5C", markersize=78))
 
     # 最近一組「尚未完全填補」FVG 區
     fvg_zone = None
@@ -108,26 +130,221 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130) -> io.BytesIO:
         zone_low, zone_high = fvg_zone
         y1 = np.full(len(df_plot), zone_high)
         y2 = np.full(len(df_plot), zone_low)
-        fill_between = dict(y1=y1, y2=y2, color="blue", alpha=0.2)
+        fill_between = dict(y1=y1, y2=y2, color="#2D6CDF", alpha=0.22)
 
-    mc = mpf.make_marketcolors(up="g", down="r", inherit=True)
-    style = mpf.make_mpf_style(marketcolors=mc)
+    if theme_name == "light":
+        mc = mpf.make_marketcolors(
+            up="#0F9D58",
+            down="#DB4437",
+            edge={"up": "#0F9D58", "down": "#DB4437"},
+            wick={"up": "#34A853", "down": "#EA4335"},
+            volume={"up": "#0F9D58", "down": "#DB4437"},
+            inherit=False,
+        )
+        style = mpf.make_mpf_style(
+            marketcolors=mc,
+            base_mpf_style="yahoo",
+            facecolor="#F8FAFC",
+            figcolor="#FFFFFF",
+            edgecolor="#D1D5DB",
+            gridcolor="#E5E7EB",
+            gridstyle="--",
+            y_on_right=False,
+            rc={
+                "axes.labelcolor": "#111827",
+                "axes.titlecolor": "#0F172A",
+                "xtick.color": "#334155",
+                "ytick.color": "#334155",
+                "font.size": 9,
+            },
+        )
+    else:
+        mc = mpf.make_marketcolors(
+            up="#7CFC00",
+            down="#FF5C5C",
+            edge={"up": "#7CFC00", "down": "#FF5C5C"},
+            wick={"up": "#B8FF8A", "down": "#FF9A9A"},
+            volume={"up": "#7CFC00", "down": "#FF5C5C"},
+            inherit=False,
+        )
+        style = mpf.make_mpf_style(
+            marketcolors=mc,
+            base_mpf_style="nightclouds",
+            facecolor="#0F172A",
+            figcolor="#0B1020",
+            edgecolor="#334155",
+            gridcolor="#2A3248",
+            gridstyle="--",
+            y_on_right=False,
+            rc={
+                "axes.labelcolor": "#E5E7EB",
+                "axes.titlecolor": "#F8FAFC",
+                "xtick.color": "#CBD5E1",
+                "ytick.color": "#CBD5E1",
+                "font.size": 9,
+            },
+        )
 
     buf = io.BytesIO()
     safe_dpi = max(72, min(int(dpi), 180))
-    mpf.plot(
+    fig, axes = mpf.plot(
         df_plot,
         type="candle",
         volume=True,
         style=style,
         addplot=ap,
         fill_between=fill_between,
-        title=f"{symbol} | SMC + TD9",
+        title=f"{symbol} | SMC + TD9 Tactical Chart ({theme_name})",
         ylabel="Price",
-        ylabel_lower="Volume",
-        savefig=dict(fname=buf, format="png", dpi=safe_dpi, bbox_inches="tight"),
-        closefig=True,
+        ylabel_lower="Volume (K/M/B)",
+        returnfig=True,
+        closefig=False,
     )
+
+    price_ax = axes[0]
+    vol_ax = axes[2] if len(axes) >= 3 else (axes[1] if len(axes) > 1 else axes[0])
+
+    # 左上角：出圖時間 + watermark
+    plot_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    price_ax.text(
+        0.01,
+        0.98,
+        f"Chart Time: {plot_ts}",
+        transform=price_ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=8,
+        color="white",
+        bbox=dict(facecolor="black", alpha=0.35, edgecolor="none", pad=2),
+    )
+    price_ax.text(
+        0.01,
+        0.92,
+        "TelegramBot_By_Kevin",
+        transform=price_ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=8,
+        color="lightgray",
+        alpha=0.8,
+    )
+
+    # MA/VWAP 標示
+    price_ax.text(0.99, 0.98, "MA20", transform=price_ax.transAxes, ha="right", va="top", fontsize=8, color="#FFD166", weight="bold")
+    price_ax.text(0.99, 0.93, "MA50", transform=price_ax.transAxes, ha="right", va="top", fontsize=8, color="#FF4D9D", weight="bold")
+    price_ax.text(0.99, 0.88, "VWAP(anchor)", transform=price_ax.transAxes, ha="right", va="top", fontsize=8, color="#C7CED6", weight="bold")
+
+    # 成交量座標改成 K/M/B 單位
+    from matplotlib.ticker import FuncFormatter
+
+    def _fmt_volume(y, _):
+        y = float(y)
+        ay = abs(y)
+        if ay >= 1_000_000_000:
+            return f"{y/1_000_000_000:.1f}B"
+        if ay >= 1_000_000:
+            return f"{y/1_000_000:.1f}M"
+        if ay >= 1_000:
+            return f"{y/1_000:.1f}K"
+        return f"{y:.0f}"
+
+    vol_ax.yaxis.set_major_formatter(FuncFormatter(_fmt_volume))
+
+    # TDST 支撐/壓力虛線
+    tdst = calculate_tdst_levels(df)
+    support_line = (tdst.get("support") or {}).get("price")
+    resistance_line = (tdst.get("resistance") or {}).get("price")
+    try:
+        if support_line is not None:
+            support_color = "#35D07F" if theme_name == "dark" else "#0F9D58"
+            price_ax.axhline(float(support_line), linestyle="--", linewidth=1.15, color=support_color, alpha=0.95)
+            price_ax.text(
+                0.01,
+                0.05,
+                f"TDST Support: {safe_round(float(support_line), 2)}",
+                transform=price_ax.transAxes,
+                ha="left",
+                va="bottom",
+                fontsize=8,
+                color=support_color,
+                weight="bold",
+            )
+        if resistance_line is not None:
+            resistance_color = "#FF7B7B" if theme_name == "dark" else "#DB4437"
+            price_ax.axhline(float(resistance_line), linestyle="--", linewidth=1.15, color=resistance_color, alpha=0.95)
+            price_ax.text(
+                0.01,
+                0.10,
+                f"TDST Resistance: {safe_round(float(resistance_line), 2)}",
+                transform=price_ax.transAxes,
+                ha="left",
+                va="bottom",
+                fontsize=8,
+                color=resistance_color,
+                weight="bold",
+            )
+    except Exception:
+        pass
+
+    # TD9 反色 K 線效果 + 1~9 數字標記 + 發光
+    from matplotlib.patches import Rectangle
+    import matplotlib.patheffects as pe
+
+    xvals = np.arange(len(df_plot))
+    td_buy_plot = (df_plot["Close"] < df_plot["Close"].shift(4)).astype(int)
+    td_sell_plot = (df_plot["Close"] > df_plot["Close"].shift(4)).astype(int)
+    bcnt = scnt = 0
+    for i in range(len(df_plot)):
+        bcnt = bcnt + 1 if int(td_buy_plot.iloc[i]) == 1 else 0
+        scnt = scnt + 1 if int(td_sell_plot.iloc[i]) == 1 else 0
+
+        # TD 數字（1~9）標在 K 棒上方，紅綠區分
+        if 1 <= bcnt <= 9:
+            price_ax.text(
+                xvals[i],
+                float(df_plot["High"].iloc[i]) * 1.01,
+                str(bcnt),
+                color="#FF4D4D",
+                fontsize=7.5,
+                ha="center",
+                va="bottom",
+                weight="bold",
+                bbox=dict(facecolor="#0B1020", edgecolor="none", alpha=0.75, pad=0.3),
+            ).set_path_effects([pe.withStroke(linewidth=2.6, foreground="#FFD6D6", alpha=0.9)])
+        if 1 <= scnt <= 9:
+            price_ax.text(
+                xvals[i],
+                float(df_plot["High"].iloc[i]) * 1.02,
+                str(scnt),
+                color="#7CFC00",
+                fontsize=7.5,
+                ha="center",
+                va="bottom",
+                weight="bold",
+                bbox=dict(facecolor="#0B1020", edgecolor="none", alpha=0.75, pad=0.3),
+            ).set_path_effects([pe.withStroke(linewidth=2.6, foreground="#D9FFD0", alpha=0.9)])
+
+        if bcnt == 9 or scnt == 9:
+            o = float(df_plot["Open"].iloc[i])
+            c = float(df_plot["Close"].iloc[i])
+            low = min(o, c)
+            h = abs(c - o)
+            if h == 0:
+                h = max(float(df_plot["High"].iloc[i] - df_plot["Low"].iloc[i]) * 0.1, 0.01)
+            # 上漲TD9（scnt==9）：綠框紅心；下跌TD9（bcnt==9）：紅框綠心
+            edge = "lime" if scnt == 9 else "red"
+            face = "red" if scnt == 9 else "lime"
+            rect = Rectangle((xvals[i] - 0.35, low), 0.7, h, linewidth=1.6, edgecolor=edge, facecolor=face, alpha=0.25)
+            rect.set_path_effects([pe.withStroke(linewidth=4.0, foreground=edge, alpha=0.32)])
+            price_ax.add_patch(rect)
+
+    fig.savefig(buf, format="png", dpi=safe_dpi, bbox_inches="tight")
+    try:
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+    except Exception:
+        pass
     buf.seek(0)
     return buf
 

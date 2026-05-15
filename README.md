@@ -142,6 +142,8 @@ gemini_stock_bot_full/
 ## B. Deep Analysis
 - `/tech [symbol]`：技術結構與訊號
 - `/tech [symbol]`：除文字分析外，額外回傳 SMC + TD 戰術 K 線圖（90天計算、60天顯示）
+- `/chart [symbol]`：直接輸出戰術圖（套用個人預設主題）
+- `/chart theme [dark|light]`：設定你的圖表預設主題（寫入 DB）
 - `/tech compare A B [C]`：多標的技術面比較（AI 失敗時自動 fallback 至比較報表）
 - `/fin [symbol]`：財報與估值快照
 - `/fin compare A B [C]`：多標的比較
@@ -167,7 +169,7 @@ gemini_stock_bot_full/
 | Domain | Commands |
 |---|---|
 | Market | `/now`, `/risk`, `/marco`, `/news`, `/theme` |
-| Analysis | `/tech`, `/tech compare`, `/fin`, `/fin compare`, `/whale`, `/ask` |
+| Analysis | `/tech`, `/chart`, `/chart theme`, `/tech compare`, `/fin`, `/fin compare`, `/whale`, `/ask` |
 | Portfolio | `/buy`, `/sell`, `/list`, `/watch ...`, `/sweep ...` |
 | System | `/status`, `/quota`, `/bc ...`, `/help`, `/op ...`, `/ulog ...` |
 
@@ -253,6 +255,16 @@ python3 -m py_compile main_bot.py command.py frame.py market_api.py ai_core.py b
   - 使用 `io.BytesIO()`，不落地檔案
   - `mpf.plot(..., closefig=True)` 強制釋放畫布
   - Telegram 發送採 `try...finally`，在 `finally` 內 `buf.close()`
+
+### /chart 指令教學與錯誤回覆
+
+- 正常用法：
+  - `/chart NVDA`
+  - `/chart theme dark`
+  - `/chart theme light`
+- 若 `/chart` 未帶代號，bot 會自動回覆教學訊息。
+- 若代號格式錯誤（非英數），bot 會回覆錯誤提示並給範例。
+- 主題偏好會儲存在 `users.chart_theme`，後續 `/chart [代號]` 自動套用。
 
 ---
 

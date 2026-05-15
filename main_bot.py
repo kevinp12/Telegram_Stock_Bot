@@ -212,19 +212,32 @@ def reply(message, text: str | list[str], parse_mode: str | None = "Markdown", r
     return safe_send(message.chat.id, text, parse_mode=parse_mode, reply_markup=reply_markup)
 
 
-def maybe_send_tech_chart(chat_id: int, text: str) -> None:
-    """僅在 /tech 單一代號模式時發送戰術圖表。"""
+def maybe_send_tech_chart(
+    chat_id: int,
+    text: str,
+    cmd_prefix: str = "/tech",
+    *,
+    user_id: int | None = None,
+    theme_override: str | None = None,
+) -> None:
+    """在 /tech 或 /chart 單一代號模式時發送戰術圖表。"""
     parts = (text or "").split()
     if len(parts) < 2:
         return
 
     sub = parts[1].strip().lower()
-    if sub in {"compare", "help"}:
+    if cmd_prefix == "/tech" and sub in {"compare", "help"}:
         return
     if len(parts) != 2:
         return
 
     symbol = parts[1].strip().upper()
+    if theme_override in {"dark", "light"}:
+        theme = str(theme_override)
+    elif user_id is not None:
+        theme = database.get_user_chart_theme(int(user_id))
+    else:
+        theme = "dark"
     if not symbol:
         return
 
@@ -241,8 +254,8 @@ def maybe_send_tech_chart(chat_id: int, text: str) -> None:
         ram_now = psutil.virtual_memory().percent
         # 超載保護：高 CPU / RAM 時降低圖表 DPI，減少運算與記憶體壓力
         dpi = 100 if (cpu_now >= 70 or ram_now >= 80) else 130
-        buf = tech_indicators.generate_tech_chart_buffer(symbol, dpi=dpi)
-        bot.send_photo(chat_id, photo=buf, caption=f"📊 {symbol} SMC & TD 戰術圖表")
+        buf = tech_indicators.generate_tech_chart_buffer(symbol, dpi=dpi, theme=theme)
+        bot.send_photo(chat_id, photo=buf, caption=f"📊 {symbol} SMC & TD 戰術圖表｜Theme: {theme}")
         _TECH_CHART_LAST_TS[key] = now_ts
     except Exception as exc:
         logging.warning("maybe_send_tech_chart failed for %s: %s", symbol, exc)
@@ -283,6 +296,7 @@ def setup_bot_commands() -> None:
         telebot.types.BotCommand("fin", "📊 個股財報與 EPS"),
         telebot.types.BotCommand("whale", "🐋 大鯨魚/內部人追蹤"),
         telebot.types.BotCommand("tech", "📊 專業量化分析"),
+        telebot.types.BotCommand("chart", "🖼️ 戰術圖表（含主題設定）"),
         telebot.types.BotCommand("risk", "🛡️ 市場風險雷達"),
         telebot.types.BotCommand("marco", "📊 宏觀數據雷達"),
         telebot.types.BotCommand("sweep", "🎯 狙擊監控管理"),
@@ -537,6 +551,40 @@ def on_tech(m):
     else:
         safe_send(m.chat.id, result)
     maybe_send_tech_chart(m.chat.id, m.text or "")
+
+
+@bot.message_handler(commands=["chart"])
+def on_chart(m):
+    user_id, user_name = register_user(m)
+    text = (m.text or "").strip()
+    parts = text.split()
+    if len(parts) == 3 and parts[1].strip().lower() == "theme":
+        choice = parts[2].strip().lower()
+        if choice not in {"dark", "light"}:
+            reply(m, "❌ 主題僅支援 `dark` 或 `light`。\n例如：`/chart theme dark`")
+            return
+        database.set_user_chart_theme(user_id, choice)
+        reply(m, f"✅ 圖表主題已更新為：`{choice}`\n之後使用 `/chart [代號]` 會自動套用此主題。")
+        return
+
+    if len(parts) != 2:
+        current_theme = database.get_user_chart_theme(user_id)
+        reply(
+            m,
+            "📘 `/chart` 指令教學\n"
+            "━━━━━━━━━━━━━━\n"
+            f"• 目前主題：`{current_theme}`\n"
+            "• `/chart [代號]`：輸出戰術圖\n"
+            "• `/chart theme [dark|light]`：切換預設主題\n"
+            "例如：`/chart NVDA`、`/chart theme light`",
+        )
+        return
+    symbol = parts[1].strip().upper()
+    if not symbol.isalnum():
+        reply(m, "❌ 代號格式錯誤，請輸入英數代號，例如：`/chart NVDA`")
+        return
+    record_user_log_safely(user_id, user_name, get_username(m), text, source="/chart")
+    maybe_send_tech_chart(m.chat.id, text, cmd_prefix="/chart", user_id=user_id)
 
 
 @bot.message_handler(commands=["risk"])
@@ -820,6 +868,10 @@ def on_text(m):
             else:
                 reply(m, result)
             maybe_send_tech_chart(m.chat.id, text)
+            return
+        if lowered.startswith("/chart"):
+            record_user_log_safely(user_id, user_name, get_username(m), text, source="/chart")
+            maybe_send_tech_chart(m.chat.id, text, cmd_prefix="/chart")
             return
         if lowered.startswith("/news"):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/news")

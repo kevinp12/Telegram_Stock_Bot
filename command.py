@@ -1151,12 +1151,15 @@ def cmd_status(user_id: int) -> list[str]:
         brain_status += "\n\n• ⚠️ 狀態補充：目前為 API 配額受限（429），核心可用但暫時無法生成新回覆。"
 
     model_pref = database.get_user_model_preference(user_id)
+    chart_theme = database.get_user_chart_theme(user_id)
+    chart_theme_text = "暗黑" if chart_theme == "dark" else "明亮"
     bc_active, bc_timer, _ = database.get_bc_settings(user_id)
     sweep_count = len(database.get_sniper_list(user_id))
     watch_count = len(database.get_watchlist(user_id))
     brain_status = (
         f"{brain_status}\n\n"
         f"• 🤖 模型偏好：`{model_pref}`\n"
+        f"• 🖼️ 圖表主題：`{chart_theme_text}`\n"
         f"  (⚡ Flash: 快速問答 | 🧠 Pro: 深度推理)\n\n"
         f"• 📢 自動推播：{'✅ 開啟' if bc_active else '❌ 關閉'} (每 {bc_timer} 分)\n"
         f"• 👀 雷達監控數：`{watch_count}`\n"
