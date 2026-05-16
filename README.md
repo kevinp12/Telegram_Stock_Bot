@@ -146,7 +146,9 @@ gemini_stock_bot_full/
 - `/chart theme [dark|light]`：設定後續圖表預設主題
 - `/tech compare A B [C]`：多標的技術面比較（AI 失敗時自動 fallback 至比較報表）
 - `/fin [symbol]`：財報與估值快照
-- `/fin compare A B [C]`：多標的比較
+- `/fin [symbol]`：會在文字報告後自動嘗試附上財報圖（營收/淨利/淨利率/QoQ）
+- `/fin chart [symbol]`：直接輸出財報圖；若失敗會回覆明確原因（資料不足或錯誤訊息）
+- `/fin compare A B [C]`：多標的比較（文字 + 合併對比圖）
 - `/whale [symbol]`：內部人/機構動向
 - `/ask [symbol] [question]`：任意深度問答
 
@@ -169,7 +171,7 @@ gemini_stock_bot_full/
 | Domain | Commands |
 |---|---|
 | Market | `/now`, `/risk`, `/marco`, `/news` |
-| Analysis | `/tech`, `/chart`, `/chart theme`, `/tech compare`, `/fin`, `/fin compare`, `/whale`, `/ask` |
+| Analysis | `/tech`, `/chart`, `/chart theme`, `/tech compare`, `/fin`, `/fin chart`, `/fin compare`, `/whale`, `/ask` |
 | Portfolio | `/buy`, `/sell`, `/list`, `/watch ...`, `/sweep ...` |
 | System | `/status`, `/quota`, `/bc ...`, `/help`, `/op ...`, `/ulog ...` |
 
@@ -266,6 +268,18 @@ python3 -m py_compile main_bot.py command.py frame.py market_api.py ai_core.py b
   - `/chart theme light`
 - 若 `/chart` 未帶代號，bot 會自動回覆教學訊息。
 - 若代號格式錯誤（非英數），bot 會回覆錯誤提示並給範例。
+
+### /fin 圖表功能（近期更新）
+
+- `/fin [symbol]`：回覆財務分析後，自動嘗試傳送財報圖。
+- `/fin chart [symbol]`：強制要求傳圖，若失敗會回覆具體原因。
+- `/fin compare A B [C]`：除了比較文字，還會附上合併對比圖。
+- 針對 NaN/inf 財報欄位已做清洗，降低個股（如 AMD）出圖失敗機率。
+
+### Theme 功能說明
+
+- 已移除新聞主題池常數 `TECH_THEMES`（你先前指定刪除的 theme 功能）。
+- `/chart` 的 `dark/light` 仍保留，屬於圖表視覺主題，與新聞主題池不同。
 
 ---
 

@@ -73,21 +73,6 @@ def fetch_batch_quotes(symbols: list[str]) -> dict[str, float]:
         return {}
 
 
-# 擴充的科技與未來趨勢主題池
-TECH_THEMES = {
-    "AI": "Artificial Intelligence OR Nvidia OR OpenAI",
-    "半導體": "Semiconductor OR TSMC OR AMD",
-    "電動車": "EV OR Tesla OR Autonomous Driving",
-    "機器人": "Robotics OR Optimus OR Humanoid",
-    "火箭": "SpaceX OR Rocket Lab OR Aerospace OR Space Exploration",
-    "光電": "Solar Energy OR Optoelectronics OR Enphase OR First Solar",
-    "未來APP": "Web3 OR Decentralized App OR Spatial Computing OR AR VR",
-    "能源": "Renewable Energy OR Clean Energy OR Grid Storage",
-    "核能": "Nuclear Energy OR Uranium OR SMR OR Constellation Energy",
-    "資安": "Cybersecurity OR Palo Alto Networks OR CrowdStrike OR Fortinet",
-}
-
-
 def fetch_tech_rss(limit: int = 5) -> list[dict[str, str]]:
     rss_urls = [
         ("CNBC Tech", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19854910"),
@@ -870,9 +855,20 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
     setup_matplotlib_cjk_font(mpl)
 
     labels = [r["quarter"] for r in rows]
-    revs = [r["revenue"] if isinstance(r.get("revenue"), (int, float)) else 0.0 for r in rows]
-    net_income = [r["net_income"] if isinstance(r.get("net_income"), (int, float)) else 0.0 for r in rows]
-    margins = [r["net_margin"] if isinstance(r.get("net_margin"), (int, float)) else 0.0 for r in rows]
+
+    def _safe_num(v: Any, default: float = 0.0) -> float:
+        """把 None/NaN/inf 轉成可繪圖安全數值，避免 matplotlib 崩潰。"""
+        try:
+            n = float(v)
+            if np.isnan(n) or np.isinf(n):
+                return default
+            return n
+        except Exception:
+            return default
+
+    revs = [_safe_num(r.get("revenue"), 0.0) for r in rows]
+    net_income = [_safe_num(r.get("net_income"), 0.0) for r in rows]
+    margins = [_safe_num(r.get("net_margin"), 0.0) for r in rows]
 
     def _pct(curr: float, prev: float) -> str:
         if prev == 0:
@@ -980,7 +976,7 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
     # fallback：若取不到組成，改用近一年營收占比
     if not pie_vals:
         pie_labels = labels
-        pie_vals = [abs(v) if isinstance(v, (int, float)) and v != 0 else 0.0 for v in revs]
+        pie_vals = [abs(_safe_num(v, 0.0)) for v in revs]
 
     total = sum(pie_vals)
     if total <= 0:
