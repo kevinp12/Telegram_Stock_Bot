@@ -19,6 +19,8 @@ BOT_START_TIME = datetime.now()
 
 # Paths
 DB_NAME = os.getenv("DB_NAME", str(BASE_DIR / "sniper_trades.db"))
+# CJK Font directory (for GCP/Docker portable font loading)
+CJK_FONT_DIR = os.getenv("CJK_FONT_DIR", str(BASE_DIR / "fonts")).strip()
 
 # Telegram
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()

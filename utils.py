@@ -1,8 +1,12 @@
+import os
 from decimal import ROUND_HALF_UP, Decimal
+from pathlib import Path
 from typing import Any
 
 
 _CJK_FONT_CANDIDATES = [
+    "Noto Sans CJK TC",
+    "Noto Sans TC",
     "Heiti TC",
     "PingFang HK",
     "PingFang TC",
@@ -12,10 +16,48 @@ _CJK_FONT_CANDIDATES = [
 ]
 
 
+_PROJECT_ROOT = Path(__file__).resolve().parent
+_PROJECT_FONT_DIRS = [
+    _PROJECT_ROOT / "fonts",
+    _PROJECT_ROOT / "assets" / "fonts",
+]
+
+
+def _register_project_fonts() -> None:
+    """註冊專案內可攜式字型，讓 GCP 無系統字型時仍可顯示中文。"""
+    try:
+        from matplotlib import font_manager as fm
+
+        extra_font_dir = os.getenv("CJK_FONT_DIR", "").strip()
+        font_dirs = list(_PROJECT_FONT_DIRS)
+        if extra_font_dir:
+            font_dirs.insert(0, Path(extra_font_dir))
+
+        loaded = 0
+        for font_dir in font_dirs:
+            if not font_dir.exists() or not font_dir.is_dir():
+                continue
+            for ext in ("*.ttf", "*.otf", "*.ttc"):
+                for fp in font_dir.glob(ext):
+                    try:
+                        fm.fontManager.addfont(str(fp))
+                        loaded += 1
+                    except Exception:
+                        continue
+
+        if loaded > 0:
+            # 重新建立字型清單快取，確保本次進程立即可用
+            fm._load_fontmanager(try_read_cache=False)
+    except Exception:
+        pass
+
+
 def _pick_available_cjk_font() -> str:
     """挑選目前環境真的存在的 CJK 字型名稱。"""
     try:
         from matplotlib import font_manager as fm
+
+        _register_project_fonts()
 
         available = {f.name for f in fm.fontManager.ttflist}
         for name in _CJK_FONT_CANDIDATES:

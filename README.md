@@ -223,6 +223,28 @@ MAX_TELEGRAM_MESSAGE_LENGTH=3500
 python3 main_bot.py
 ```
 
+## 5) GCP 中文字型部署（重要）
+
+若你在本機有中文、但 GCP 圖表中文變方塊/空白，請把字型一起打包：
+
+1. 放入字型檔到專案：`fonts/`
+   - 例如：`fonts/NotoSansCJKtc-Regular.otf`
+2. 部署時確保 `fonts/` 目錄被一起上傳
+3. （可選）用環境變數指定字型路徑：
+
+```bash
+export CJK_FONT_DIR=/app/fonts
+```
+
+目前程式會依序嘗試：
+
+1. `CJK_FONT_DIR`
+2. `./fonts`
+3. `./assets/fonts`
+4. 系統字型 fallback
+
+這樣即使 GCP 沒有系統中文字型，也能正常渲染 `/tech`、`/fin` 圖表中文。
+
 ---
 
 ## 🔄 Background Jobs

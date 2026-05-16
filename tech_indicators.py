@@ -225,8 +225,7 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
         )
 
     buf = io.BytesIO()
-    # 目標接近 4K：16x9 inch * 240 dpi ≈ 3840x2160
-    safe_dpi = 240
+    safe_dpi = 300
     fig, axes = mpf.plot(
         df_plot,
         type="candle",
@@ -237,7 +236,6 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
         title=f"📊 {symbol} 戰術圖",
         ylabel="價格",
         ylabel_lower="成交量",
-        figsize=(16, 9),
         returnfig=True,
         closefig=True,
     )
@@ -393,8 +391,7 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
     except Exception:
         pass
 
-    # 不使用 tight 裁切，確保接近 4K 輸出尺寸
-    fig.savefig(buf, format="png", dpi=safe_dpi)
+    fig.savefig(buf, format="png", dpi=safe_dpi, bbox_inches="tight")
     try:
         import matplotlib.pyplot as plt
 
