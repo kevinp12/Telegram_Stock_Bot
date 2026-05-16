@@ -854,7 +854,7 @@ def generate_professional_chart(df: pd.DataFrame, symbol: str, theme: str = "dar
         t.set_color(fg_color)
         t.set_bbox(dict(facecolor=badge_bg, alpha=(0.72 if is_light else 0.45), edgecolor='none', boxstyle='round,pad=0.2'))
 
-    ax0.set_title(f"🍩 {symbol} 營收結構拆解", fontsize=23, fontweight='bold', pad=18, color=fg_color)
+    ax0.set_title(f"{symbol} 營收結構拆解", fontsize=23, fontweight='bold', pad=18, color=fg_color)
     ax0.text(
         0,
         0,
