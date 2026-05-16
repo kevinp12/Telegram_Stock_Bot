@@ -931,8 +931,18 @@ def generate_fin_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO | 
     ax1.set_xticks(x)
     ax1.set_xticklabels(labels)
     ax1.title.set_color(text_color)
-    ax1.legend(facecolor=ax_facecolor, edgecolor=spine_color, labelcolor=text_color)
     ax1.grid(axis="y", linestyle="--", alpha=0.3, color=grid_color)
+
+    # 加入四個季度的平均線
+    avg_rev = np.mean(revs) if revs else 0
+    avg_ni = np.mean(net_income) if net_income else 0
+    
+    if avg_rev > 0:
+        ax1.axhline(avg_rev, color="#A78BFA", linestyle=":", linewidth=1.2, label=f"Avg Rev: {format_number(avg_rev)}")
+    if avg_ni > 0:
+        ax1.axhline(avg_ni, color="#F472B6", linestyle=":", linewidth=1.2, label=f"Avg NI: {format_number(avg_ni)}")
+
+    ax1.legend(facecolor=ax_facecolor, edgecolor=spine_color, labelcolor=text_color, loc="upper left", fontsize=8)
 
     for i, b in enumerate(bars1):
         pct_color = positive_color if str(rev_pct[i]).startswith("+") else negative_color if str(rev_pct[i]).startswith("-") else text_color
