@@ -279,6 +279,30 @@ def maybe_send_tech_chart(
             pass
 
 
+def maybe_send_fin_chart(chat_id: int, text: str) -> None:
+    """單一代號 /fin 時附加三季財報圖（記憶體串流，不落地）。"""
+    parts = (text or "").split()
+    if len(parts) != 2:
+        return
+    if parts[0].lower() != "/fin" or parts[1].strip().lower() == "compare":
+        return
+    symbol = parts[1].strip().upper()
+    if not symbol:
+        return
+    try:
+        fin_buf = command.market_api.generate_fin_chart_buffer(symbol)
+        if fin_buf is None:
+            safe_send(chat_id, f"ℹ️ {symbol} 近三季財報資料不足，暫時無法出圖。")
+            return
+        bot.send_photo(chat_id, photo=fin_buf, caption=f"📊 {symbol} 近三季財報棒狀圖（含 QoQ 變化%）")
+        try:
+            fin_buf.close()
+        except Exception:
+            pass
+    except Exception as exc:
+        logging.warning("send fin chart failed: %s", exc)
+
+
 def run_with_loading(message, loading_text: str, task_fn, error_prefix: str = "處理失敗"):
     """統一 loading 訊息顯示/刪除與錯誤回覆流程。"""
     loading = reply(message, loading_text)
@@ -710,21 +734,7 @@ def on_fin(m):
     else:
         reply(m, result)
 
-    # 單一代號 /fin 額外附上近三季財報棒狀圖（不落地）
-    try:
-        parts = (text or "").split()
-        is_single_symbol = len(parts) == 2 and parts[1].strip().lower() != "compare"
-        if is_single_symbol:
-            symbol = parts[1].strip().upper()
-            fin_buf = command.market_api.generate_fin_chart_buffer(symbol)
-            if fin_buf is not None:
-                bot.send_photo(m.chat.id, photo=fin_buf, caption=f"📊 {symbol} 近三季財報棒狀圖（含 QoQ 變化%）")
-                try:
-                    fin_buf.close()
-                except Exception:
-                    pass
-    except Exception as exc:
-        logging.warning("send fin chart failed: %s", exc)
+    maybe_send_fin_chart(m.chat.id, text)
 
 
 @bot.message_handler(commands=["whale"])
@@ -941,6 +951,7 @@ def on_text(m):
                 send_paged_message(m.chat.id, result)
             else:
                 reply(m, result)
+            maybe_send_fin_chart(m.chat.id, text)
             return
         if lowered.startswith("/whale"):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/whale")

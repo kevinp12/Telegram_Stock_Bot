@@ -775,18 +775,41 @@ def get_recent_quarterly_financials(symbol: str, limit: int = 3) -> list[dict[st
     try:
         q = ticker.quarterly_earnings
         if q is None or getattr(q, "empty", True):
-            return []
-        q = q.tail(limit)
-        for idx, row in q.iterrows():
-            revenue = row.get("Revenue")
-            eps = row.get("Earnings")
-            rows.append(
-                {
-                    "quarter": str(idx)[:10],
-                    "revenue": float(revenue) if isinstance(revenue, (int, float)) else None,
-                    "eps": float(eps) if isinstance(eps, (int, float)) else None,
-                }
-            )
+            q = None
+        if q is not None and not getattr(q, "empty", True):
+            q = q.tail(limit)
+            for idx, row in q.iterrows():
+                revenue = row.get("Revenue")
+                eps = row.get("Earnings")
+                rows.append(
+                    {
+                        "quarter": str(idx)[:10],
+                        "revenue": float(revenue) if isinstance(revenue, (int, float)) else None,
+                        "eps": float(eps) if isinstance(eps, (int, float)) else None,
+                    }
+                )
+
+        # fallback：某些標的 quarterly_earnings 會空，改從 quarterly_income_stmt 補資料
+        if not rows:
+            qis = getattr(ticker, "quarterly_income_stmt", None)
+            if qis is not None and not getattr(qis, "empty", True):
+                cols = list(qis.columns)[-limit:]
+                for c in cols:
+                    rev = None
+                    eps = None
+                    for key in ["Total Revenue", "Operating Revenue", "Revenue"]:
+                        if key in qis.index:
+                            v = qis.loc[key, c]
+                            if isinstance(v, (int, float)):
+                                rev = float(v)
+                                break
+                    for key in ["Diluted EPS", "Basic EPS", "Normalized EPS"]:
+                        if key in qis.index:
+                            v = qis.loc[key, c]
+                            if isinstance(v, (int, float)):
+                                eps = float(v)
+                                break
+                    rows.append({"quarter": str(c)[:10], "revenue": rev, "eps": eps})
     except Exception as exc:
         logging.debug("get_recent_quarterly_financials failed for %s: %s", symbol, exc)
         return []
