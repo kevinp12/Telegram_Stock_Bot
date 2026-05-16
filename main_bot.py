@@ -220,7 +220,6 @@ def maybe_send_tech_chart(
     cmd_prefix: str = "/tech",
     *,
     user_id: int | None = None,
-    theme_override: str | None = None,
     user_name: str = "User",
     username: str = "",
 ) -> None:
@@ -236,12 +235,7 @@ def maybe_send_tech_chart(
         return
 
     symbol = parts[1].strip().upper()
-    if theme_override in {"dark", "light"}:
-        theme = str(theme_override)
-    elif user_id is not None:
-        theme = database.get_user_chart_theme(int(user_id))
-    else:
-        theme = "dark"
+    theme = "dark"
     if not symbol:
         return
 
@@ -262,7 +256,7 @@ def maybe_send_tech_chart(
         buf = tech_indicators.generate_tech_chart_buffer(symbol, dpi=dpi, theme=theme)
         
         # 發送圖表並提取 file_id
-        msg = bot.send_photo(chat_id, photo=buf, caption=f"📊 {symbol} SMC & TD 戰術圖表｜Theme: {theme}")
+        msg = bot.send_photo(chat_id, photo=buf, caption=f"📊 {symbol} SMC & TD 戰術圖表")
         
         # 紀錄 Log (包含 file_id)
         if user_id:
@@ -304,12 +298,11 @@ def setup_bot_commands() -> None:
     commands = [
         telebot.types.BotCommand("now", "⚡ 即時全景 + 總損益"),
         telebot.types.BotCommand("list", "📋 持股詳細明細"),
-        telebot.types.BotCommand("theme", "🚀 產業趨勢速報"),
         telebot.types.BotCommand("news", "📰 即時新聞與市場報告"),
         telebot.types.BotCommand("fin", "📊 個股財報與 EPS"),
         telebot.types.BotCommand("whale", "🐋 大鯨魚/內部人追蹤"),
         telebot.types.BotCommand("tech", "📊 專業量化分析"),
-        telebot.types.BotCommand("chart", "🖼️ 戰術圖表（含主題設定）"),
+        telebot.types.BotCommand("chart", "🖼️ 戰術圖表"),
         telebot.types.BotCommand("risk", "🛡️ 市場風險雷達"),
         telebot.types.BotCommand("marco", "📊 宏觀數據雷達"),
         telebot.types.BotCommand("sweep", "🎯 狙擊監控管理"),
@@ -571,25 +564,13 @@ def on_chart(m):
     user_id, user_name = register_user(m)
     text = (m.text or "").strip()
     parts = text.split()
-    if len(parts) == 3 and parts[1].strip().lower() == "theme":
-        choice = parts[2].strip().lower()
-        if choice not in {"dark", "light"}:
-            reply(m, "❌ 主題僅支援 `dark` 或 `light`。\n例如：`/chart theme dark`")
-            return
-        database.set_user_chart_theme(user_id, choice)
-        reply(m, f"✅ 圖表主題已更新為：`{choice}`\n之後使用 `/chart [代號]` 會自動套用此主題。")
-        return
-
     if len(parts) != 2:
-        current_theme = database.get_user_chart_theme(user_id)
         reply(
             m,
             "📘 `/chart` 指令教學\n"
             "━━━━━━━━━━━━━━\n"
-            f"• 目前主題：`{current_theme}`\n"
             "• `/chart [代號]`：輸出戰術圖\n"
-            "• `/chart theme [dark|light]`：切換預設主題\n"
-            "例如：`/chart NVDA`、`/chart theme light`",
+            "例如：`/chart NVDA`",
         )
         return
     symbol = parts[1].strip().upper()
@@ -686,19 +667,6 @@ def on_sweep(m):
     reply(m, command.cmd_sweep(m.text or "", user_id))
 
 
-@bot.message_handler(commands=["theme"])
-def on_theme(m):
-    user_id, user_name = register_user(m)
-    result = run_with_loading(
-        m,
-        "🚀 正在整理產業趨勢速報，請稍候...",
-        lambda: command.cmd_theme(m.text or "", user_name, user_id),
-        error_prefix="產業趨勢速報產生失敗",
-    )
-    if result is not None:
-        reply(m, result)
-
-
 @bot.message_handler(commands=["news"])
 def on_news(m):
     user_id, user_name = register_user(m)
@@ -741,6 +709,22 @@ def on_fin(m):
         send_paged_message(m.chat.id, result)
     else:
         reply(m, result)
+
+    # 單一代號 /fin 額外附上近三季財報棒狀圖（不落地）
+    try:
+        parts = (text or "").split()
+        is_single_symbol = len(parts) == 2 and parts[1].strip().lower() != "compare"
+        if is_single_symbol:
+            symbol = parts[1].strip().upper()
+            fin_buf = command.market_api.generate_fin_chart_buffer(symbol)
+            if fin_buf is not None:
+                bot.send_photo(m.chat.id, photo=fin_buf, caption=f"📊 {symbol} 近三季財報棒狀圖（含 QoQ 變化%）")
+                try:
+                    fin_buf.close()
+                except Exception:
+                    pass
+    except Exception as exc:
+        logging.warning("send fin chart failed: %s", exc)
 
 
 @bot.message_handler(commands=["whale"])

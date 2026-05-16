@@ -26,6 +26,50 @@ def clear_tech_df_cache(symbol: str | None = None) -> None:
     _TECH_DF_CACHE.clear()
 
 
+def get_volume_price_judgement(df: pd.DataFrame) -> str:
+    """量價評斷（9分類）。以明顯漲跌與量能起伏作判斷。"""
+    if df is None or len(df) < 3:
+        return "價平量平"
+
+    close_now = float(df["Close"].iloc[-1])
+    close_prev = float(df["Close"].iloc[-2])
+    vol_now = float(df["Volume"].iloc[-1])
+    vol_prev = float(df["Volume"].iloc[-2])
+    vol_avg20 = float(df["Volume"].tail(20).mean() or 0)
+
+    # 價格：用日變動率判定「漲/跌/平」，避免微幅雜訊
+    price_pct = ((close_now - close_prev) / close_prev * 100) if close_prev else 0.0
+    if price_pct >= 0.2:
+        price_state = "漲"
+    elif price_pct <= -0.2:
+        price_state = "跌"
+    else:
+        price_state = "平"
+
+    # 成交量：同時看「相對昨量」+「相對20日均量」
+    vol_ratio_prev = (vol_now / vol_prev) if vol_prev > 0 else 1.0
+    vol_ratio_avg = (vol_now / vol_avg20) if vol_avg20 > 0 else 1.0
+    if vol_ratio_prev >= 1.08 and vol_ratio_avg >= 1.0:
+        vol_state = "增"
+    elif vol_ratio_prev <= 0.92 and vol_ratio_avg <= 1.0:
+        vol_state = "縮"
+    else:
+        vol_state = "平"
+
+    mapping = {
+        ("漲", "增"): "價漲量漲",
+        ("漲", "縮"): "價漲量縮",
+        ("漲", "平"): "價漲量平",
+        ("跌", "增"): "價跌量增",
+        ("跌", "縮"): "價跌量縮",
+        ("跌", "平"): "價跌量平",
+        ("平", "增"): "價平量增",
+        ("平", "縮"): "價平量縮",
+        ("平", "平"): "價平量平",
+    }
+    return mapping.get((price_state, vol_state), "價平量平")
+
+
 def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark") -> io.BytesIO:
     """生成 /tech 戰術圖表（90天計算，60天顯示），回傳 BytesIO。theme: dark|light"""
     try:
@@ -218,10 +262,12 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
         color="white",
         bbox=dict(facecolor="black", alpha=0.5, edgecolor="none", pad=2),
     )
-    # 將 MA/VWAP 標籤移至左上角
+    # 將 MA/VWAP/量價評斷 標籤移至左上角
+    vp_judgement = get_volume_price_judgement(df_plot)
     price_ax.text(0.01, 0.92, "MA20", transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#FFD166", weight="bold")
     price_ax.text(0.01, 0.87, "EMA50", transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#FF4D9D", weight="bold")
     price_ax.text(0.01, 0.82, "VWAP (anchor)", transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#C7CED6", weight="bold")
+    price_ax.text(0.01, 0.77, vp_judgement, transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#7DD3FC", weight="bold")
 
     # 在 FVG 藍色區間中間加上 FVG 字樣
     if fvg_zone:
@@ -723,6 +769,7 @@ def calculate_indicators(symbol: str) -> dict[str, Any]:
         vol_last = df["Volume"].iloc[-1]
         vol_avg20 = df["Volume"].tail(20).mean()
         vol_ratio = vol_last / vol_avg20 if vol_avg20 > 0 else 0
+        volume_price_judgement = get_volume_price_judgement(df)
 
         # 6. TD9 (Tom DeMark Sequential)
         df["TD_Buy"] = (df["Close"] < df["Close"].shift(4)).astype(int)
@@ -881,6 +928,7 @@ def calculate_indicators(symbol: str) -> dict[str, Any]:
             "resistance": safe_round(resistance, 2),
             "poc": poc,
             "vol_ratio": safe_round(vol_ratio, 2),
+            "volume_price_judgement": volume_price_judgement,
             "target_1": safe_round(target_1, 2),
             "target_1618": safe_round(target_1618, 2),
             "tp_targets": {"tp1": safe_round(tp_target_1, 2), "tp2": safe_round(tp_target_2, 2), "tp_fib": safe_round(tp_fib, 2)},

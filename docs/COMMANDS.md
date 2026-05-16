@@ -15,11 +15,9 @@
 | `/risk` | 風險儀表板 | `main_bot.on_risk` → `command.cmd_risk` |
 | `/marco` | 宏觀雷達（CPI/PCE/PPI/NFP...） | `main_bot.on_marco` → `command.cmd_marco` |
 | `/tech` | 技術與 SMC | `main_bot.on_tech` → `command.cmd_tech` |
-| `/chart [代號]` | 輸出戰術圖（採用使用者預設主題） | `main_bot.on_chart` → `main_bot.maybe_send_tech_chart` |
-| `/chart theme [dark\|light]` | 設定個人圖表預設主題（寫入 users.chart_theme） | `main_bot.on_chart` → `database.set_user_chart_theme` |
+| `/chart [代號]` | 輸出戰術圖 | `main_bot.on_chart` → `main_bot.maybe_send_tech_chart` |
 | `/fin` | 財務分析 | `main_bot.on_fin` → `command.cmd_fin` |
 | `/news` | 新聞與 AI 解讀 | `main_bot.on_news` → `command.cmd_news` |
-| `/theme` | 主題趨勢快報 | `main_bot.on_theme` → `command.cmd_theme` |
 | `/whale` | 內部人/機構追蹤 | `main_bot.on_whale` → `command.cmd_whale` |
 | `/ask` | 深度問答 | `main_bot.on_ask` → `command.cmd_ask` |
 | `/buy` `/sell` `/list` | 持倉管理 | `command.cmd_buy/sell/list` |

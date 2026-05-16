@@ -570,6 +570,57 @@ def cmd_risk(user_id: int | None = None, user_name: str = "User") -> str:
     if not risk_notes:
         risk_notes.append("目前風險訊號中性，仍需觀察指數與波動率是否同步轉弱。")
 
+    risk_score = 0
+    if sp_pct <= -1:
+        risk_score += 2
+    elif sp_pct < 0:
+        risk_score += 1
+    if ndx_pct <= -1:
+        risk_score += 2
+    elif ndx_pct < 0:
+        risk_score += 1
+    if isinstance(vix_price, (int, float)):
+        if vix_price >= 25:
+            risk_score += 4
+        elif vix_price >= 20:
+            risk_score += 3
+        elif vix_price >= 18:
+            risk_score += 2
+        elif vix_price >= 15:
+            risk_score += 1
+    if isinstance(vix_diff, (int, float)) and vix_diff > 0:
+        risk_score += 1
+    try:
+        fg_val = float(fg.get("value"))
+        if fg_val <= 25:
+            risk_score += 2
+        elif fg_val >= 75:
+            risk_score += 1
+    except Exception:
+        pass
+
+    if risk_score >= 8:
+        risk_level = "🔴 高風險"
+        action_plan = [
+            "降低總倉位與槓桿，避免追價。",
+            "新單改分批進場，停損與倉控務必先定義。",
+            "優先觀察 VIX 與指數是否同步回落再加碼。",
+        ]
+    elif risk_score >= 5:
+        risk_level = "🟠 警戒"
+        action_plan = [
+            "控管單筆風險，避免重倉單一標的。",
+            "可留意關鍵支撐反應，等待確認再出手。",
+            "若 VIX 續升，應提高現金比重。",
+        ]
+    else:
+        risk_level = "🟢 可控"
+        action_plan = [
+            "可依系統訊號執行，但仍需紀律停損。",
+            "避免在財報/重大事件前無計畫加碼。",
+            "持續監測 VIX 與恐貪指標是否快速惡化。",
+        ]
+
     return (
         "🛡️ 風險儀表板 /risk\n"
         "━━━━━━━━━━━━━━━━━\n"
@@ -586,6 +637,11 @@ def cmd_risk(user_id: int | None = None, user_name: str = "User") -> str:
         f"{_format_news_briefs(social_items, '暫無可用的社群熱度暴增資料。')}\n\n"
         "【5】⚠️ 風險判讀重點\n"
         + "\n".join(f"• {note}" for note in risk_notes)
+        + "\n\n"
+        + "【6】🧭 風險分級與行動\n"
+        + f"• 風險分數：`{risk_score}`\n"
+        + f"• 風險等級：{risk_level}\n"
+        + "\n".join(f"• {item}" for item in action_plan)
     )
 
 
@@ -999,54 +1055,6 @@ def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
     return [page1, page2]
 
 
-def cmd_theme(text: str, user_name: str, user_id: int) -> str:
-    """處理 /theme 指令，生成指定產業的深度速報"""
-    parts = text.split()
-    available_themes = list(market_api.TECH_THEMES.keys())
-
-    if len(parts) < 2:
-        return f"🤖 用法：/theme [主題]\n目前支援的主題：{', '.join(available_themes)}\n例如：/theme 核能"
-
-    theme_input = parts[1].strip()
-    # 模糊匹配
-    matched_key = next((k for k in available_themes if k.upper() == theme_input.upper() or k == theme_input), None)
-
-    if not matched_key:
-        return f"❌ 未知的趨勢主題。目前支援：{', '.join(available_themes)}"
-
-    query = market_api.TECH_THEMES[matched_key]
-    # 先抓 RSS 看看有沒有相關的
-    rss_news = market_api.fetch_tech_rss(limit=10)
-    theme_news = [n for n in rss_news if matched_key.lower() in n["title"].lower() or matched_key.lower() in n["description"].lower()]
-
-    # 如果 RSS 沒抓到，改抓 NewsAPI
-    if len(theme_news) < 2:
-        api_news = market_api.fetch_news_filtered(query, limit=5)
-        theme_news.extend(api_news)
-
-    if not theme_news:
-        return f"⚠️ 目前找不到關於【{matched_key}】的最新市場情報。"
-
-    news_text = "\n".join([f"- {n['title']}: {n['description']}" for n in theme_news[:3]])
-    prompt = f"""
-請根據以下最新新聞，為 {user_name} 撰寫一份【{matched_key} 產業趨勢速報】。
-你必須套用副官人格，並評估該趨勢對 SMC 大級別結構的潛在影響。
-
-要求：
-1. 評估該產業目前的總體情緒（1-10分）。
-2. 分析技術突破對產業護城河的影響。
-3. 輸出必須完整，細節講透徹，絕對禁止斷句。
-
-新聞素材：
-{news_text}
-"""
-
-    model_pref = database.get_user_model_preference(user_id)
-    report = ai_core.ask_model(prompt, user_name, model=model_pref, user_id=user_id, temperature=0.4, max_output_tokens=2500)
-
-    return f"🚀 【{matched_key} 未來趨勢速報】\n━━━━━━━━━━━━━━\n{report}"
-
-
 def cmd_whale(text: str, user_id: int) -> str:
     """處理 /whale 指令：大鯨魚/內部人情報追蹤。"""
     parts = text.split()
@@ -1168,15 +1176,12 @@ def cmd_status(user_id: int) -> list[str]:
         brain_status += "\n\n• ⚠️ 狀態補充：目前為 API 配額受限（429），核心可用但暫時無法生成新回覆。"
 
     model_pref = database.get_user_model_preference(user_id)
-    chart_theme = database.get_user_chart_theme(user_id)
-    chart_theme_text = "暗黑" if chart_theme == "dark" else "明亮"
     bc_active, bc_timer, _ = database.get_bc_settings(user_id)
     sweep_count = len(database.get_sniper_list(user_id))
     watch_count = len(database.get_watchlist(user_id))
     brain_status = (
         f"{brain_status}\n\n"
         f"• 🤖 模型偏好：`{model_pref}`\n"
-        f"• 🖼️ 圖表主題：`{chart_theme_text}`\n"
         f"  (⚡ Flash: 快速問答 | 🧠 Pro: 深度推理)\n\n"
         f"• 📢 自動推播：{'✅ 開啟' if bc_active else '❌ 關閉'} (每 {bc_timer} 分)\n"
         f"• 👀 雷達監控數：`{watch_count}`\n"

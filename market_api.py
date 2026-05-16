@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import re
+import io
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -764,6 +765,115 @@ def get_stock_fundamentals(symbol: str) -> dict[str, Any]:
     except Exception as exc:
         logging.debug("quarterly earnings unavailable for %s: %s", symbol, exc)
     return data
+
+
+def get_recent_quarterly_financials(symbol: str, limit: int = 3) -> list[dict[str, Any]]:
+    """取得最近 N 季財報（營收、EPS）資料。"""
+    symbol = symbol.upper().strip()
+    ticker = yf.Ticker(symbol)
+    rows: list[dict[str, Any]] = []
+    try:
+        q = ticker.quarterly_earnings
+        if q is None or getattr(q, "empty", True):
+            return []
+        q = q.tail(limit)
+        for idx, row in q.iterrows():
+            revenue = row.get("Revenue")
+            eps = row.get("Earnings")
+            rows.append(
+                {
+                    "quarter": str(idx)[:10],
+                    "revenue": float(revenue) if isinstance(revenue, (int, float)) else None,
+                    "eps": float(eps) if isinstance(eps, (int, float)) else None,
+                }
+            )
+    except Exception as exc:
+        logging.debug("get_recent_quarterly_financials failed for %s: %s", symbol, exc)
+        return []
+    return rows
+
+
+def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
+    """產生近三季財報棒狀圖（含 QoQ 漲跌%），不落地存檔。"""
+    rows = get_recent_quarterly_financials(symbol, limit=3)
+    if len(rows) < 2:
+        return None
+
+    try:
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except Exception as exc:
+        logging.warning("matplotlib unavailable for fin chart: %s", exc)
+        return None
+
+    labels = [r["quarter"] for r in rows]
+    revs = [r["revenue"] if isinstance(r["revenue"], (int, float)) else 0.0 for r in rows]
+    epss = [r["eps"] if isinstance(r["eps"], (int, float)) else 0.0 for r in rows]
+
+    def _pct(curr: float, prev: float) -> str:
+        if prev == 0:
+            return "N/A"
+        p = (curr - prev) / abs(prev) * 100
+        return f"{p:+.1f}%"
+
+    rev_pct = ["-"]
+    eps_pct = ["-"]
+    for i in range(1, len(rows)):
+        rev_pct.append(_pct(revs[i], revs[i - 1]))
+        eps_pct.append(_pct(epss[i], epss[i - 1]))
+
+    x = np.arange(len(labels))
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9, 7), constrained_layout=True)
+
+    # 對齊 /chart 深色戰術風格
+    fig.patch.set_facecolor("#0B1020")
+    for ax in (ax1, ax2):
+        ax.set_facecolor("#0F172A")
+        ax.tick_params(colors="#CBD5E1")
+        for spine in ax.spines.values():
+            spine.set_color("#334155")
+
+    bars1 = ax1.bar(x, revs, color=["#7CFC00", "#46C2FF", "#FFD166"], edgecolor="#E5E7EB", linewidth=0.6)
+    ax1.set_title(f"{symbol} 近三季營收")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(labels)
+    ax1.title.set_color("#F8FAFC")
+    ax1.grid(axis="y", linestyle="--", alpha=0.3, color="#2A3248")
+    for i, b in enumerate(bars1):
+        pct_color = "#7CFC00" if str(rev_pct[i]).startswith("+") else "#FF5C5C" if str(rev_pct[i]).startswith("-") else "#CBD5E1"
+        ax1.text(
+            b.get_x() + b.get_width() / 2,
+            b.get_height(),
+            f"{format_number(revs[i])}\n({rev_pct[i]})",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+            color=pct_color,
+        )
+
+    bars2 = ax2.bar(x, epss, color=["#A78BFA", "#F472B6", "#22D3EE"], edgecolor="#E5E7EB", linewidth=0.6)
+    ax2.set_title(f"{symbol} 近三季 EPS")
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(labels)
+    ax2.title.set_color("#F8FAFC")
+    ax2.grid(axis="y", linestyle="--", alpha=0.3, color="#2A3248")
+    for i, b in enumerate(bars2):
+        pct_color = "#7CFC00" if str(eps_pct[i]).startswith("+") else "#FF5C5C" if str(eps_pct[i]).startswith("-") else "#CBD5E1"
+        ax2.text(
+            b.get_x() + b.get_width() / 2,
+            b.get_height(),
+            f"{epss[i]:.2f}\n({eps_pct[i]})",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+            color=pct_color,
+        )
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150)
+    plt.close(fig)
+    buf.seek(0)
+    return buf
 
 
 def fetch_portfolio_history(symbols: list[str]) -> dict[str, dict[str, float]]:
