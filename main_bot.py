@@ -260,7 +260,7 @@ def maybe_send_tech_chart(
         buf = tech_indicators.generate_tech_chart_buffer(symbol, theme=theme)
         
         # 發送圖表並提取 file_id
-        msg = bot.send_photo(chat_id, photo=buf, caption=f"📊 {symbol} Tactical Chart")
+        msg = bot.send_photo(chat_id, photo=buf, caption=f"{symbol} Tactical Chart")
         
         # 紀錄 Log (包含 file_id)
         if user_id:
@@ -334,7 +334,7 @@ def maybe_send_fin_chart(chat_id: int, text: str, *, theme: str = "dark") -> Non
         for _ in range(2):
             try:
                 fin_buf.seek(0)
-                bot.send_photo(chat_id, photo=fin_buf, caption=f"📊 {symbol} Financial Chart (Rev/NI/Margin/QoQ)")
+                bot.send_photo(chat_id, photo=fin_buf, caption=f"{symbol} Financial Chart (Rev/NI/Margin/QoQ)")
                 sent = True
                 break
             except Exception as exc:
@@ -371,7 +371,7 @@ def maybe_send_fin_compare_chart(chat_id: int, text: str) -> None:
         if buf is None:
             safe_send(chat_id, "ℹ️ /fin compare 對比圖資料不足，暫時無法出圖。")
             return
-        bot.send_photo(chat_id, photo=buf, caption=f"📊 {' vs '.join(symbols)} Financial Comparison Chart")
+        bot.send_photo(chat_id, photo=buf, caption=f"{' vs '.join(symbols)} Financial Comparison Chart")
     except Exception as exc:
         logging.warning("send fin compare chart failed: %s", exc)
     finally:

@@ -882,7 +882,7 @@ def generate_professional_chart(df: pd.DataFrame, symbol: str, theme: str = "dar
     margin_max = plot_df['margin'].max()
     ax1_r.set_ylim(0, max(margin_max * 1.3, 20)) # 至少給 20% 空間避免畫面太擠
     
-    ax1.set_title(f"📊 {symbol} 營收與獲利趨勢", fontsize=23, fontweight='bold', pad=16, color=fg_color)
+    ax1.set_title(f"{symbol} 營收與獲利趨勢", fontsize=23, fontweight='bold', pad=16, color=fg_color)
     ax1.set_xticks(x)
     ax1.set_xticklabels(plot_df['quarter'])
     
@@ -897,7 +897,7 @@ def generate_professional_chart(df: pd.DataFrame, symbol: str, theme: str = "dar
     eps_ma = plot_df['eps'].rolling(window=3, min_periods=1).mean()
     ax2.plot(x, eps_ma, color=('#334155' if is_light else '#FFFFFF'), linewidth=2.8, marker='o', markersize=6, label='EPS 移動平均(3季)')
     ax2.bar_label(eps_bars, fmt='$%.2f', padding=5, color=fg_color, fontweight='bold', fontsize=14)
-    ax2.set_title(f"📈 {symbol} 每股盈餘（EPS）", fontsize=23, fontweight='bold', pad=16, color=fg_color)
+    ax2.set_title(f"{symbol} 每股盈餘（EPS）", fontsize=23, fontweight='bold', pad=16, color=fg_color)
     ax2.set_ylabel('EPS（美元）', fontsize=17, color=fg_color)
     ax2.set_xticks(x)
     ax2.set_xticklabels(plot_df['quarter'])

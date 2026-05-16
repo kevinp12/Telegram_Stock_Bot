@@ -96,16 +96,29 @@ def debug_cjk_font_loading() -> dict[str, Any]:
         "scanned_files": [],
         "picked_font": None,
         "emoji_fonts": [],
+        "env_dir_exists": False,
+        "env_dir_is_dir": False,
+        "scan_counts": {},
     }
     try:
         for base in [Path(info["cjk_font_dir_env"])] if info["cjk_font_dir_env"] else []:
+            info["env_dir_exists"] = base.exists()
+            info["env_dir_is_dir"] = base.is_dir()
+            count = 0
             if base.exists() and base.is_dir():
                 for ext in ("*.ttf", "*.otf", "*.ttc"):
-                    info["scanned_files"].extend(str(p) for p in base.rglob(ext))
+                    matched = list(base.rglob(ext))
+                    info["scanned_files"].extend(str(p) for p in matched)
+                    count += len(matched)
+            info["scan_counts"][str(base)] = count
         for base in _PROJECT_FONT_DIRS:
+            count = 0
             if base.exists() and base.is_dir():
                 for ext in ("*.ttf", "*.otf", "*.ttc"):
-                    info["scanned_files"].extend(str(p) for p in base.rglob(ext))
+                    matched = list(base.rglob(ext))
+                    info["scanned_files"].extend(str(p) for p in matched)
+                    count += len(matched)
+            info["scan_counts"][str(base)] = count
     except Exception:
         pass
 

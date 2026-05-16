@@ -1292,10 +1292,17 @@ def cmd_op(text: str, user_id: int) -> str:
                 "🔤 CJK 字型診斷",
                 "━━━━━━━━━━━━━━",
                 f"• CJK_FONT_DIR：`{info.get('cjk_font_dir_env') or '(empty)'}`",
+                f"• ENV 路徑存在：`{info.get('env_dir_exists')}`",
+                f"• ENV 為資料夾：`{info.get('env_dir_is_dir')}`",
                 f"• 選中字型：`{info.get('picked_font')}`",
                 f"• Emoji 字型：`{', '.join(info.get('emoji_fonts', [])) or '(none)'}`",
                 f"• 掃描字型檔：`{len(files)}`",
             ]
+            scan_counts = info.get("scan_counts", {}) or {}
+            if scan_counts:
+                lines.append("\n📊 目錄掃描統計：")
+                for d, c in scan_counts.items():
+                    lines.append(f"• `{d}` -> `{c}`")
             if files:
                 lines.append("\n📁 字型檔（最多顯示前 15 筆）：")
                 lines.extend(f"• `{p}`" for p in files[:15])

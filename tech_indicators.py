@@ -233,7 +233,7 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
         style=style,
         addplot=ap,
         fill_between=fill_between,
-        title=f"📊 {symbol} 戰術圖",
+        title=f"{symbol} 戰術圖",
         ylabel="價格",
         ylabel_lower="成交量",
         returnfig=True,
@@ -253,7 +253,7 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
     fig.text(
         0.5,
         0.92,
-        f"🔎 量價關係：{vp_judgement}",
+        f"量價關係：{vp_judgement}",
         ha="center",
         va="center",
         fontsize=13,
@@ -274,7 +274,7 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
     price_ax.text(
         0.01,
         0.98,
-        f"🕒 出圖時間: {plot_ts}",
+        f"出圖時間: {plot_ts}",
         transform=price_ax.transAxes,
         ha="left",
         va="top",
