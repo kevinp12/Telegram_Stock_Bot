@@ -933,14 +933,21 @@ def generate_fin_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO | 
     ax1.title.set_color(text_color)
     ax1.grid(axis="y", linestyle="--", alpha=0.3, color=grid_color)
 
-    # 加入四個季度的平均線
-    avg_rev = np.mean(revs) if revs else 0
-    avg_ni = np.mean(net_income) if net_income else 0
-    
-    if avg_rev > 0:
-        ax1.axhline(avg_rev, color="#A78BFA", linestyle=":", linewidth=1.2, label=f"Avg Rev: {format_number(avg_rev)}")
-    if avg_ni > 0:
-        ax1.axhline(avg_ni, color="#F472B6", linestyle=":", linewidth=1.2, label=f"Avg NI: {format_number(avg_ni)}")
+    # 繪製 2 季度移動平均線 (MA2)
+    def _calc_ma2(data: list[float]) -> list[float]:
+        res = []
+        for i in range(len(data)):
+            if i == 0:
+                res.append(data[0])
+            else:
+                res.append((data[i-1] + data[i]) / 2)
+        return res
+
+    ma2_rev = _calc_ma2(revs)
+    ma2_ni = _calc_ma2(net_income)
+
+    ax1.plot(x, ma2_rev, color="#A78BFA", marker="o", markersize=4, linestyle="-", linewidth=1.5, label="Rev MA(2Q)")
+    ax1.plot(x, ma2_ni, color="#F472B6", marker="o", markersize=4, linestyle="-", linewidth=1.5, label="NI MA(2Q)")
 
     ax1.legend(facecolor=ax_facecolor, edgecolor=spine_color, labelcolor=text_color, loc="upper left", fontsize=8)
 
@@ -970,11 +977,17 @@ def generate_fin_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO | 
         )
 
     # Net Margin Trend Chart
-    bars3 = ax2.bar(x, margins, width=0.40, color="#FFD166", edgecolor=bar_edge_color, linewidth=0.6)
+    bars3 = ax2.bar(x, margins, width=0.40, color="#FFD166", edgecolor=bar_edge_color, linewidth=0.6, label="Margin")
+    
+    # 繪製 Net Margin MA(2Q)
+    ma2_margin = _calc_ma2(margins)
+    ax2.plot(x, ma2_margin, color="#46C2FF", marker="o", markersize=4, linestyle="-", linewidth=1.5, label="MA(2Q)")
+    
     ax2.set_title(f"{symbol} 1Y Quarterly: Net Margin (%)")
     ax2.set_xticks(x)
     ax2.set_xticklabels(labels)
     ax2.title.set_color(text_color)
+    ax2.legend(facecolor=ax_facecolor, edgecolor=spine_color, labelcolor=text_color, loc="upper left", fontsize=8)
     ax2.grid(axis="y", linestyle="--", alpha=0.3, color=grid_color)
     for i, b in enumerate(bars3):
         pct_color = positive_color if margins[i] >= 0 else negative_color
