@@ -249,12 +249,7 @@ def maybe_send_tech_chart(
 
     buf = None
     try:
-        cpu_now = psutil.cpu_percent(interval=0.05)
-        ram_now = psutil.virtual_memory().percent
-        # 超載保護：高 CPU / RAM 時降低圖表 DPI，減少運算與記憶體壓力
-        # 提高至 300 DPI 以確保電腦與平板上的顯示清晰度
-        dpi = 200 if (cpu_now >= 70 or ram_now >= 80) else 300
-        buf = tech_indicators.generate_tech_chart_buffer(symbol, dpi=dpi, theme=theme)
+        buf = tech_indicators.generate_tech_chart_buffer(symbol, theme=theme)
         
         # 發送圖表並提取 file_id
         msg = bot.send_photo(chat_id, photo=buf, caption=f"📊 {symbol} Tactical Chart")

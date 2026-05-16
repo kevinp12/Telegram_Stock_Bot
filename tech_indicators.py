@@ -70,7 +70,7 @@ def get_volume_price_judgement(df: pd.DataFrame) -> str:
     return mapping.get((price_state, vol_state), "Price Flat / Volume Flat")
 
 
-def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark") -> io.BytesIO:
+def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
     """生成 /tech 戰術圖表（90天計算，60天顯示），回傳 BytesIO。theme: dark|light"""
     try:
         import mplfinance as mpf
@@ -238,8 +238,7 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
         )
 
     buf = io.BytesIO()
-    # 調整 DPI 乘數以確保更清晰的圖表
-    safe_dpi = max(100, min(int(dpi), 300))
+    safe_dpi = 300
     fig, axes = mpf.plot(
         df_plot,
         type="candle",
@@ -247,12 +246,13 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
         style=style,
         addplot=ap,
         fill_between=fill_between,
-        title=f"{symbol} Tactical Chart",
+        title=f"{symbol} | {vp_judgement}",
         ylabel="Price",
-        ylabel_lower="Volume (K/M/B)",
+        ylabel_lower="Volume",
         returnfig=True,
         closefig=True,
     )
+    fig.set_dpi(safe_dpi)
 
     price_ax = axes[0]
     vol_ax = axes[2] if len(axes) >= 3 else (axes[1] if len(axes) > 1 else axes[0])
