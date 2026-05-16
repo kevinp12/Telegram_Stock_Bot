@@ -837,7 +837,7 @@ def get_recent_quarterly_financials(symbol: str, limit: int = 4) -> list[dict[st
     return rows
 
 
-def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
+def generate_fin_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO | None:
     """Generate 1Y quarterly financial chart (Revenue/Net Income/Net Margin + Profit Mix pie)."""
     rows = get_recent_quarterly_financials(symbol, limit=4)
     if len(rows) < 2:
@@ -853,6 +853,31 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
 
     # 統一中文字型策略（跨圖一致）
     setup_matplotlib_cjk_font(mpl)
+
+    theme_name = (theme or "dark").strip().lower()
+    if theme_name not in {"dark", "light"}:
+        theme_name = "dark"
+
+    if theme_name == "light":
+        fig_facecolor = "#F8FAFC"
+        ax_facecolor = "#FFFFFF"
+        text_color = "#111827"
+        grid_color = "#E5E7EB"
+        spine_color = "#D1D5DB"
+        pie_text_color = "#000000"
+        bar_edge_color = "#6B7280"
+        positive_color = "#0F9D58"
+        negative_color = "#DB4437"
+    else:
+        fig_facecolor = "#0B1020"
+        ax_facecolor = "#0F172A"
+        text_color = "#CBD5E1"
+        grid_color = "#2A3248"
+        spine_color = "#334155"
+        pie_text_color = "#FFFFFF"
+        bar_edge_color = "#E5E7EB"
+        positive_color = "#7CFC00"
+        negative_color = "#FF5C5C"
 
     labels = [r["quarter"] for r in rows]
 
@@ -889,29 +914,28 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
     ax2 = fig.add_subplot(gs[1, 0])
     ax3 = fig.add_subplot(gs[:, 1])
 
-    # 對齊 /chart 深色戰術風格
-    fig.patch.set_facecolor("#0B1020")
+    fig.patch.set_facecolor(fig_facecolor)
     for ax in (ax1, ax2, ax3):
-        ax.set_facecolor("#0F172A")
+        ax.set_facecolor(ax_facecolor)
         if ax in (ax1, ax2):
-            ax.tick_params(colors="#CBD5E1")
+            ax.tick_params(colors=text_color)
         for spine in ax.spines.values():
-            spine.set_color("#334155")
+            spine.set_color(spine_color)
 
     # 細版柱狀圖：營收 + 淨利
     width = 0.28
-    bars1 = ax1.bar(x - width / 2, revs, width=width, color="#46C2FF", edgecolor="#E5E7EB", linewidth=0.6, label="Revenue")
-    bars2 = ax1.bar(x + width / 2, net_income, width=width, color="#7CFC00", edgecolor="#E5E7EB", linewidth=0.6, label="Net Income")
+    bars1 = ax1.bar(x - width / 2, revs, width=width, color="#46C2FF", edgecolor=bar_edge_color, linewidth=0.6, label="Revenue")
+    bars2 = ax1.bar(x + width / 2, net_income, width=width, color=positive_color, edgecolor=bar_edge_color, linewidth=0.6, label="Net Income")
 
     ax1.set_title(f"{symbol} 1Y Quarterly: Revenue / Net Income")
     ax1.set_xticks(x)
     ax1.set_xticklabels(labels)
-    ax1.title.set_color("#F8FAFC")
-    ax1.legend(facecolor="#0F172A", edgecolor="#334155", labelcolor="#CBD5E1")
-    ax1.grid(axis="y", linestyle="--", alpha=0.3, color="#2A3248")
+    ax1.title.set_color(text_color)
+    ax1.legend(facecolor=ax_facecolor, edgecolor=spine_color, labelcolor=text_color)
+    ax1.grid(axis="y", linestyle="--", alpha=0.3, color=grid_color)
 
     for i, b in enumerate(bars1):
-        pct_color = "#7CFC00" if str(rev_pct[i]).startswith("+") else "#FF5C5C" if str(rev_pct[i]).startswith("-") else "#CBD5E1"
+        pct_color = positive_color if str(rev_pct[i]).startswith("+") else negative_color if str(rev_pct[i]).startswith("-") else text_color
         ax1.text(
             b.get_x() + b.get_width() / 2,
             b.get_height(),
@@ -920,9 +944,10 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
             va="bottom",
             fontsize=7,
             color=pct_color,
+            weight="bold",
         )
     for i, b in enumerate(bars2):
-        pct_color = "#7CFC00" if str(ni_pct[i]).startswith("+") else "#FF5C5C" if str(ni_pct[i]).startswith("-") else "#CBD5E1"
+        pct_color = positive_color if str(ni_pct[i]).startswith("+") else negative_color if str(ni_pct[i]).startswith("-") else text_color
         ax1.text(
             b.get_x() + b.get_width() / 2,
             b.get_height(),
@@ -931,17 +956,18 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
             va="bottom",
             fontsize=7,
             color=pct_color,
+            weight="bold",
         )
 
     # Net Margin Trend Chart
-    bars3 = ax2.bar(x, margins, width=0.40, color="#FFD166", edgecolor="#E5E7EB", linewidth=0.6)
+    bars3 = ax2.bar(x, margins, width=0.40, color="#FFD166", edgecolor=bar_edge_color, linewidth=0.6)
     ax2.set_title(f"{symbol} 1Y Quarterly: Net Margin (%)")
     ax2.set_xticks(x)
     ax2.set_xticklabels(labels)
-    ax2.title.set_color("#F8FAFC")
-    ax2.grid(axis="y", linestyle="--", alpha=0.3, color="#2A3248")
+    ax2.title.set_color(text_color)
+    ax2.grid(axis="y", linestyle="--", alpha=0.3, color=grid_color)
     for i, b in enumerate(bars3):
-        pct_color = "#7CFC00" if margins[i] >= 0 else "#FF5C5C"
+        pct_color = positive_color if margins[i] >= 0 else negative_color
         ax2.text(
             b.get_x() + b.get_width() / 2,
             b.get_height(),
@@ -950,6 +976,7 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
             va="bottom",
             fontsize=8,
             color=pct_color,
+            weight="bold",
         )
 
     # Profit Mix Pie Chart: Prioritize latest quarter income statement composition
@@ -980,18 +1007,26 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
 
     total = sum(pie_vals)
     if total <= 0:
-        ax3.text(0.5, 0.5, "N/A", ha="center", va="center", color="#CBD5E1", fontsize=12)
-        ax3.set_title(f"{symbol} Profit Mix", color="#F8FAFC")
+        ax3.text(0.5, 0.5, "N/A", ha="center", va="center", color=text_color, fontsize=12)
+        ax3.set_title(f"{symbol} Profit Mix", color=text_color)
     else:
-        ax3.pie(
+        wedges, texts, autotexts = ax3.pie(
             pie_vals,
             labels=pie_labels,
             autopct="%1.1f%%",
-            textprops={"color": "#CBD5E1", "fontsize": 8},
+            textprops={"color": text_color, "fontsize": 8},
             colors=["#46C2FF", "#7CFC00", "#FFD166", "#A78BFA", "#F472B6"],
-            wedgeprops={"edgecolor": "#0B1020", "linewidth": 0.8},
+            wedgeprops={"edgecolor": fig_facecolor, "linewidth": 0.8},
         )
-        ax3.set_title(f"{symbol} Profit Mix", color="#F8FAFC")
+        
+        # 增強圓餅圖內百分比的能見度
+        bbox_color = "#000000" if theme_name == "dark" else "#FFFFFF"
+        for autotext in autotexts:
+            autotext.set_color(pie_text_color)
+            autotext.set_weight("bold")
+            autotext.set_bbox(dict(facecolor=bbox_color, alpha=0.5, edgecolor="none", pad=1.5))
+            
+        ax3.set_title(f"{symbol} Profit Mix", color=text_color)
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=150)

@@ -280,7 +280,7 @@ def maybe_send_tech_chart(
             pass
 
 
-def maybe_send_fin_chart(chat_id: int, text: str) -> None:
+def maybe_send_fin_chart(chat_id: int, text: str, *, theme: str = "dark") -> None:
     """/fin 圖表輸出：支援 /fin [symbol] 與 /fin chart [symbol]。"""
     parts = (text or "").split()
     if not parts or parts[0].lower() != "/fin":
@@ -300,7 +300,7 @@ def maybe_send_fin_chart(chat_id: int, text: str) -> None:
         return
 
     try:
-        fin_buf = command.market_api.generate_fin_chart_buffer(symbol)
+        fin_buf = command.market_api.generate_fin_chart_buffer(symbol, theme=theme)
         if fin_buf is None:
             safe_send(
                 chat_id,
@@ -814,7 +814,8 @@ def on_fin(m):
     if is_compare:
         maybe_send_fin_compare_chart(m.chat.id, text)
     else:
-        maybe_send_fin_chart(m.chat.id, text)
+        theme = _USER_CHART_THEME.get(user_id, "dark")
+        maybe_send_fin_chart(m.chat.id, text, theme=theme)
 
 
 @bot.message_handler(commands=["whale"])
@@ -1048,7 +1049,8 @@ def on_text(m):
             if len(parts) >= 2 and parts[1].lower() == "compare":
                 maybe_send_fin_compare_chart(m.chat.id, text)
             else:
-                maybe_send_fin_chart(m.chat.id, text)
+                theme = _USER_CHART_THEME.get(user_id, "dark")
+                maybe_send_fin_chart(m.chat.id, text, theme=theme)
             return
         if lowered.startswith("/whale"):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/whale")
