@@ -38,7 +38,8 @@ def _register_project_fonts() -> None:
             if not font_dir.exists() or not font_dir.is_dir():
                 continue
             for ext in ("*.ttf", "*.otf", "*.ttc"):
-                for fp in font_dir.glob(ext):
+                # 遞迴掃描，支援像 fonts/Noto_Sans_TC/static/*.ttf 這種巢狀結構
+                for fp in font_dir.rglob(ext):
                     try:
                         fm.fontManager.addfont(str(fp))
                         loaded += 1
@@ -66,6 +67,32 @@ def _pick_available_cjk_font() -> str:
     except Exception:
         pass
     return "DejaVu Sans"
+
+
+def debug_cjk_font_loading() -> dict[str, Any]:
+    """回傳字型載入診斷資訊，方便在 GCP 排查路徑/字型是否命中。"""
+    info: dict[str, Any] = {
+        "cjk_font_dir_env": os.getenv("CJK_FONT_DIR", "").strip(),
+        "project_font_dirs": [str(p) for p in _PROJECT_FONT_DIRS],
+        "scanned_files": [],
+        "picked_font": None,
+    }
+    try:
+        for base in [Path(info["cjk_font_dir_env"])] if info["cjk_font_dir_env"] else []:
+            if base.exists() and base.is_dir():
+                for ext in ("*.ttf", "*.otf", "*.ttc"):
+                    info["scanned_files"].extend(str(p) for p in base.rglob(ext))
+        for base in _PROJECT_FONT_DIRS:
+            if base.exists() and base.is_dir():
+                for ext in ("*.ttf", "*.otf", "*.ttc"):
+                    info["scanned_files"].extend(str(p) for p in base.rglob(ext))
+    except Exception:
+        pass
+
+    info["picked_font"] = _pick_available_cjk_font()
+    # 去重避免重複列出
+    info["scanned_files"] = sorted(set(info["scanned_files"]))
+    return info
 
 
 def setup_matplotlib_cjk_font(mpl_module) -> None:
