@@ -15,6 +15,13 @@ _CJK_FONT_CANDIDATES = [
     "Songti SC",
 ]
 
+_EMOJI_FONT_CANDIDATES = [
+    "Noto Color Emoji",
+    "Noto Emoji",
+    "Segoe UI Emoji",
+    "Apple Color Emoji",
+]
+
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
 _PROJECT_FONT_DIRS = [
@@ -69,6 +76,18 @@ def _pick_available_cjk_font() -> str:
     return "DejaVu Sans"
 
 
+def _pick_available_emoji_fonts() -> list[str]:
+    """挑選目前環境可用的 emoji 字型清單（依偏好順序）。"""
+    try:
+        from matplotlib import font_manager as fm
+
+        _register_project_fonts()
+        available = {f.name for f in fm.fontManager.ttflist}
+        return [name for name in _EMOJI_FONT_CANDIDATES if name in available]
+    except Exception:
+        return []
+
+
 def debug_cjk_font_loading() -> dict[str, Any]:
     """回傳字型載入診斷資訊，方便在 GCP 排查路徑/字型是否命中。"""
     info: dict[str, Any] = {
@@ -76,6 +95,7 @@ def debug_cjk_font_loading() -> dict[str, Any]:
         "project_font_dirs": [str(p) for p in _PROJECT_FONT_DIRS],
         "scanned_files": [],
         "picked_font": None,
+        "emoji_fonts": [],
     }
     try:
         for base in [Path(info["cjk_font_dir_env"])] if info["cjk_font_dir_env"] else []:
@@ -90,6 +110,7 @@ def debug_cjk_font_loading() -> dict[str, Any]:
         pass
 
     info["picked_font"] = _pick_available_cjk_font()
+    info["emoji_fonts"] = _pick_available_emoji_fonts()
     # 去重避免重複列出
     info["scanned_files"] = sorted(set(info["scanned_files"]))
     return info
@@ -109,18 +130,20 @@ def setup_matplotlib_cjk_font(mpl_module=None) -> None:
             return
 
     cjk_font = _pick_available_cjk_font()
+    emoji_fonts = _pick_available_emoji_fonts()
     mpl_module.rcParams["font.family"] = "sans-serif"
     # 把第一優先直接鎖定為「本機確定存在」的字型，避免 fallback 到不支援中文字型
-    mpl_module.rcParams["font.sans-serif"] = [cjk_font, "DejaVu Sans"]
+    mpl_module.rcParams["font.sans-serif"] = [cjk_font, *emoji_fonts, "DejaVu Sans"]
     mpl_module.rcParams["axes.unicode_minus"] = False
 
 
 def get_matplotlib_cjk_rc() -> dict:
     """提供可注入 style/rc 的統一中文字型設定。"""
     cjk_font = _pick_available_cjk_font()
+    emoji_fonts = _pick_available_emoji_fonts()
     return {
         "font.family": "sans-serif",
-        "font.sans-serif": [cjk_font, "DejaVu Sans"],
+        "font.sans-serif": [cjk_font, *emoji_fonts, "DejaVu Sans"],
         "axes.unicode_minus": False,
     }
 

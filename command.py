@@ -1293,6 +1293,7 @@ def cmd_op(text: str, user_id: int) -> str:
                 "━━━━━━━━━━━━━━",
                 f"• CJK_FONT_DIR：`{info.get('cjk_font_dir_env') or '(empty)'}`",
                 f"• 選中字型：`{info.get('picked_font')}`",
+                f"• Emoji 字型：`{', '.join(info.get('emoji_fonts', [])) or '(none)'}`",
                 f"• 掃描字型檔：`{len(files)}`",
             ]
             if files:
