@@ -95,8 +95,19 @@ def debug_cjk_font_loading() -> dict[str, Any]:
     return info
 
 
-def setup_matplotlib_cjk_font(mpl_module) -> None:
-    """統一設定 matplotlib 的中文字型與負號顯示。"""
+def setup_matplotlib_cjk_font(mpl_module=None) -> None:
+    """統一設定 matplotlib 的中文字型與負號顯示。
+
+    兼容兩種呼叫方式：
+    - setup_matplotlib_cjk_font(mpl)
+    - setup_matplotlib_cjk_font()  # 自動 import matplotlib
+    """
+    if mpl_module is None:
+        try:
+            import matplotlib as mpl_module  # type: ignore
+        except Exception:
+            return
+
     cjk_font = _pick_available_cjk_font()
     mpl_module.rcParams["font.family"] = "sans-serif"
     # 把第一優先直接鎖定為「本機確定存在」的字型，避免 fallback 到不支援中文字型

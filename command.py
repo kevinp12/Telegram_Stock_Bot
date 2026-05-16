@@ -20,6 +20,7 @@ import database
 import frame
 import market_api
 import tech_indicators
+import utils
 from config import ADMIN_ID, BOT_START_TIME, VERSION
 from utils import safe_round
 
@@ -1282,6 +1283,26 @@ def cmd_op(text: str, user_id: int) -> str:
 
     if sub == "user":
         return cmd_user(text, user_id)
+
+    if sub == "fontcheck":
+        try:
+            info = utils.debug_cjk_font_loading()
+            files = info.get("scanned_files", [])
+            lines = [
+                "🔤 CJK 字型診斷",
+                "━━━━━━━━━━━━━━",
+                f"• CJK_FONT_DIR：`{info.get('cjk_font_dir_env') or '(empty)'}`",
+                f"• 選中字型：`{info.get('picked_font')}`",
+                f"• 掃描字型檔：`{len(files)}`",
+            ]
+            if files:
+                lines.append("\n📁 字型檔（最多顯示前 15 筆）：")
+                lines.extend(f"• `{p}`" for p in files[:15])
+            else:
+                lines.append("\n⚠️ 未掃描到任何字型檔，請檢查部署路徑與打包內容。")
+            return "\n".join(lines)
+        except Exception as exc:
+            return f"❌ fontcheck 執行失敗：`{exc}`"
 
     if sub == "del":
         if len(parts) < 3:

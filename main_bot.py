@@ -29,6 +29,7 @@ import command
 import database
 import frame
 import tech_indicators
+import utils
 from config import (
     AUTO_NEWS_INTERVAL_SECONDS,
     ADMIN_ID,
@@ -1117,6 +1118,16 @@ def on_text(m):
 if __name__ == "__main__":
     database.init_db()
     database.reset_user_log()
+    try:
+        font_info = utils.debug_cjk_font_loading()
+        logging.info("[CJK_FONT] env_dir=%s", font_info.get("cjk_font_dir_env") or "(empty)")
+        logging.info("[CJK_FONT] picked_font=%s", font_info.get("picked_font"))
+        logging.info("[CJK_FONT] scanned_files=%s", len(font_info.get("scanned_files", [])))
+        for p in font_info.get("scanned_files", [])[:10]:
+            logging.info("[CJK_FONT] file=%s", p)
+    except Exception as exc:
+        logging.warning("[CJK_FONT] debug print failed: %s", exc)
+
     setup_bot_commands()
     import brain
 
