@@ -180,6 +180,8 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
         y2 = np.full(len(df_plot), zone_low)
         fill_between = dict(y1=y1, y2=y2, color="#2D6CDF", alpha=0.22)
 
+    vp_judgement = get_volume_price_judgement(df_plot)
+
     if theme_name == "light":
         cjk_rc = get_matplotlib_cjk_rc()
         mc = mpf.make_marketcolors(
@@ -272,7 +274,6 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
         bbox=dict(facecolor="black", alpha=0.5, edgecolor="none", pad=2),
     )
     # 將 MA/VWAP/量價評斷 標籤移至左上角
-    vp_judgement = get_volume_price_judgement(df_plot)
     price_ax.text(0.01, 0.92, "MA20", transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#FFD166", weight="bold")
     price_ax.text(0.01, 0.87, "EMA50", transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#FF4D9D", weight="bold")
     price_ax.text(0.01, 0.82, "VWAP (anchor)", transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#C7CED6", weight="bold")

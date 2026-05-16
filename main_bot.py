@@ -233,8 +233,13 @@ def maybe_send_tech_chart(
     sub = parts[1].strip().lower()
     if cmd_prefix == "/tech" and sub in {"compare", "help"}:
         return
-    if len(parts) != 2:
-        return
+    # /chart 支援 /chart SYMBOL THEME (3 parts)
+    if cmd_prefix == "/chart":
+        if len(parts) not in {2, 3}:
+            return
+    else:
+        if len(parts) != 2:
+            return
 
     symbol = parts[1].strip().upper()
     if not symbol:
