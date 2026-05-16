@@ -767,8 +767,8 @@ def get_stock_fundamentals(symbol: str) -> dict[str, Any]:
     return data
 
 
-def get_recent_quarterly_financials(symbol: str, limit: int = 3) -> list[dict[str, Any]]:
-    """取得最近 N 季財報（營收、EPS）資料。"""
+def get_recent_quarterly_financials(symbol: str, limit: int = 4) -> list[dict[str, Any]]:
+    """取得最近 N 季財報（營收、淨利、淨利率、EPS）資料。"""
     symbol = symbol.upper().strip()
     ticker = yf.Ticker(symbol)
     rows: list[dict[str, Any]] = []
@@ -776,40 +776,78 @@ def get_recent_quarterly_financials(symbol: str, limit: int = 3) -> list[dict[st
         q = ticker.quarterly_earnings
         if q is None or getattr(q, "empty", True):
             q = None
-        if q is not None and not getattr(q, "empty", True):
-            q = q.tail(limit)
-            for idx, row in q.iterrows():
-                revenue = row.get("Revenue")
-                eps = row.get("Earnings")
+
+        qis = getattr(ticker, "quarterly_income_stmt", None)
+
+        # 優先用 income statement（欄位較完整）
+        if qis is not None and not getattr(qis, "empty", True):
+            cols = list(qis.columns)[-limit:]
+            for c in cols:
+                rev = None
+                net_income = None
+                eps = None
+                for key in ["Total Revenue", "Operating Revenue", "Revenue"]:
+                    if key in qis.index:
+                        v = qis.loc[key, c]
+                        if isinstance(v, (int, float)):
+                            rev = float(v)
+                            break
+                for key in ["Net Income", "Net Income Common Stockholders", "Net Income Including Noncontrolling Interests"]:
+                    if key in qis.index:
+                        v = qis.loc[key, c]
+                        if isinstance(v, (int, float)):
+                            net_income = float(v)
+                            break
+                for key in ["Diluted EPS", "Basic EPS", "Normalized EPS"]:
+                    if key in qis.index:
+                        v = qis.loc[key, c]
+                        if isinstance(v, (int, float)):
+                            eps = float(v)
+                            break
+                margin = None
+                if isinstance(rev, (int, float)) and rev not in (0, 0.0) and isinstance(net_income, (int, float)):
+                    margin = (net_income / rev) * 100.0
                 rows.append(
                     {
-                        "quarter": str(idx)[:10],
-                        "revenue": float(revenue) if isinstance(revenue, (int, float)) else None,
-                        "eps": float(eps) if isinstance(eps, (int, float)) else None,
+                        "quarter": str(c)[:10],
+                        "revenue": rev,
+                        "net_income": net_income,
+                        "net_margin": margin,
+                        "eps": eps,
                     }
                 )
 
-        # fallback：某些標的 quarterly_earnings 會空，改從 quarterly_income_stmt 補資料
-        if not rows:
-            qis = getattr(ticker, "quarterly_income_stmt", None)
-            if qis is not None and not getattr(qis, "empty", True):
-                cols = list(qis.columns)[-limit:]
-                for c in cols:
-                    rev = None
-                    eps = None
-                    for key in ["Total Revenue", "Operating Revenue", "Revenue"]:
-                        if key in qis.index:
-                            v = qis.loc[key, c]
-                            if isinstance(v, (int, float)):
-                                rev = float(v)
-                                break
-                    for key in ["Diluted EPS", "Basic EPS", "Normalized EPS"]:
-                        if key in qis.index:
-                            v = qis.loc[key, c]
-                            if isinstance(v, (int, float)):
-                                eps = float(v)
-                                break
-                    rows.append({"quarter": str(c)[:10], "revenue": rev, "eps": eps})
+        # 補 EPS：若前面沒抓到且 quarterly_earnings 可用
+        if q is not None and not getattr(q, "empty", True):
+            q = q.tail(limit)
+            q_map: dict[str, float | None] = {}
+            for idx, row in q.iterrows():
+                e = row.get("Earnings")
+                q_map[str(idx)[:10]] = float(e) if isinstance(e, (int, float)) else None
+
+            if rows:
+                for r in rows:
+                    if r.get("eps") is None:
+                        r["eps"] = q_map.get(str(r.get("quarter", ""))[:10])
+            else:
+                # 最後 fallback：只有 quarterly_earnings
+                for idx, row in q.iterrows():
+                    revenue = row.get("Revenue")
+                    net_income = row.get("Earnings")
+                    rev = float(revenue) if isinstance(revenue, (int, float)) else None
+                    ni = float(net_income) if isinstance(net_income, (int, float)) else None
+                    margin = None
+                    if isinstance(rev, (int, float)) and rev not in (0, 0.0) and isinstance(ni, (int, float)):
+                        margin = (ni / rev) * 100.0
+                    rows.append(
+                        {
+                            "quarter": str(idx)[:10],
+                            "revenue": rev,
+                            "net_income": ni,
+                            "net_margin": margin,
+                            "eps": ni,
+                        }
+                    )
     except Exception as exc:
         logging.debug("get_recent_quarterly_financials failed for %s: %s", symbol, exc)
         return []
@@ -817,8 +855,8 @@ def get_recent_quarterly_financials(symbol: str, limit: int = 3) -> list[dict[st
 
 
 def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
-    """產生近三季財報棒狀圖（含 QoQ 漲跌%），不落地存檔。"""
-    rows = get_recent_quarterly_financials(symbol, limit=3)
+    """產生近一年季度財報圖（營收/淨利/淨利率 + 賺錢結構圓餅圖），不落地存檔。"""
+    rows = get_recent_quarterly_financials(symbol, limit=4)
     if len(rows) < 2:
         return None
 
@@ -830,8 +868,9 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
         return None
 
     labels = [r["quarter"] for r in rows]
-    revs = [r["revenue"] if isinstance(r["revenue"], (int, float)) else 0.0 for r in rows]
-    epss = [r["eps"] if isinstance(r["eps"], (int, float)) else 0.0 for r in rows]
+    revs = [r["revenue"] if isinstance(r.get("revenue"), (int, float)) else 0.0 for r in rows]
+    net_income = [r["net_income"] if isinstance(r.get("net_income"), (int, float)) else 0.0 for r in rows]
+    margins = [r["net_margin"] if isinstance(r.get("net_margin"), (int, float)) else 0.0 for r in rows]
 
     def _pct(curr: float, prev: float) -> str:
         if prev == 0:
@@ -840,28 +879,39 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
         return f"{p:+.1f}%"
 
     rev_pct = ["-"]
-    eps_pct = ["-"]
+    ni_pct = ["-"]
     for i in range(1, len(rows)):
         rev_pct.append(_pct(revs[i], revs[i - 1]))
-        eps_pct.append(_pct(epss[i], epss[i - 1]))
+        ni_pct.append(_pct(net_income[i], net_income[i - 1]))
 
     x = np.arange(len(labels))
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(9, 7), constrained_layout=True)
+    fig = plt.figure(figsize=(12, 8), constrained_layout=True)
+    gs = fig.add_gridspec(2, 2, width_ratios=[2.4, 1.3], height_ratios=[1, 1])
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax2 = fig.add_subplot(gs[1, 0])
+    ax3 = fig.add_subplot(gs[:, 1])
 
     # 對齊 /chart 深色戰術風格
     fig.patch.set_facecolor("#0B1020")
-    for ax in (ax1, ax2):
+    for ax in (ax1, ax2, ax3):
         ax.set_facecolor("#0F172A")
-        ax.tick_params(colors="#CBD5E1")
+        if ax in (ax1, ax2):
+            ax.tick_params(colors="#CBD5E1")
         for spine in ax.spines.values():
             spine.set_color("#334155")
 
-    bars1 = ax1.bar(x, revs, color=["#7CFC00", "#46C2FF", "#FFD166"], edgecolor="#E5E7EB", linewidth=0.6)
-    ax1.set_title(f"{symbol} 近三季營收")
+    # 細版柱狀圖：營收 + 淨利
+    width = 0.28
+    bars1 = ax1.bar(x - width / 2, revs, width=width, color="#46C2FF", edgecolor="#E5E7EB", linewidth=0.6, label="Revenue")
+    bars2 = ax1.bar(x + width / 2, net_income, width=width, color="#7CFC00", edgecolor="#E5E7EB", linewidth=0.6, label="Net Income")
+
+    ax1.set_title(f"{symbol} 近一年季度：營收 / 淨利")
     ax1.set_xticks(x)
     ax1.set_xticklabels(labels)
     ax1.title.set_color("#F8FAFC")
+    ax1.legend(facecolor="#0F172A", edgecolor="#334155", labelcolor="#CBD5E1")
     ax1.grid(axis="y", linestyle="--", alpha=0.3, color="#2A3248")
+
     for i, b in enumerate(bars1):
         pct_color = "#7CFC00" if str(rev_pct[i]).startswith("+") else "#FF5C5C" if str(rev_pct[i]).startswith("-") else "#CBD5E1"
         ax1.text(
@@ -870,27 +920,80 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
             f"{format_number(revs[i])}\n({rev_pct[i]})",
             ha="center",
             va="bottom",
-            fontsize=8,
+            fontsize=7,
+            color=pct_color,
+        )
+    for i, b in enumerate(bars2):
+        pct_color = "#7CFC00" if str(ni_pct[i]).startswith("+") else "#FF5C5C" if str(ni_pct[i]).startswith("-") else "#CBD5E1"
+        ax1.text(
+            b.get_x() + b.get_width() / 2,
+            b.get_height(),
+            f"{format_number(net_income[i])}\n({ni_pct[i]})",
+            ha="center",
+            va="bottom",
+            fontsize=7,
             color=pct_color,
         )
 
-    bars2 = ax2.bar(x, epss, color=["#A78BFA", "#F472B6", "#22D3EE"], edgecolor="#E5E7EB", linewidth=0.6)
-    ax2.set_title(f"{symbol} 近三季 EPS")
+    # 淨利率趨勢圖
+    bars3 = ax2.bar(x, margins, width=0.40, color="#FFD166", edgecolor="#E5E7EB", linewidth=0.6)
+    ax2.set_title(f"{symbol} 近一年季度：淨利率 (%)")
     ax2.set_xticks(x)
     ax2.set_xticklabels(labels)
     ax2.title.set_color("#F8FAFC")
     ax2.grid(axis="y", linestyle="--", alpha=0.3, color="#2A3248")
-    for i, b in enumerate(bars2):
-        pct_color = "#7CFC00" if str(eps_pct[i]).startswith("+") else "#FF5C5C" if str(eps_pct[i]).startswith("-") else "#CBD5E1"
+    for i, b in enumerate(bars3):
+        pct_color = "#7CFC00" if margins[i] >= 0 else "#FF5C5C"
         ax2.text(
             b.get_x() + b.get_width() / 2,
             b.get_height(),
-            f"{epss[i]:.2f}\n({eps_pct[i]})",
+            f"{margins[i]:.1f}%",
             ha="center",
             va="bottom",
             fontsize=8,
             color=pct_color,
         )
+
+    # 賺錢結構圓餅圖：優先取最新季度 income statement 組成
+    latest_qis = getattr(yf.Ticker(symbol.upper().strip()), "quarterly_income_stmt", None)
+    pie_labels: list[str] = []
+    pie_vals: list[float] = []
+    try:
+        if latest_qis is not None and not getattr(latest_qis, "empty", True) and len(latest_qis.columns) > 0:
+            c = latest_qis.columns[-1]
+            candidates = [
+                ("Gross Profit", "Gross Profit"),
+                ("Operating Income", "Operating Income"),
+                ("Net Income", "Net Income"),
+            ]
+            for key, alias in candidates:
+                if key in latest_qis.index:
+                    v = latest_qis.loc[key, c]
+                    if isinstance(v, (int, float)) and abs(v) > 0:
+                        pie_labels.append(alias)
+                        pie_vals.append(abs(float(v)))
+    except Exception:
+        pie_labels, pie_vals = [], []
+
+    # fallback：若取不到組成，改用近一年營收占比
+    if not pie_vals:
+        pie_labels = labels
+        pie_vals = [abs(v) if isinstance(v, (int, float)) and v != 0 else 0.0 for v in revs]
+
+    total = sum(pie_vals)
+    if total <= 0:
+        ax3.text(0.5, 0.5, "N/A", ha="center", va="center", color="#CBD5E1", fontsize=12)
+        ax3.set_title(f"{symbol} 賺錢結構", color="#F8FAFC")
+    else:
+        ax3.pie(
+            pie_vals,
+            labels=pie_labels,
+            autopct="%1.1f%%",
+            textprops={"color": "#CBD5E1", "fontsize": 8},
+            colors=["#46C2FF", "#7CFC00", "#FFD166", "#A78BFA", "#F472B6"],
+            wedgeprops={"edgecolor": "#0B1020", "linewidth": 0.8},
+        )
+        ax3.set_title(f"{symbol} 賺錢結構", color="#F8FAFC")
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=150)
