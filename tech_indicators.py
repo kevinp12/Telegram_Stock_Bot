@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from utils import safe_round, setup_matplotlib_cjk_font
+from utils import get_matplotlib_cjk_rc, safe_round, setup_matplotlib_cjk_font
 
 
 # /tech 文字分析後的原始日K暫存，供同次請求繪圖復用，避免重抓資料
@@ -181,6 +181,7 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
         fill_between = dict(y1=y1, y2=y2, color="#2D6CDF", alpha=0.22)
 
     if theme_name == "light":
+        cjk_rc = get_matplotlib_cjk_rc()
         mc = mpf.make_marketcolors(
             up="#0F9D58",
             down="#DB4437",
@@ -204,9 +205,11 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
                 "xtick.color": "#334155",
                 "ytick.color": "#334155",
                 "font.size": 9,
+                **cjk_rc,
             },
         )
     else:
+        cjk_rc = get_matplotlib_cjk_rc()
         mc = mpf.make_marketcolors(
             up="#7CFC00",
             down="#FF5C5C",
@@ -230,6 +233,7 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
                 "xtick.color": "#CBD5E1",
                 "ytick.color": "#CBD5E1",
                 "font.size": 9,
+                **cjk_rc,
             },
         )
 

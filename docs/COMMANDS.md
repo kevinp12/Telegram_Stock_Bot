@@ -16,7 +16,9 @@
 | `/marco` | 宏觀雷達（CPI/PCE/PPI/NFP...） | `main_bot.on_marco` → `command.cmd_marco` |
 | `/tech` | 技術與 SMC | `main_bot.on_tech` → `command.cmd_tech` |
 | `/chart [代號]` | 輸出戰術圖 | `main_bot.on_chart` → `main_bot.maybe_send_tech_chart` |
-| `/fin` | 財務分析 | `main_bot.on_fin` → `command.cmd_fin` |
+| `/fin` | 財務分析（含自動財報圖） | `main_bot.on_fin` → `command.cmd_fin` + `main_bot.maybe_send_fin_chart` |
+| `/fin chart [代號]` | 直接輸出財報圖 | `main_bot.on_fin` → `command.cmd_fin` + `main_bot.maybe_send_fin_chart` |
+| `/fin compare A B` | 財報比較（含合併對比圖） | `main_bot.on_fin` → `command.cmd_fin` + `main_bot.maybe_send_fin_compare_chart` |
 | `/news` | 新聞與 AI 解讀 | `main_bot.on_news` → `command.cmd_news` |
 | `/whale` | 內部人/機構追蹤 | `main_bot.on_whale` → `command.cmd_whale` |
 | `/ask` | 深度問答 | `main_bot.on_ask` → `command.cmd_ask` |

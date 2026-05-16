@@ -2,18 +2,47 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 
+_CJK_FONT_CANDIDATES = [
+    "Heiti TC",
+    "PingFang HK",
+    "PingFang TC",
+    "Hiragino Sans CNS",
+    "Arial Unicode MS",
+    "Songti SC",
+]
+
+
+def _pick_available_cjk_font() -> str:
+    """挑選目前環境真的存在的 CJK 字型名稱。"""
+    try:
+        from matplotlib import font_manager as fm
+
+        available = {f.name for f in fm.fontManager.ttflist}
+        for name in _CJK_FONT_CANDIDATES:
+            if name in available:
+                return name
+    except Exception:
+        pass
+    return "DejaVu Sans"
+
+
 def setup_matplotlib_cjk_font(mpl_module) -> None:
     """統一設定 matplotlib 的中文字型與負號顯示。"""
+    cjk_font = _pick_available_cjk_font()
     mpl_module.rcParams["font.family"] = "sans-serif"
-    mpl_module.rcParams["font.sans-serif"] = [
-        "PingFang TC",
-        "Microsoft JhengHei",
-        "Heiti TC",
-        "Noto Sans CJK TC",
-        "Arial Unicode MS",
-        "DejaVu Sans",
-    ]
+    # 把第一優先直接鎖定為「本機確定存在」的字型，避免 fallback 到不支援中文字型
+    mpl_module.rcParams["font.sans-serif"] = [cjk_font, "DejaVu Sans"]
     mpl_module.rcParams["axes.unicode_minus"] = False
+
+
+def get_matplotlib_cjk_rc() -> dict:
+    """提供可注入 style/rc 的統一中文字型設定。"""
+    cjk_font = _pick_available_cjk_font()
+    return {
+        "font.family": "sans-serif",
+        "font.sans-serif": [cjk_font, "DejaVu Sans"],
+        "axes.unicode_minus": False,
+    }
 
 
 def safe_round(value: Any, decimals: int = 2) -> Any:

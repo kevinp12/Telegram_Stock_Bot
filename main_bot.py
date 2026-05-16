@@ -281,27 +281,75 @@ def maybe_send_tech_chart(
 
 
 def maybe_send_fin_chart(chat_id: int, text: str) -> None:
-    """單一代號 /fin 時附加三季財報圖（記憶體串流，不落地）。"""
+    """/fin 圖表輸出：支援 /fin [symbol] 與 /fin chart [symbol]。"""
     parts = (text or "").split()
-    if len(parts) != 2:
+    if not parts or parts[0].lower() != "/fin":
         return
-    if parts[0].lower() != "/fin" or parts[1].strip().lower() == "compare":
+
+    symbol = ""
+    if len(parts) == 2 and parts[1].strip().lower() != "compare":
+        symbol = parts[1].strip().upper()
+    elif len(parts) == 3 and parts[1].strip().lower() == "chart":
+        symbol = parts[2].strip().upper()
+    else:
         return
-    symbol = parts[1].strip().upper()
+
     if not symbol:
         return
+
     try:
         fin_buf = command.market_api.generate_fin_chart_buffer(symbol)
         if fin_buf is None:
-            safe_send(chat_id, f"ℹ️ {symbol} 近三季財報資料不足，暫時無法出圖。")
+            safe_send(chat_id, f"ℹ️ {symbol} 財報圖資料不足，暫時無法出圖。")
             return
-        bot.send_photo(chat_id, photo=fin_buf, caption=f"📊 {symbol} 近三季財報棒狀圖（含 QoQ 變化%）")
+
+        # 傳送穩定化：失敗時重試一次
+        sent = False
+        last_exc = None
+        for _ in range(2):
+            try:
+                fin_buf.seek(0)
+                bot.send_photo(chat_id, photo=fin_buf, caption=f"📊 {symbol}財報圖（營收/淨利/淨利率/QoQ）")
+                sent = True
+                break
+            except Exception as exc:
+                last_exc = exc
+
+        if not sent:
+            safe_send(chat_id, f"⚠️ {symbol} 財報圖傳送失敗，請稍後再試一次。")
+            logging.warning("send fin chart failed after retry for %s: %s", symbol, last_exc)
+
         try:
             fin_buf.close()
         except Exception:
             pass
     except Exception as exc:
         logging.warning("send fin chart failed: %s", exc)
+
+
+def maybe_send_fin_compare_chart(chat_id: int, text: str) -> None:
+    """/fin compare 後附加合併對比圖（2~3 檔）。"""
+    parts = (text or "").split()
+    if len(parts) < 4 or parts[0].lower() != "/fin" or parts[1].lower() != "compare":
+        return
+    symbols = [p.strip().upper() for p in parts[2:] if p.strip()][:3]
+    if len(symbols) < 2:
+        return
+    buf = None
+    try:
+        buf = command.market_api.generate_fin_compare_chart_buffer(symbols)
+        if buf is None:
+            safe_send(chat_id, "ℹ️ /fin compare 對比圖資料不足，暫時無法出圖。")
+            return
+        bot.send_photo(chat_id, photo=buf, caption=f"📊 {' vs '.join(symbols)} 財報合併對比圖")
+    except Exception as exc:
+        logging.warning("send fin compare chart failed: %s", exc)
+    finally:
+        if buf is not None:
+            try:
+                buf.close()
+            except Exception:
+                pass
 
 
 def run_with_loading(message, loading_text: str, task_fn, error_prefix: str = "處理失敗"):
@@ -731,7 +779,8 @@ def on_fin(m):
     user_name = get_user_display_name(m)
     record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/fin")
     text = m.text or ""
-    is_compare = len(text.split()) >= 2 and text.split()[1].lower() == "compare"
+    parts = text.split()
+    is_compare = len(parts) >= 2 and parts[1].lower() == "compare"
     if is_compare:
         result = run_with_loading(
             m,
@@ -753,7 +802,11 @@ def on_fin(m):
     else:
         reply(m, result)
 
-    maybe_send_fin_chart(m.chat.id, text)
+    # /fin compare 送合併圖；其餘 /fin 送單檔圖
+    if is_compare:
+        maybe_send_fin_compare_chart(m.chat.id, text)
+    else:
+        maybe_send_fin_chart(m.chat.id, text)
 
 
 @bot.message_handler(commands=["whale"])
@@ -983,7 +1036,11 @@ def on_text(m):
                 send_paged_message(m.chat.id, result)
             else:
                 reply(m, result)
-            maybe_send_fin_chart(m.chat.id, text)
+            parts = text.split()
+            if len(parts) >= 2 and parts[1].lower() == "compare":
+                maybe_send_fin_compare_chart(m.chat.id, text)
+            else:
+                maybe_send_fin_chart(m.chat.id, text)
             return
         if lowered.startswith("/whale"):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/whale")

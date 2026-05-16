@@ -1004,6 +1004,83 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
     return buf
 
 
+def generate_fin_compare_chart_buffer(symbols: list[str]) -> io.BytesIO | None:
+    """產生 /fin compare 合併對比圖（2~3 檔）：營收、淨利、淨利率。"""
+    clean_symbols = [str(s).upper().strip() for s in (symbols or []) if str(s).strip()]
+    if len(clean_symbols) < 2:
+        return None
+    clean_symbols = clean_symbols[:3]
+
+    data_map: dict[str, list[dict[str, Any]]] = {}
+    for sym in clean_symbols:
+        rows = get_recent_quarterly_financials(sym, limit=4)
+        if len(rows) >= 2:
+            data_map[sym] = rows
+    if len(data_map) < 2:
+        return None
+
+    try:
+        import matplotlib as mpl
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except Exception as exc:
+        logging.warning("matplotlib unavailable for fin compare chart: %s", exc)
+        return None
+
+    setup_matplotlib_cjk_font(mpl)
+
+    def _avg(values: list[float]) -> float:
+        valid = [v for v in values if isinstance(v, (int, float))]
+        return float(sum(valid) / len(valid)) if valid else 0.0
+
+    x = np.arange(len(data_map))
+    symbols_order = list(data_map.keys())
+    rev_vals = []
+    ni_vals = []
+    margin_vals = []
+    for sym in symbols_order:
+        rows = data_map[sym]
+        rev_vals.append(_avg([float(r.get("revenue") or 0) for r in rows]))
+        ni_vals.append(_avg([float(r.get("net_income") or 0) for r in rows]))
+        margin_vals.append(_avg([float(r.get("net_margin") or 0) for r in rows]))
+
+    fig, axes = plt.subplots(1, 3, figsize=(14, 5), constrained_layout=True)
+    fig.patch.set_facecolor("#0B1020")
+    for ax in axes:
+        ax.set_facecolor("#0F172A")
+        ax.tick_params(colors="#CBD5E1")
+        for spine in ax.spines.values():
+            spine.set_color("#334155")
+        ax.grid(axis="y", linestyle="--", alpha=0.3, color="#2A3248")
+
+    colors = ["#46C2FF", "#7CFC00", "#FFD166"]
+    bars1 = axes[0].bar(x, rev_vals, color=colors[: len(symbols_order)], edgecolor="#E5E7EB", linewidth=0.6)
+    bars2 = axes[1].bar(x, ni_vals, color=colors[: len(symbols_order)], edgecolor="#E5E7EB", linewidth=0.6)
+    bars3 = axes[2].bar(x, margin_vals, color=colors[: len(symbols_order)], edgecolor="#E5E7EB", linewidth=0.6)
+
+    axes[0].set_title("近四季平均營收", color="#F8FAFC")
+    axes[1].set_title("近四季平均淨利", color="#F8FAFC")
+    axes[2].set_title("近四季平均淨利率(%)", color="#F8FAFC")
+
+    for ax in axes:
+        ax.set_xticks(x)
+        ax.set_xticklabels(symbols_order)
+
+    for i, b in enumerate(bars1):
+        axes[0].text(b.get_x() + b.get_width() / 2, b.get_height(), format_number(rev_vals[i]), ha="center", va="bottom", fontsize=8, color="#CBD5E1")
+    for i, b in enumerate(bars2):
+        axes[1].text(b.get_x() + b.get_width() / 2, b.get_height(), format_number(ni_vals[i]), ha="center", va="bottom", fontsize=8, color="#CBD5E1")
+    for i, b in enumerate(bars3):
+        axes[2].text(b.get_x() + b.get_width() / 2, b.get_height(), f"{margin_vals[i]:.1f}%", ha="center", va="bottom", fontsize=8, color="#CBD5E1")
+
+    fig.suptitle("/fin compare 財報合併對比圖", color="#F8FAFC", fontsize=13)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150)
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
 def fetch_portfolio_history(symbols: list[str]) -> dict[str, dict[str, float]]:
     """
     獲取多個標的在不同時間點的歷史價格。

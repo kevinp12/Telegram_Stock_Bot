@@ -1130,7 +1130,29 @@ def cmd_whale(text: str, user_id: int) -> str:
 def cmd_fin(text: str, user_id: int) -> str:
     parts = text.split(maxsplit=2)
     if len(parts) < 2 or not parts[1].strip():
-        return "📊 用法：/fin [代號] 或 /fin compare [代號1] [代號2]。"
+        return (
+            "📊 /fin 指令完整教學\n"
+            "━━━━━━━━━━━━━━\n"
+            "【A】單一標的財報解析\n"
+            "• `/fin NVDA`：文字財報快照 + AI 重點解讀 + 自動財報圖\n\n"
+            "【B】多標的比較（2~3 檔）\n"
+            "• `/fin compare NVDA TSLA`\n"
+            "• `/fin compare NVDA TSLA AAPL`\n\n"
+            "【C】只看財報圖\n"
+            "• `/fin chart NVDA`：直接輸出財報圖（營收/淨利/淨利率/QoQ）\n\n"
+            "📌 建議流程：先 `/fin 代號` 看完整，再用 `/fin compare ...` 做橫向判斷。"
+        )
+
+    if parts[1].lower() == "chart":
+        if len(parts) < 3 or not parts[2].strip():
+            return "📊 用法：`/fin chart [代號]`\n例如：`/fin chart NVDA`"
+        symbol = parts[2].strip().upper()
+        if not re.fullmatch(r"[A-Z0-9\.\-]{1,6}", symbol):
+            return f"❌ 錯誤的代號格式：{symbol}。請輸入正確的美股代號。"
+        return (
+            f"📊 已收到 `{symbol}` 圖表請求。\n"
+            "我會直接輸出財報圖（營收/淨利/淨利率/QoQ）。"
+        )
 
     if parts[1].lower() == "compare":
         symbols = _normalize_symbols(parts[2] if len(parts) > 2 else "")
@@ -1139,9 +1161,11 @@ def cmd_fin(text: str, user_id: int) -> str:
 
         if not combined:
             return (
-                "📊 /fin compare 用法：\n"
-                "• 直接輸入：/fin compare NVDA TSLA\n"
-                "• 或分次輸入：/fin compare NVDA，接著 /fin compare TSLA\n"
+                "📊 /fin compare 用法\n"
+                "━━━━━━━━━━━━━━\n"
+                "• 直接輸入：`/fin compare NVDA TSLA`\n"
+                "• 三檔比較：`/fin compare NVDA TSLA AAPL`\n"
+                "• 分次輸入：先 `/fin compare NVDA`，再輸入第二檔\n\n"
                 "請輸入 2 到 3 個股票代號。"
             )
 
