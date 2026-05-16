@@ -571,33 +571,47 @@ def cmd_risk(user_id: int | None = None, user_name: str = "User") -> str:
         risk_notes.append("目前風險訊號中性，仍需觀察指數與波動率是否同步轉弱。")
 
     risk_score = 0
+    risk_score_items: list[str] = []
     if sp_pct <= -1:
         risk_score += 2
+        risk_score_items.append("S&P500 日跌幅 ≤ -1%：+2")
     elif sp_pct < 0:
         risk_score += 1
+        risk_score_items.append("S&P500 日跌幅 < 0：+1")
     if ndx_pct <= -1:
         risk_score += 2
+        risk_score_items.append("Nasdaq 日跌幅 ≤ -1%：+2")
     elif ndx_pct < 0:
         risk_score += 1
+        risk_score_items.append("Nasdaq 日跌幅 < 0：+1")
     if isinstance(vix_price, (int, float)):
         if vix_price >= 25:
             risk_score += 4
+            risk_score_items.append("VIX ≥ 25（恐慌區）：+4")
         elif vix_price >= 20:
             risk_score += 3
+            risk_score_items.append("VIX ≥ 20（高波動）：+3")
         elif vix_price >= 18:
             risk_score += 2
+            risk_score_items.append("VIX ≥ 18（警戒）：+2")
         elif vix_price >= 15:
             risk_score += 1
+            risk_score_items.append("VIX ≥ 15（偏緊）：+1")
     if isinstance(vix_diff, (int, float)) and vix_diff > 0:
         risk_score += 1
+        risk_score_items.append("VIX 日內上升：+1")
     try:
         fg_val = float(fg.get("value"))
         if fg_val <= 25:
             risk_score += 2
+            risk_score_items.append("恐懼貪婪 ≤ 25（極度恐懼）：+2")
         elif fg_val >= 75:
             risk_score += 1
+            risk_score_items.append("恐懼貪婪 ≥ 75（過熱）：+1")
     except Exception:
         pass
+
+    risk_score = min(12, max(0, int(risk_score)))
 
     if risk_score >= 8:
         risk_level = "🔴 高風險"
@@ -641,6 +655,9 @@ def cmd_risk(user_id: int | None = None, user_name: str = "User") -> str:
         + "【6】🧭 風險分級與行動\n"
         + f"• 風險分數：`{risk_score}`\n"
         + f"• 風險等級：{risk_level}\n"
+        + "• 分數拆解：\n"
+        + ("\n".join(f"  - {item}" for item in risk_score_items) if risk_score_items else "  - 無明顯加分因子")
+        + "\n"
         + "\n".join(f"• {item}" for item in action_plan)
     )
 

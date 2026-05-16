@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from utils import safe_round
+from utils import safe_round, setup_matplotlib_cjk_font
 
 
 # /tech 文字分析後的原始日K暫存，供同次請求繪圖復用，避免重抓資料
@@ -74,8 +74,12 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
     """生成 /tech 戰術圖表（90天計算，60天顯示），回傳 BytesIO。theme: dark|light"""
     try:
         import mplfinance as mpf
+        import matplotlib as mpl
     except Exception as exc:
         raise RuntimeError("缺少 mplfinance 套件，請先安裝 requirements.txt") from exc
+
+    # 統一中文字型策略（跨圖一致）
+    setup_matplotlib_cjk_font(mpl)
 
     symbol = symbol.upper().strip()
     cached_df = _TECH_DF_CACHE.get(symbol)
@@ -238,7 +242,7 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
         style=style,
         addplot=ap,
         fill_between=fill_between,
-        title=f"{symbol} | SMC + TD9 Tactical Chart ({theme_name})",
+        title=f"{symbol}|SMC+TD9 Tactical Chart({theme_name})",
         ylabel="Price",
         ylabel_lower="Volume (K/M/B)",
         returnfig=True,

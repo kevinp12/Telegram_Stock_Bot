@@ -2,6 +2,20 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 
+def setup_matplotlib_cjk_font(mpl_module) -> None:
+    """統一設定 matplotlib 的中文字型與負號顯示。"""
+    mpl_module.rcParams["font.family"] = "sans-serif"
+    mpl_module.rcParams["font.sans-serif"] = [
+        "PingFang TC",
+        "Microsoft JhengHei",
+        "Heiti TC",
+        "Noto Sans CJK TC",
+        "Arial Unicode MS",
+        "DejaVu Sans",
+    ]
+    mpl_module.rcParams["axes.unicode_minus"] = False
+
+
 def safe_round(value: Any, decimals: int = 2) -> Any:
     """安全地將數值四捨五入到指定位數 (使用 ROUND_HALF_UP)。"""
     if value is None or value == "N/A":

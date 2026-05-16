@@ -22,6 +22,7 @@ except Exception:
 
 import ai_core
 from config import BLS_API_KEY, FINNHUB_KEY, FRED_API_KEY, NEWS_API_KEY
+from utils import safe_round, setup_matplotlib_cjk_font
 
 finnhub_client = None
 if finnhub and FINNHUB_KEY:
@@ -579,9 +580,6 @@ def get_fast_price(symbol_name: str):
             return "N/A"
 
 
-from utils import safe_round
-
-
 def get_stock_history_summary(symbol: str) -> dict[str, Any]:
     symbol = symbol.upper()
     out = {
@@ -861,11 +859,15 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
         return None
 
     try:
+        import matplotlib as mpl
         import matplotlib.pyplot as plt
         import numpy as np
     except Exception as exc:
         logging.warning("matplotlib unavailable for fin chart: %s", exc)
         return None
+
+    # 統一中文字型策略（跨圖一致）
+    setup_matplotlib_cjk_font(mpl)
 
     labels = [r["quarter"] for r in rows]
     revs = [r["revenue"] if isinstance(r.get("revenue"), (int, float)) else 0.0 for r in rows]
@@ -905,7 +907,7 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
     bars1 = ax1.bar(x - width / 2, revs, width=width, color="#46C2FF", edgecolor="#E5E7EB", linewidth=0.6, label="Revenue")
     bars2 = ax1.bar(x + width / 2, net_income, width=width, color="#7CFC00", edgecolor="#E5E7EB", linewidth=0.6, label="Net Income")
 
-    ax1.set_title(f"{symbol} 近一年季度：營收 / 淨利")
+    ax1.set_title(f"{symbol}近一年季度：營收/淨利")
     ax1.set_xticks(x)
     ax1.set_xticklabels(labels)
     ax1.title.set_color("#F8FAFC")
@@ -937,7 +939,7 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
 
     # 淨利率趨勢圖
     bars3 = ax2.bar(x, margins, width=0.40, color="#FFD166", edgecolor="#E5E7EB", linewidth=0.6)
-    ax2.set_title(f"{symbol} 近一年季度：淨利率 (%)")
+    ax2.set_title(f"{symbol}近一年季度：淨利率(%)")
     ax2.set_xticks(x)
     ax2.set_xticklabels(labels)
     ax2.title.set_color("#F8FAFC")
@@ -983,7 +985,7 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
     total = sum(pie_vals)
     if total <= 0:
         ax3.text(0.5, 0.5, "N/A", ha="center", va="center", color="#CBD5E1", fontsize=12)
-        ax3.set_title(f"{symbol} 賺錢結構", color="#F8FAFC")
+        ax3.set_title(f"{symbol}賺錢結構", color="#F8FAFC")
     else:
         ax3.pie(
             pie_vals,
@@ -993,7 +995,7 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
             colors=["#46C2FF", "#7CFC00", "#FFD166", "#A78BFA", "#F472B6"],
             wedgeprops={"edgecolor": "#0B1020", "linewidth": 0.8},
         )
-        ax3.set_title(f"{symbol} 賺錢結構", color="#F8FAFC")
+        ax3.set_title(f"{symbol}賺錢結構", color="#F8FAFC")
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=150)

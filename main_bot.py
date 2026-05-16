@@ -65,6 +65,7 @@ bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=True)
 PAGED_MESSAGE_CACHE: dict[str, list[str]] = {}
 TECH_CHART_COOLDOWN_SECONDS = 45
 _TECH_CHART_LAST_TS: dict[tuple[int, str], float] = {}
+_USER_CHART_THEME: dict[int, str] = {}
 
 
 def get_user_display_name(m) -> str:
@@ -222,6 +223,7 @@ def maybe_send_tech_chart(
     user_id: int | None = None,
     user_name: str = "User",
     username: str = "",
+    theme: str = "dark",
 ) -> None:
     """在 /tech 或 /chart 單一代號模式時發送戰術圖表。"""
     parts = (text or "").split()
@@ -235,7 +237,6 @@ def maybe_send_tech_chart(
         return
 
     symbol = parts[1].strip().upper()
-    theme = "dark"
     if not symbol:
         return
 
@@ -588,12 +589,23 @@ def on_chart(m):
     user_id, user_name = register_user(m)
     text = (m.text or "").strip()
     parts = text.split()
-    if len(parts) != 2:
+    if len(parts) >= 2 and parts[1].strip().lower() == "theme":
+        if len(parts) != 3 or parts[2].strip().lower() not in {"dark", "light"}:
+            reply(m, "❌ 用法：`/chart theme [dark|light]`\n例如：`/chart theme dark`")
+            return
+        selected = parts[2].strip().lower()
+        _USER_CHART_THEME[user_id] = selected
+        reply(m, f"✅ 圖表主題已切換為：`{selected}`\n之後 `/chart [代號]` 會自動套用。")
+        return
+
+    if len(parts) < 2 or len(parts) > 3:
         reply(
             m,
             "📘 `/chart` 指令教學\n"
             "━━━━━━━━━━━━━━\n"
             "• `/chart [代號]`：輸出戰術圖\n"
+            "• `/chart [代號] [dark|light]`：指定本次主題\n"
+            "• `/chart theme [dark|light]`：設定預設主題\n"
             "例如：`/chart NVDA`",
         )
         return
@@ -601,8 +613,15 @@ def on_chart(m):
     if not symbol.isalnum():
         reply(m, "❌ 代號格式錯誤，請輸入英數代號，例如：`/chart NVDA`")
         return
+    theme = _USER_CHART_THEME.get(user_id, "dark")
+    if len(parts) == 3:
+        candidate = parts[2].strip().lower()
+        if candidate not in {"dark", "light"}:
+            reply(m, "❌ 主題格式錯誤，請使用 `dark` 或 `light`，例如：`/chart NVDA light`")
+            return
+        theme = candidate
     record_user_log_safely(user_id, user_name, get_username(m), text, source="/chart")
-    maybe_send_tech_chart(m.chat.id, text, cmd_prefix="/chart", user_id=user_id, user_name=user_name, username=get_username(m))
+    maybe_send_tech_chart(m.chat.id, text, cmd_prefix="/chart", user_id=user_id, user_name=user_name, username=get_username(m), theme=theme)
 
 
 @bot.message_handler(commands=["risk"])
@@ -929,7 +948,20 @@ def on_text(m):
             return
         if lowered.startswith("/chart"):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/chart")
-            maybe_send_tech_chart(m.chat.id, text, cmd_prefix="/chart", user_id=user_id, user_name=user_name, username=get_username(m))
+            parts = text.split()
+            if len(parts) >= 2 and parts[1].strip().lower() == "theme":
+                if len(parts) == 3 and parts[2].strip().lower() in {"dark", "light"}:
+                    selected = parts[2].strip().lower()
+                    _USER_CHART_THEME[user_id] = selected
+                    reply(m, f"✅ 圖表主題已切換為：`{selected}`\n之後 `/chart [代號]` 會自動套用。")
+                else:
+                    reply(m, "❌ 用法：`/chart theme [dark|light]`\n例如：`/chart theme dark`")
+                return
+
+            theme = _USER_CHART_THEME.get(user_id, "dark")
+            if len(parts) == 3 and parts[2].strip().lower() in {"dark", "light"}:
+                theme = parts[2].strip().lower()
+            maybe_send_tech_chart(m.chat.id, text, cmd_prefix="/chart", user_id=user_id, user_name=user_name, username=get_username(m), theme=theme)
             return
         if lowered.startswith("/news"):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/news")
