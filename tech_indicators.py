@@ -248,7 +248,7 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
         style=style,
         addplot=ap,
         fill_between=fill_between,
-        title=f"{symbol} | {vp_judgement}",
+        title=f"{symbol}",
         ylabel="Price",
         ylabel_lower="Volume",
         returnfig=True,
@@ -258,6 +258,10 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
 
     price_ax = axes[0]
     vol_ax = axes[2] if len(axes) >= 3 else (axes[1] if len(axes) > 1 else axes[0])
+
+    # 設置明顯的量價關係副標題 (置中偏上)
+    subtitle_color = "#FFD700" if theme_name == "dark" else "#FF8C00"
+    fig.text(0.5, 0.92, vp_judgement, ha="center", va="center", fontsize=11, color=subtitle_color, weight="bold", transform=fig.transFigure)
 
     # 左上角：出圖時間 + watermark
     plot_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -273,11 +277,10 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
         color="white",
         bbox=dict(facecolor="black", alpha=0.5, edgecolor="none", pad=2),
     )
-    # 將 MA/VWAP/量價評斷 標籤移至左上角
+    # 將 MA/VWAP 標籤移至左上角
     price_ax.text(0.01, 0.92, "MA20", transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#FFD166", weight="bold")
     price_ax.text(0.01, 0.87, "EMA50", transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#FF4D9D", weight="bold")
     price_ax.text(0.01, 0.82, "VWAP (anchor)", transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#C7CED6", weight="bold")
-    price_ax.text(0.01, 0.77, vp_judgement, transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#7DD3FC", weight="bold")
 
     # 在 FVG 藍色區間中間加上 FVG 字樣
     if fvg_zone:
