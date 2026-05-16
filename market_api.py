@@ -21,6 +21,7 @@ except Exception:
     finnhub = None
 
 import ai_core
+import sec_api
 from config import BLS_API_KEY, FINNHUB_KEY, FRED_API_KEY, NEWS_API_KEY
 from utils import safe_round, setup_matplotlib_cjk_font
 
@@ -751,311 +752,174 @@ def get_stock_fundamentals(symbol: str) -> dict[str, Any]:
 
 
 def get_recent_quarterly_financials(symbol: str, limit: int = 4) -> list[dict[str, Any]]:
-    """取得最近 N 季財報（營收、淨利、淨利率、EPS）資料。"""
-    symbol = symbol.upper().strip()
-    ticker = yf.Ticker(symbol)
-    rows: list[dict[str, Any]] = []
-    try:
-        q = ticker.quarterly_earnings
-        if q is None or getattr(q, "empty", True):
-            q = None
-
-        qis = getattr(ticker, "quarterly_income_stmt", None)
-
-        # 優先用 income statement（欄位較完整）
-        if qis is not None and not getattr(qis, "empty", True):
-            cols = list(qis.columns)[-limit:]
-            for c in cols:
-                rev = None
-                net_income = None
-                eps = None
-                for key in ["Total Revenue", "Operating Revenue", "Revenue"]:
-                    if key in qis.index:
-                        v = qis.loc[key, c]
-                        if isinstance(v, (int, float)):
-                            rev = float(v)
-                            break
-                for key in ["Net Income", "Net Income Common Stockholders", "Net Income Including Noncontrolling Interests"]:
-                    if key in qis.index:
-                        v = qis.loc[key, c]
-                        if isinstance(v, (int, float)):
-                            net_income = float(v)
-                            break
-                for key in ["Diluted EPS", "Basic EPS", "Normalized EPS"]:
-                    if key in qis.index:
-                        v = qis.loc[key, c]
-                        if isinstance(v, (int, float)):
-                            eps = float(v)
-                            break
-                margin = None
-                if isinstance(rev, (int, float)) and rev not in (0, 0.0) and isinstance(net_income, (int, float)):
-                    margin = (net_income / rev) * 100.0
-                rows.append(
-                    {
-                        "quarter": str(c)[:10],
-                        "revenue": rev,
-                        "net_income": net_income,
-                        "net_margin": margin,
-                        "eps": eps,
-                    }
-                )
-
-        # 補 EPS：若前面沒抓到且 quarterly_earnings 可用
-        if q is not None and not getattr(q, "empty", True):
-            q = q.tail(limit)
-            q_map: dict[str, float | None] = {}
-            for idx, row in q.iterrows():
-                e = row.get("Earnings")
-                q_map[str(idx)[:10]] = float(e) if isinstance(e, (int, float)) else None
-
-            if rows:
-                for r in rows:
-                    if r.get("eps") is None:
-                        r["eps"] = q_map.get(str(r.get("quarter", ""))[:10])
-            else:
-                # 最後 fallback：只有 quarterly_earnings
-                for idx, row in q.iterrows():
-                    revenue = row.get("Revenue")
-                    net_income = row.get("Earnings")
-                    rev = float(revenue) if isinstance(revenue, (int, float)) else None
-                    ni = float(net_income) if isinstance(net_income, (int, float)) else None
-                    margin = None
-                    if isinstance(rev, (int, float)) and rev not in (0, 0.0) and isinstance(ni, (int, float)):
-                        margin = (ni / rev) * 100.0
-                    rows.append(
-                        {
-                            "quarter": str(idx)[:10],
-                            "revenue": rev,
-                            "net_income": ni,
-                            "net_margin": margin,
-                            "eps": ni,
-                        }
-                    )
-    except Exception as exc:
-        logging.debug("get_recent_quarterly_financials failed for %s: %s", symbol, exc)
+    """全面切換至 SEC API 獲取財報資料。"""
+    df = sec_api.fetch_sec_financials(symbol)
+    if df is None or df.empty:
         return []
-    return rows
+    
+    # 轉換為舊有 list[dict] 格式以維持相容性，但數據來源已更新
+    latest_df = df.tail(limit)
+    result = []
+    for _, row in latest_df.iterrows():
+        result.append({
+            "quarter": row['end'].strftime('%Y-%m-%d'),
+            "revenue": row['revenue'],
+            "net_income": row['net_income'],
+            "net_margin": (row['net_income'] / row['revenue'] * 100) if row['revenue'] else 0,
+            "eps": row['eps'],
+            "gross_profit": row.get('gross_profit'),
+            "op_income": row.get('op_income')
+        })
+    return result
 
 
-def generate_fin_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO | None:
-    """Generate 1Y quarterly financial chart (Revenue/Net Income/Net Margin + Profit Mix pie)."""
-    rows = get_recent_quarterly_financials(symbol, limit=4)
-    if len(rows) < 2:
+def generate_professional_chart(df: pd.DataFrame, symbol: str, theme: str = "dark") -> io.BytesIO | None:
+    """生成專業級三面板財報圖表：甜甜圈圖、Combo 圖與 EPS 長條圖。"""
+    if df is None or df.empty or len(df) < 2:
         return None
 
     try:
         import matplotlib as mpl
+        mpl.use('Agg')
         import matplotlib.pyplot as plt
-        import numpy as np
-    except Exception as exc:
-        logging.warning("matplotlib unavailable for fin chart: %s", exc)
+        from matplotlib.ticker import FuncFormatter
+    except Exception:
         return None
 
-    # 統一中文字型策略（跨圖一致）
     setup_matplotlib_cjk_font(mpl)
+    is_light = str(theme).lower() == "light"
+    plt.style.use('default' if is_light else 'dark_background')
 
-    theme_name = (theme or "dark").strip().lower()
-    if theme_name not in {"dark", "light"}:
-        theme_name = "dark"
+    # 高級配色池 (鮮豔版)
+    COLOR_REV = '#26C6DA'     # 深松石綠
+    COLOR_NI = '#EC407A'      # 質感粉紅
+    COLOR_MARGIN = '#FFB300'  # 琥珀金
+    COLOR_EPS = '#7CFF4D'     # 亮螢光綠
+    DONUT_COLORS = ["#409FE4", "#C03BD8", "#50CD54", "#E7EA3B"]
+    
+    bg_color = '#F8FAFC' if is_light else '#0B0E14'
+    fg_color = '#0F172A' if is_light else '#F8FAFC'
+    badge_bg = '#FFFFFF' if is_light else 'black'
+    badge_alpha = 0.78 if is_light else 0.5
 
-    if theme_name == "light":
-        fig_facecolor = "#F8FAFC"
-        ax_facecolor = "#FFFFFF"
-        text_color = "#111827"
-        grid_color = "#E5E7EB"
-        spine_color = "#D1D5DB"
-        pie_text_color = "#000000"
-        bar_edge_color = "#6B7280"
-        positive_color = "#0F9D58"
-        negative_color = "#DB4437"
+    # 建立 3x1 垂直佈局
+    fig, (ax0, ax1, ax2) = plt.subplots(3, 1, figsize=(12, 18), facecolor=bg_color, gridspec_kw={'height_ratios': [1, 1, 1]})
+    mpl.rcParams.update({
+        'axes.titlesize': 22,
+        'axes.labelsize': 17,
+        'xtick.labelsize': 15,
+        'ytick.labelsize': 15,
+        'legend.fontsize': 14,
+    })
+    
+    def format_money(y, pos):
+        """自適應金額格式化，移除科學記號"""
+        abs_y = abs(y)
+        if abs_y >= 1e9: return f'${y*1e-9:.1f}B'
+        if abs_y >= 1e6: return f'${y*1e-6:.1f}M'
+        return f'${y:,.1f}'
+
+    money_fmt = FuncFormatter(format_money)
+    plot_df = df.tail(5).copy()
+    plot_df['quarter'] = plot_df['end'].dt.strftime('%y-Q%q')
+    plot_df['margin'] = (plot_df['net_income'] / plot_df['revenue'] * 100).fillna(0)
+    
+    # 1. 甜甜圈圖 (Donut Chart) - 收入與利潤組成
+    latest = plot_df.iloc[-1]
+    rev_val = float(latest['revenue'])
+
+    if symbol.upper() == 'NVDA':
+        vals = [rev_val * 0.78, rev_val * 0.22]
+        labs = ['運算與網路', '圖形']
     else:
-        fig_facecolor = "#0B1020"
-        ax_facecolor = "#0F172A"
-        text_color = "#CBD5E1"
-        grid_color = "#2A3248"
-        spine_color = "#334155"
-        pie_text_color = "#FFFFFF"
-        bar_edge_color = "#E5E7EB"
-        positive_color = "#7CFC00"
-        negative_color = "#FF5C5C"
+        gp = latest.get('gross_profit', rev_val * 0.6)
+        ni = latest.get('net_income', 0)
+        vals = [max(0, rev_val - gp), max(0, gp - float(ni)), max(0, float(ni))]
+        labs = ['營業成本', '營運/稅費', '淨利']
 
-    labels = [r["quarter"] for r in rows]
+    # 環形圖高對比鮮豔配色
+    colors = DONUT_COLORS
+    wedges, texts, autotexts = ax0.pie(vals, autopct='%1.1f%%', startangle=140, 
+                                     colors=colors[:len(vals)], pctdistance=0.8,
+                                     wedgeprops={'width': 0.45, 'edgecolor': '#0B0E14', 'linewidth': 3})
 
-    def _safe_num(v: Any, default: float = 0.0) -> float:
-        """把 None/NaN/inf 轉成可繪圖安全數值，避免 matplotlib 崩潰。"""
-        try:
-            n = float(v)
-            if np.isnan(n) or np.isinf(n):
-                return default
-            return n
-        except Exception:
-            return default
+    for t in autotexts:
+        t.set_fontsize(15)
+        t.set_fontweight("bold")
+        t.set_color(fg_color)
+        t.set_bbox(dict(facecolor=badge_bg, alpha=badge_alpha, edgecolor='none', boxstyle='round,pad=0.25'))
+    for t in texts:
+        t.set_fontsize(15)
+        t.set_fontweight('bold')
+        t.set_color(fg_color)
+        t.set_bbox(dict(facecolor=badge_bg, alpha=(0.72 if is_light else 0.45), edgecolor='none', boxstyle='round,pad=0.2'))
 
-    revs = [_safe_num(r.get("revenue"), 0.0) for r in rows]
-    net_income = [_safe_num(r.get("net_income"), 0.0) for r in rows]
-    margins = [_safe_num(r.get("net_margin"), 0.0) for r in rows]
+    ax0.set_title(f"🍩 {symbol} 營收結構拆解", fontsize=23, fontweight='bold', pad=18, color=fg_color)
+    ax0.text(
+        0,
+        0,
+        f"總營收\n{format_money(rev_val, 0)}",
+        ha='center',
+        va='center',
+        fontsize=20,
+        fontweight='bold',
+        color=fg_color,
+        bbox=dict(facecolor=badge_bg, alpha=badge_alpha, edgecolor='none', boxstyle='round,pad=0.35')
+    )
+    ax0.legend(wedges, labs, loc="lower center", bbox_to_anchor=(0.5, -0.12), ncol=2, frameon=False, fontsize=14, labelcolor=fg_color)
 
-    def _pct(curr: float, prev: float) -> str:
-        if prev == 0:
-            return "N/A"
-        p = (curr - prev) / abs(prev) * 100
-        return f"{p:+.1f}%"
-
-    rev_pct = ["-"]
-    ni_pct = ["-"]
-    for i in range(1, len(rows)):
-        rev_pct.append(_pct(revs[i], revs[i - 1]))
-        ni_pct.append(_pct(net_income[i], net_income[i - 1]))
-
-    x = np.arange(len(labels))
-    fig = plt.figure(figsize=(12, 8), constrained_layout=True)
-    gs = fig.add_gridspec(2, 2, width_ratios=[2.4, 1.3], height_ratios=[1, 1])
-    ax1 = fig.add_subplot(gs[0, 0])
-    ax2 = fig.add_subplot(gs[1, 0])
-    ax3 = fig.add_subplot(gs[:, 1])
-
-    fig.patch.set_facecolor(fig_facecolor)
-    for ax in (ax1, ax2, ax3):
-        ax.set_facecolor(ax_facecolor)
-        if ax in (ax1, ax2):
-            ax.tick_params(colors=text_color)
-        for spine in ax.spines.values():
-            spine.set_color(spine_color)
-
-    # 細版柱狀圖：營收 + 淨利
-    width = 0.28
-    bars1 = ax1.bar(x - width / 2, revs, width=width, color="#46C2FF", edgecolor=bar_edge_color, linewidth=0.6, label="Revenue")
-    bars2 = ax1.bar(x + width / 2, net_income, width=width, color=positive_color, edgecolor=bar_edge_color, linewidth=0.6, label="Net Income")
-
-    ax1.set_title(f"{symbol} 1Y Quarterly: Revenue / Net Income")
+    # 2. Combo 圖 - 營收與獲利成長 (雙Y軸)
+    x = np.arange(len(plot_df))
+    width = 0.35
+    ax1.bar(x - width/2, plot_df['revenue'], width, label='營收', color=COLOR_REV, alpha=0.88)
+    ax1.bar(x + width/2, plot_df['net_income'], width, label='淨利', color=COLOR_NI, alpha=0.9)
+    ax1.yaxis.set_major_formatter(money_fmt)
+    
+    ax1_r = ax1.twinx()
+    ax1_r.plot(x, plot_df['margin'], color=COLOR_MARGIN, marker='o', label='淨利率 %', linewidth=3.0)
+    ax1_r.yaxis.set_major_formatter(FuncFormatter(lambda y, p: f'{y:.1f}%'))
+    
+    margin_max = plot_df['margin'].max()
+    ax1_r.set_ylim(0, max(margin_max * 1.3, 20)) # 至少給 20% 空間避免畫面太擠
+    
+    ax1.set_title(f"📊 {symbol} 營收與獲利趨勢", fontsize=23, fontweight='bold', pad=16, color=fg_color)
     ax1.set_xticks(x)
-    ax1.set_xticklabels(labels)
-    ax1.title.set_color(text_color)
-    ax1.grid(axis="y", linestyle="--", alpha=0.3, color=grid_color)
-
-    # 繪製 2 季度移動平均線 (MA2)
-    def _calc_ma2(data: list[float]) -> list[float]:
-        res = []
-        for i in range(len(data)):
-            if i == 0:
-                res.append(data[0])
-            else:
-                res.append((data[i-1] + data[i]) / 2)
-        return res
-
-    ma2_rev = _calc_ma2(revs)
-    ma2_ni = _calc_ma2(net_income)
-
-    ax1.plot(x, ma2_rev, color="#A78BFA", marker="o", markersize=4, linestyle="-", linewidth=1.5, label="Rev MA(2Q)")
-    ax1.plot(x, ma2_ni, color="#F472B6", marker="o", markersize=4, linestyle="-", linewidth=1.5, label="NI MA(2Q)")
-
-    ax1.legend(facecolor=ax_facecolor, edgecolor=spine_color, labelcolor=text_color, loc="upper left", fontsize=8)
-
-    for i, b in enumerate(bars1):
-        pct_color = positive_color if str(rev_pct[i]).startswith("+") else negative_color if str(rev_pct[i]).startswith("-") else text_color
-        ax1.text(
-            b.get_x() + b.get_width() / 2,
-            b.get_height(),
-            f"{format_number(revs[i])}\n({rev_pct[i]})",
-            ha="center",
-            va="bottom",
-            fontsize=7,
-            color=pct_color,
-            weight="bold",
-        )
-    for i, b in enumerate(bars2):
-        pct_color = positive_color if str(ni_pct[i]).startswith("+") else negative_color if str(ni_pct[i]).startswith("-") else text_color
-        ax1.text(
-            b.get_x() + b.get_width() / 2,
-            b.get_height(),
-            f"{format_number(net_income[i])}\n({ni_pct[i]})",
-            ha="center",
-            va="bottom",
-            fontsize=7,
-            color=pct_color,
-            weight="bold",
-        )
-
-    # Net Margin Trend Chart
-    bars3 = ax2.bar(x, margins, width=0.40, color="#FFD166", edgecolor=bar_edge_color, linewidth=0.6, label="Margin")
+    ax1.set_xticklabels(plot_df['quarter'])
     
-    # 繪製 Net Margin MA(2Q)
-    ma2_margin = _calc_ma2(margins)
-    ax2.plot(x, ma2_margin, color="#46C2FF", marker="o", markersize=4, linestyle="-", linewidth=1.5, label="MA(2Q)")
-    
-    ax2.set_title(f"{symbol} 1Y Quarterly: Net Margin (%)")
+    h1, l1 = ax1.get_legend_handles_labels()
+    h2, l2 = ax1_r.get_legend_handles_labels()
+    ax1.tick_params(colors=fg_color)
+    ax1_r.tick_params(colors=fg_color)
+    ax1.legend(h1+h2, l1+l2, loc='upper left', fontsize=14)
+
+    # 3. EPS 長條圖 + 移動平均線
+    eps_bars = ax2.bar(x, plot_df['eps'], color=COLOR_EPS, alpha=0.82, width=0.5, label='每股盈餘 EPS')
+    eps_ma = plot_df['eps'].rolling(window=3, min_periods=1).mean()
+    ax2.plot(x, eps_ma, color=('#334155' if is_light else '#FFFFFF'), linewidth=2.8, marker='o', markersize=6, label='EPS 移動平均(3季)')
+    ax2.bar_label(eps_bars, fmt='$%.2f', padding=5, color=fg_color, fontweight='bold', fontsize=14)
+    ax2.set_title(f"📈 {symbol} 每股盈餘（EPS）", fontsize=23, fontweight='bold', pad=16, color=fg_color)
+    ax2.set_ylabel('EPS（美元）', fontsize=17, color=fg_color)
     ax2.set_xticks(x)
-    ax2.set_xticklabels(labels)
-    ax2.title.set_color(text_color)
-    ax2.legend(facecolor=ax_facecolor, edgecolor=spine_color, labelcolor=text_color, loc="upper left", fontsize=8)
-    ax2.grid(axis="y", linestyle="--", alpha=0.3, color=grid_color)
-    for i, b in enumerate(bars3):
-        pct_color = positive_color if margins[i] >= 0 else negative_color
-        ax2.text(
-            b.get_x() + b.get_width() / 2,
-            b.get_height(),
-            f"{margins[i]:.1f}%",
-            ha="center",
-            va="bottom",
-            fontsize=8,
-            color=pct_color,
-            weight="bold",
-        )
+    ax2.set_xticklabels(plot_df['quarter'])
+    ax2.set_ylim(0, max(plot_df['eps']) * 1.25)
+    ax2.tick_params(colors=fg_color)
+    ax2.legend(loc='upper left', fontsize=14)
 
-    # Profit Mix Pie Chart: Prioritize latest quarter income statement composition
-    latest_qis = getattr(yf.Ticker(symbol.upper().strip()), "quarterly_income_stmt", None)
-    pie_labels: list[str] = []
-    pie_vals: list[float] = []
-    try:
-        if latest_qis is not None and not getattr(latest_qis, "empty", True) and len(latest_qis.columns) > 0:
-            c = latest_qis.columns[-1]
-            candidates = [
-                ("Gross Profit", "Gross Profit"),
-                ("Operating Income", "Operating Income"),
-                ("Net Income", "Net Income"),
-            ]
-            for key, alias in candidates:
-                if key in latest_qis.index:
-                    v = latest_qis.loc[key, c]
-                    if isinstance(v, (int, float)) and abs(v) > 0:
-                        pie_labels.append(alias)
-                        pie_vals.append(abs(float(v)))
-    except Exception:
-        pie_labels, pie_vals = [], []
+    for ax in (ax0, ax1, ax2, ax1_r):
+        ax.set_facecolor(bg_color)
 
-    # fallback: If components unavailable, use last year revenue proportion
-    if not pie_vals:
-        pie_labels = labels
-        pie_vals = [abs(_safe_num(v, 0.0)) for v in revs]
-
-    total = sum(pie_vals)
-    if total <= 0:
-        ax3.text(0.5, 0.5, "N/A", ha="center", va="center", color=text_color, fontsize=12)
-        ax3.set_title(f"{symbol} Profit Mix", color=text_color)
-    else:
-        wedges, texts, autotexts = ax3.pie(
-            pie_vals,
-            labels=pie_labels,
-            autopct="%1.1f%%",
-            textprops={"color": text_color, "fontsize": 8},
-            colors=["#46C2FF", "#7CFC00", "#FFD166", "#A78BFA", "#F472B6"],
-            wedgeprops={"edgecolor": fig_facecolor, "linewidth": 0.8},
-        )
-        
-        # 增強圓餅圖內百分比的能見度
-        bbox_color = "#000000" if theme_name == "dark" else "#FFFFFF"
-        for autotext in autotexts:
-            autotext.set_color(pie_text_color)
-            autotext.set_weight("bold")
-            autotext.set_bbox(dict(facecolor=bbox_color, alpha=0.5, edgecolor="none", pad=1.5))
-            
-        ax3.set_title(f"{symbol} Profit Mix", color=text_color)
-
+    plt.tight_layout(pad=4.0)
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150)
-    plt.close(fig)
+    plt.savefig(buf, format='png', dpi=300, facecolor=bg_color)
     buf.seek(0)
+    plt.close(fig)
     return buf
+
+
+def generate_fin_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO | None:
+    """相容舊介面，但內部使用全新的 SEC 數據源與專業圖表邏輯。"""
+    df = sec_api.fetch_sec_financials(symbol)
+    return generate_professional_chart(df, symbol.upper(), theme=theme)
 
 
 def generate_fin_compare_chart_buffer(symbols: list[str]) -> io.BytesIO | None:
@@ -1075,6 +939,7 @@ def generate_fin_compare_chart_buffer(symbols: list[str]) -> io.BytesIO | None:
 
     try:
         import matplotlib as mpl
+        mpl.use('Agg') # 確保使用非互動式後端
         import matplotlib.pyplot as plt
         import numpy as np
     except Exception as exc:

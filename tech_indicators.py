@@ -29,7 +29,7 @@ def clear_tech_df_cache(symbol: str | None = None) -> None:
 def get_volume_price_judgement(df: pd.DataFrame) -> str:
     """Volume/Price regime（9 類）。"""
     if df is None or len(df) < 3:
-        return "Price Flat / Volume Flat"
+        return "量平價平"
 
     close_now = float(df["Close"].iloc[-1])
     close_prev = float(df["Close"].iloc[-2])
@@ -57,17 +57,17 @@ def get_volume_price_judgement(df: pd.DataFrame) -> str:
         vol_state = "平"
 
     mapping = {
-        ("漲", "增"): "Price Up / Volume Up",
-        ("漲", "縮"): "Price Up / Volume Down",
-        ("漲", "平"): "Price Up / Volume Flat",
-        ("跌", "增"): "Price Down / Volume Up",
-        ("跌", "縮"): "Price Down / Volume Down",
-        ("跌", "平"): "Price Down / Volume Flat",
-        ("平", "增"): "Price Flat / Volume Up",
-        ("平", "縮"): "Price Flat / Volume Down",
-        ("平", "平"): "Price Flat / Volume Flat",
+        ("漲", "增"): "量增價漲",
+        ("漲", "縮"): "量縮價漲",
+        ("漲", "平"): "量平價漲",
+        ("跌", "增"): "量增價跌",
+        ("跌", "縮"): "量縮價跌",
+        ("跌", "平"): "量平價跌",
+        ("平", "增"): "量增價平",
+        ("平", "縮"): "量縮價平",
+        ("平", "平"): "量平價平",
     }
-    return mapping.get((price_state, vol_state), "Price Flat / Volume Flat")
+    return mapping.get((price_state, vol_state), "量平價平")
 
 
 def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
@@ -75,12 +75,14 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
     try:
         import mplfinance as mpf
         import matplotlib as mpl
+        import matplotlib as mpl
     except Exception as exc:
         raise RuntimeError("缺少 mplfinance 套件，請先安裝 requirements.txt") from exc
 
     # 統一中文字型策略（跨圖一致）
     setup_matplotlib_cjk_font(mpl)
 
+    mpl.use('Agg') # 確保使用非互動式後端
     symbol = symbol.upper().strip()
     cached_df = _TECH_DF_CACHE.get(symbol)
     if cached_df is not None and not cached_df.empty:
@@ -102,27 +104,18 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
     df["MA20"] = df["Close"].rolling(window=20).mean()
     df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
 
-    # TD9 序列標記（僅在計數 == 9 時打點）
+    # TD9 序列計算（在完整 90 天上計算，確保顯示的 60 天計數正確）
     td_buy_raw = (df["Close"] < df["Close"].shift(4)).astype(int)
     td_sell_raw = (df["Close"] > df["Close"].shift(4)).astype(int)
-    buy_markers = pd.Series(np.nan, index=df.index)
-    sell_markers = pd.Series(np.nan, index=df.index)
-    buy_count = 0
-    sell_count = 0
-    for i in range(len(df)):
-        if int(td_buy_raw.iloc[i]) == 1:
-            buy_count += 1
-        else:
-            buy_count = 0
-        if int(td_sell_raw.iloc[i]) == 1:
-            sell_count += 1
-        else:
-            sell_count = 0
-
-        if buy_count == 9:
-            buy_markers.iloc[i] = float(df["Low"].iloc[i]) * 0.995
-        if sell_count == 9:
-            sell_markers.iloc[i] = float(df["High"].iloc[i]) * 1.005
+    bc_list, sc_list = [], []
+    bc = sc = 0
+    for b, s in zip(td_buy_raw, td_sell_raw):
+        bc = bc + 1 if b == 1 else 0
+        sc = sc + 1 if s == 1 else 0
+        bc_list.append(bc)
+        sc_list.append(sc)
+    df["bcnt"] = bc_list
+    df["scnt"] = sc_list
 
     # 成交量均線（先在原始 df 計算，確保 df_plot 截取後能完整顯示）
     df["VOL_MA20"] = df["Volume"].rolling(window=20).mean()
@@ -142,20 +135,12 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
         vv = seg["Volume"].cumsum().replace(0, np.nan)
         vwap_series.iloc[anchor_pos:] = pv / vv
 
-    buy_plot = buy_markers.reindex(df_plot.index)
-    sell_plot = sell_markers.reindex(df_plot.index)
-
     ap = [
         mpf.make_addplot(df_plot["MA20"], color="#FFD166", width=1.35, panel=0),
         mpf.make_addplot(df_plot["EMA50"], color="#FF4D9D", width=1.35, panel=0),
         mpf.make_addplot(vwap_series, color="#AEB6BF", width=1.2, panel=0),
         mpf.make_addplot(df_plot["VOL_MA20"], color="#46C2FF", width=1.1, panel=1),
     ]
-    # mplfinance 在全 NaN scatter 會觸發 zero-size array 錯誤，需先判斷再加入
-    if not buy_plot.isna().all():
-        ap.append(mpf.make_addplot(buy_plot, type="scatter", marker="^", color="#7CFC00", markersize=78))
-    if not sell_plot.isna().all():
-        ap.append(mpf.make_addplot(sell_plot, type="scatter", marker="v", color="#FF5C5C", markersize=78))
 
     # 最近一組「尚未完全填補」FVG 區
     fvg_zone = None
@@ -206,7 +191,7 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
                 "axes.titlecolor": "#0F172A",
                 "xtick.color": "#334155",
                 "ytick.color": "#334155",
-                "font.size": 9,
+                "font.size": 11,
                 **cjk_rc,
             },
         )
@@ -234,13 +219,14 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
                 "axes.titlecolor": "#F8FAFC",
                 "xtick.color": "#CBD5E1",
                 "ytick.color": "#CBD5E1",
-                "font.size": 9,
+                "font.size": 11,
                 **cjk_rc,
             },
         )
 
     buf = io.BytesIO()
-    safe_dpi = 300
+    # 目標接近 4K：16x9 inch * 240 dpi ≈ 3840x2160
+    safe_dpi = 240
     fig, axes = mpf.plot(
         df_plot,
         type="candle",
@@ -248,20 +234,41 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
         style=style,
         addplot=ap,
         fill_between=fill_between,
-        title=f"{symbol}",
-        ylabel="Price",
-        ylabel_lower="Volume",
+        title=f"📊 {symbol} 戰術圖",
+        ylabel="價格",
+        ylabel_lower="成交量",
+        figsize=(16, 9),
         returnfig=True,
         closefig=True,
     )
     fig.set_dpi(safe_dpi)
 
+    # 精緻風格：背景層次與卡片感
+    fig.patch.set_alpha(1.0)
+    fig.patch.set_facecolor("#05070D" if theme_name == "dark" else "#F4F7FB")
+
     price_ax = axes[0]
     vol_ax = axes[2] if len(axes) >= 3 else (axes[1] if len(axes) > 1 else axes[0])
 
-    # 設置明顯的量價關係副標題 (置中偏上)
+    # 設置明顯的量價關係副標題 (置中偏上) - 徽章風格
     subtitle_color = "#FFD700" if theme_name == "dark" else "#FF8C00"
-    fig.text(0.5, 0.92, vp_judgement, ha="center", va="center", fontsize=11, color=subtitle_color, weight="bold", transform=fig.transFigure)
+    fig.text(
+        0.5,
+        0.92,
+        f"🔎 量價關係：{vp_judgement}",
+        ha="center",
+        va="center",
+        fontsize=13,
+        color=subtitle_color,
+        weight="bold",
+        transform=fig.transFigure,
+        bbox=dict(
+            facecolor=("#0B1220" if theme_name == "dark" else "#FFF7ED"),
+            edgecolor=("#334155" if theme_name == "dark" else "#FDBA74"),
+            boxstyle="round,pad=0.35",
+            alpha=0.95,
+        ),
+    )
 
     # 左上角：出圖時間 + watermark
     plot_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -269,18 +276,18 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
     price_ax.text(
         0.01,
         0.98,
-        f"Time: {plot_ts}",
+        f"🕒 出圖時間: {plot_ts}",
         transform=price_ax.transAxes,
         ha="left",
         va="top",
-        fontsize=8,
+        fontsize=9.5,
         color="white",
         bbox=dict(facecolor="black", alpha=0.5, edgecolor="none", pad=2),
     )
-    # 將 MA/VWAP 標籤移至左上角
-    price_ax.text(0.01, 0.92, "MA20", transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#FFD166", weight="bold")
-    price_ax.text(0.01, 0.87, "EMA50", transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#FF4D9D", weight="bold")
-    price_ax.text(0.01, 0.82, "VWAP (anchor)", transform=price_ax.transAxes, ha="left", va="top", fontsize=8, color="#C7CED6", weight="bold")
+    # 將 MA/VWAP 標籤移至左上角（徽章化）
+    price_ax.text(0.01, 0.92, "均線 MA20", transform=price_ax.transAxes, ha="left", va="top", fontsize=9.5, color="#FFD166", weight="bold", bbox=dict(facecolor="#1F2937", alpha=0.42, edgecolor="none", boxstyle="round,pad=0.18"))
+    price_ax.text(0.01, 0.87, "均線 EMA50", transform=price_ax.transAxes, ha="left", va="top", fontsize=9.5, color="#FF4D9D", weight="bold", bbox=dict(facecolor="#1F2937", alpha=0.42, edgecolor="none", boxstyle="round,pad=0.18"))
+    price_ax.text(0.01, 0.82, "錨定 VWAP", transform=price_ax.transAxes, ha="left", va="top", fontsize=9.5, color="#C7CED6", weight="bold", bbox=dict(facecolor="#1F2937", alpha=0.42, edgecolor="none", boxstyle="round,pad=0.18"))
 
     # 在 FVG 藍色區間中間加上 FVG 字樣
     if fvg_zone:
@@ -319,9 +326,9 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
             price_ax.axhline(float(support_line), linestyle="--", linewidth=1.15, color=support_color, alpha=0.95)
             # 在中間顯示標籤
             price_ax.text(
-                len(df_plot)//2, float(support_line), "---Sup---",
+                len(df_plot)//2, float(support_line), "支撐",
                 color=support_color, ha="center", va="center",
-                fontsize=7, weight="bold", 
+                fontsize=8.5, weight="bold", 
                 bbox=dict(facecolor="#0B1020" if theme_name == "dark" else "#FFFFFF", alpha=0.8, edgecolor="none", pad=0)
             )
         if resistance_line is not None:
@@ -330,9 +337,9 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
             price_ax.axhline(float(resistance_line), linestyle="--", linewidth=1.15, color=resistance_color, alpha=0.95)
             # 在中間顯示標籤
             price_ax.text(
-                len(df_plot)//2, float(resistance_line), "---Res---",
+                len(df_plot)//2, float(resistance_line), "壓力",
                 color=resistance_color, ha="center", va="center",
-                fontsize=7, weight="bold",
+                fontsize=8.5, weight="bold",
                 bbox=dict(facecolor="#0B1020" if theme_name == "dark" else "#FFFFFF", alpha=0.8, edgecolor="none", pad=0)
             )
     except Exception:
@@ -343,31 +350,16 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
     import matplotlib.patheffects as pe
 
     xvals = np.arange(len(df_plot))
-    td_buy_plot = (df_plot["Close"] < df_plot["Close"].shift(4)).astype(int)
-    td_sell_plot = (df_plot["Close"] > df_plot["Close"].shift(4)).astype(int)
-    bcnt = scnt = 0
     for i in range(len(df_plot)):
-        bcnt = bcnt + 1 if int(td_buy_plot.iloc[i]) == 1 else 0
-        scnt = scnt + 1 if int(td_sell_plot.iloc[i]) == 1 else 0
+        bcnt = df_plot["bcnt"].iloc[i]
+        scnt = df_plot["scnt"].iloc[i]
 
-        # 僅在計數為 9 時顯示數字
-        if bcnt == 9:
+        # 僅在計數為 9 時顯示數字 (統一顯示於 K 線上方，避免壓到燭體)
+        if bcnt == 9 or scnt == 9:
             price_ax.text(
                 xvals[i],
-                float(df_plot["High"].iloc[i]) * 1.01,
-                str(bcnt),
-                color="#BF00FF",  # 亮紫色
-                fontsize=7.5,
-                ha="center",
-                va="bottom",
-                weight="bold",
-                bbox=dict(facecolor="#0B1020", edgecolor="none", alpha=0.75, pad=0.3),
-            ).set_path_effects([pe.withStroke(linewidth=2.6, foreground="#E0B0FF", alpha=0.8)])
-        if scnt == 9:
-            price_ax.text(
-                xvals[i],
-                float(df_plot["High"].iloc[i]) * 1.02,
-                str(scnt),
+                float(df_plot["High"].iloc[i]) * 1.03,
+                "9",
                 color="#BF00FF",  # 亮紫色
                 fontsize=7.5,
                 ha="center",
@@ -390,7 +382,19 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
             rect.set_path_effects([pe.withStroke(linewidth=4.0, foreground=edge, alpha=0.32)])
             price_ax.add_patch(rect)
 
-    fig.savefig(buf, format="png", dpi=safe_dpi, bbox_inches="tight")
+    # 精緻風格：強化主圖邊框與陰影感
+    try:
+        import matplotlib.patheffects as pe
+
+        for spine in price_ax.spines.values():
+            spine.set_linewidth(1.2)
+            spine.set_color("#64748B" if theme_name == "dark" else "#94A3B8")
+            spine.set_path_effects([pe.withStroke(linewidth=2.4, foreground=("#0F172A" if theme_name == "dark" else "#E2E8F0"), alpha=0.65)])
+    except Exception:
+        pass
+
+    # 不使用 tight 裁切，確保接近 4K 輸出尺寸
+    fig.savefig(buf, format="png", dpi=safe_dpi)
     try:
         import matplotlib.pyplot as plt
 

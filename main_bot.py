@@ -14,6 +14,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import telebot
+import sec_api
+import market_api
 import psutil
 from telebot.apihelper import ApiTelegramException
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -299,13 +301,30 @@ def maybe_send_fin_chart(chat_id: int, text: str, *, theme: str = "dark") -> Non
     if not symbol:
         return
 
+    def _build_fin_diag_message(sym: str) -> str:
+        diag = sec_api.get_financial_diagnostics(sym)
+        detail = diag.get("details", {})
+        rev = detail.get("revenue", {})
+        ni = detail.get("net_income", {})
+        eps = detail.get("eps", {})
+        return (
+            f"ℹ️ `{sym}` 目前無法產生財報圖。\n"
+            f"• 原因：`{diag.get('reason', 'unknown')}`\n"
+            f"• CIK：`{diag.get('cik', 'N/A')}`\n"
+            f"• SEC HTTP：`{diag.get('http_status', 'N/A')}`\n"
+            f"• Revenue：`rows={rev.get('rows', 0)}`，最新季：`{rev.get('latest_end', 'N/A')}`\n"
+            f"• Net Income：`rows={ni.get('rows', 0)}`，最新季：`{ni.get('latest_end', 'N/A')}`\n"
+            f"• EPS：`rows={eps.get('rows', 0)}`，最新季：`{eps.get('latest_end', 'N/A')}`\n"
+            "請稍後重試，系統會自動刷新 SEC 對照與重抓最新資料。"
+        )
+
     try:
-        fin_buf = command.market_api.generate_fin_chart_buffer(symbol, theme=theme)
+        # 強制使用 SEC API 獲取數據
+        df = sec_api.fetch_sec_financials(symbol)
+        fin_buf = market_api.generate_professional_chart(df, symbol, theme=theme)
+
         if fin_buf is None:
-            safe_send(
-                chat_id,
-                f"ℹ️ {symbol} 無法產生財報圖：可能缺少足夠季度財報資料（Revenue/Net Income），或資料源暫時回傳空值。",
-            )
+            safe_send(chat_id, _build_fin_diag_message(symbol))
             return
 
         # 傳送穩定化：失敗時重試一次
@@ -321,17 +340,19 @@ def maybe_send_fin_chart(chat_id: int, text: str, *, theme: str = "dark") -> Non
                 last_exc = exc
 
         if not sent:
-            safe_send(chat_id, f"⚠️ {symbol} 財報圖傳送失敗。原因：{last_exc}")
+            safe_send(chat_id, f"⚠️📤 `{symbol}` 財報圖傳送失敗。原因：{last_exc}")
             logging.warning("send fin chart failed after retry for %s: %s", symbol, last_exc)
 
         try:
             fin_buf.close()
         except Exception:
             pass
+        finally:
+            fin_buf = None
     except Exception as exc:
         # 使用者明確下 /fin chart 時，回覆完整錯誤原因
         if is_explicit_chart_cmd:
-            safe_send(chat_id, f"⚠️ {symbol} /fin chart 失敗：{exc}")
+            safe_send(chat_id, f"🚫⚠️ `{symbol}` /fin chart 失敗：{exc}\n\n{_build_fin_diag_message(symbol)}")
         logging.warning("send fin chart failed: %s", exc)
 
 
