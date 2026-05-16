@@ -252,12 +252,12 @@ def maybe_send_tech_chart(
         cpu_now = psutil.cpu_percent(interval=0.05)
         ram_now = psutil.virtual_memory().percent
         # 超載保護：高 CPU / RAM 時降低圖表 DPI，減少運算與記憶體壓力
-        # 提高至 200 DPI 以接近 1080p 視覺品質
-        dpi = 140 if (cpu_now >= 70 or ram_now >= 80) else 200
+        # 提高至 300 DPI 以確保電腦與平板上的顯示清晰度
+        dpi = 200 if (cpu_now >= 70 or ram_now >= 80) else 300
         buf = tech_indicators.generate_tech_chart_buffer(symbol, dpi=dpi, theme=theme)
         
         # 發送圖表並提取 file_id
-        msg = bot.send_photo(chat_id, photo=buf, caption=f"📊 {symbol} SMC & TD 戰術圖表")
+        msg = bot.send_photo(chat_id, photo=buf, caption=f"📊 {symbol} Tactical Chart")
         
         # 紀錄 Log (包含 file_id)
         if user_id:
@@ -314,7 +314,7 @@ def maybe_send_fin_chart(chat_id: int, text: str) -> None:
         for _ in range(2):
             try:
                 fin_buf.seek(0)
-                bot.send_photo(chat_id, photo=fin_buf, caption=f"📊 {symbol}財報圖（營收/淨利/淨利率/QoQ）")
+                bot.send_photo(chat_id, photo=fin_buf, caption=f"📊 {symbol} Financial Chart (Rev/NI/Margin/QoQ)")
                 sent = True
                 break
             except Exception as exc:
@@ -349,7 +349,7 @@ def maybe_send_fin_compare_chart(chat_id: int, text: str) -> None:
         if buf is None:
             safe_send(chat_id, "ℹ️ /fin compare 對比圖資料不足，暫時無法出圖。")
             return
-        bot.send_photo(chat_id, photo=buf, caption=f"📊 {' vs '.join(symbols)} 財報合併對比圖")
+        bot.send_photo(chat_id, photo=buf, caption=f"📊 {' vs '.join(symbols)} Financial Comparison Chart")
     except Exception as exc:
         logging.warning("send fin compare chart failed: %s", exc)
     finally:

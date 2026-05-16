@@ -238,7 +238,8 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
         )
 
     buf = io.BytesIO()
-    safe_dpi = max(72, min(int(dpi), 180))
+    # 調整 DPI 乘數以確保更清晰的圖表
+    safe_dpi = max(100, min(int(dpi), 300))
     fig, axes = mpf.plot(
         df_plot,
         type="candle",
@@ -246,7 +247,7 @@ def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark")
         style=style,
         addplot=ap,
         fill_between=fill_between,
-        title=f"{symbol}|SMC+TD9 Tactical Chart({theme_name})",
+        title=f"{symbol} Tactical Chart",
         ylabel="Price",
         ylabel_lower="Volume (K/M/B)",
         returnfig=True,

@@ -838,7 +838,7 @@ def get_recent_quarterly_financials(symbol: str, limit: int = 4) -> list[dict[st
 
 
 def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
-    """產生近一年季度財報圖（營收/淨利/淨利率 + 賺錢結構圓餅圖），不落地存檔。"""
+    """Generate 1Y quarterly financial chart (Revenue/Net Income/Net Margin + Profit Mix pie)."""
     rows = get_recent_quarterly_financials(symbol, limit=4)
     if len(rows) < 2:
         return None
@@ -903,7 +903,7 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
     bars1 = ax1.bar(x - width / 2, revs, width=width, color="#46C2FF", edgecolor="#E5E7EB", linewidth=0.6, label="Revenue")
     bars2 = ax1.bar(x + width / 2, net_income, width=width, color="#7CFC00", edgecolor="#E5E7EB", linewidth=0.6, label="Net Income")
 
-    ax1.set_title(f"{symbol}近一年季度：營收/淨利")
+    ax1.set_title(f"{symbol} 1Y Quarterly: Revenue / Net Income")
     ax1.set_xticks(x)
     ax1.set_xticklabels(labels)
     ax1.title.set_color("#F8FAFC")
@@ -933,9 +933,9 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
             color=pct_color,
         )
 
-    # 淨利率趨勢圖
+    # Net Margin Trend Chart
     bars3 = ax2.bar(x, margins, width=0.40, color="#FFD166", edgecolor="#E5E7EB", linewidth=0.6)
-    ax2.set_title(f"{symbol}近一年季度：淨利率(%)")
+    ax2.set_title(f"{symbol} 1Y Quarterly: Net Margin (%)")
     ax2.set_xticks(x)
     ax2.set_xticklabels(labels)
     ax2.title.set_color("#F8FAFC")
@@ -952,7 +952,7 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
             color=pct_color,
         )
 
-    # 賺錢結構圓餅圖：優先取最新季度 income statement 組成
+    # Profit Mix Pie Chart: Prioritize latest quarter income statement composition
     latest_qis = getattr(yf.Ticker(symbol.upper().strip()), "quarterly_income_stmt", None)
     pie_labels: list[str] = []
     pie_vals: list[float] = []
@@ -973,7 +973,7 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
     except Exception:
         pie_labels, pie_vals = [], []
 
-    # fallback：若取不到組成，改用近一年營收占比
+    # fallback: If components unavailable, use last year revenue proportion
     if not pie_vals:
         pie_labels = labels
         pie_vals = [abs(_safe_num(v, 0.0)) for v in revs]
@@ -981,7 +981,7 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
     total = sum(pie_vals)
     if total <= 0:
         ax3.text(0.5, 0.5, "N/A", ha="center", va="center", color="#CBD5E1", fontsize=12)
-        ax3.set_title(f"{symbol}賺錢結構", color="#F8FAFC")
+        ax3.set_title(f"{symbol} Profit Mix", color="#F8FAFC")
     else:
         ax3.pie(
             pie_vals,
@@ -991,7 +991,7 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
             colors=["#46C2FF", "#7CFC00", "#FFD166", "#A78BFA", "#F472B6"],
             wedgeprops={"edgecolor": "#0B1020", "linewidth": 0.8},
         )
-        ax3.set_title(f"{symbol}賺錢結構", color="#F8FAFC")
+        ax3.set_title(f"{symbol} Profit Mix", color="#F8FAFC")
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=150)
@@ -1001,7 +1001,7 @@ def generate_fin_chart_buffer(symbol: str) -> io.BytesIO | None:
 
 
 def generate_fin_compare_chart_buffer(symbols: list[str]) -> io.BytesIO | None:
-    """產生 /fin compare 合併對比圖（2~3 檔）：營收、淨利、淨利率。"""
+    """Generate /fin compare merged chart (2~3 symbols): Revenue, Net Income, Net Margin."""
     clean_symbols = [str(s).upper().strip() for s in (symbols or []) if str(s).strip()]
     if len(clean_symbols) < 2:
         return None
@@ -1054,9 +1054,9 @@ def generate_fin_compare_chart_buffer(symbols: list[str]) -> io.BytesIO | None:
     bars2 = axes[1].bar(x, ni_vals, color=colors[: len(symbols_order)], edgecolor="#E5E7EB", linewidth=0.6)
     bars3 = axes[2].bar(x, margin_vals, color=colors[: len(symbols_order)], edgecolor="#E5E7EB", linewidth=0.6)
 
-    axes[0].set_title("近四季平均營收", color="#F8FAFC")
-    axes[1].set_title("近四季平均淨利", color="#F8FAFC")
-    axes[2].set_title("近四季平均淨利率(%)", color="#F8FAFC")
+    axes[0].set_title("Avg Revenue (Last 4Q)", color="#F8FAFC")
+    axes[1].set_title("Avg Net Income (Last 4Q)", color="#F8FAFC")
+    axes[2].set_title("Avg Net Margin % (Last 4Q)", color="#F8FAFC")
 
     for ax in axes:
         ax.set_xticks(x)
@@ -1069,7 +1069,7 @@ def generate_fin_compare_chart_buffer(symbols: list[str]) -> io.BytesIO | None:
     for i, b in enumerate(bars3):
         axes[2].text(b.get_x() + b.get_width() / 2, b.get_height(), f"{margin_vals[i]:.1f}%", ha="center", va="bottom", fontsize=8, color="#CBD5E1")
 
-    fig.suptitle("/fin compare 財報合併對比圖", color="#F8FAFC", fontsize=13)
+    fig.suptitle("/fin compare Merged Financial Comparison", color="#F8FAFC", fontsize=13)
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=150)
     plt.close(fig)
