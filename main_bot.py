@@ -287,10 +287,12 @@ def maybe_send_fin_chart(chat_id: int, text: str) -> None:
         return
 
     symbol = ""
+    is_explicit_chart_cmd = False
     if len(parts) == 2 and parts[1].strip().lower() != "compare":
         symbol = parts[1].strip().upper()
     elif len(parts) == 3 and parts[1].strip().lower() == "chart":
         symbol = parts[2].strip().upper()
+        is_explicit_chart_cmd = True
     else:
         return
 
@@ -300,7 +302,10 @@ def maybe_send_fin_chart(chat_id: int, text: str) -> None:
     try:
         fin_buf = command.market_api.generate_fin_chart_buffer(symbol)
         if fin_buf is None:
-            safe_send(chat_id, f"ℹ️ {symbol} 財報圖資料不足，暫時無法出圖。")
+            safe_send(
+                chat_id,
+                f"ℹ️ {symbol} 無法產生財報圖：可能缺少足夠季度財報資料（Revenue/Net Income），或資料源暫時回傳空值。",
+            )
             return
 
         # 傳送穩定化：失敗時重試一次
@@ -316,7 +321,7 @@ def maybe_send_fin_chart(chat_id: int, text: str) -> None:
                 last_exc = exc
 
         if not sent:
-            safe_send(chat_id, f"⚠️ {symbol} 財報圖傳送失敗，請稍後再試一次。")
+            safe_send(chat_id, f"⚠️ {symbol} 財報圖傳送失敗。原因：{last_exc}")
             logging.warning("send fin chart failed after retry for %s: %s", symbol, last_exc)
 
         try:
@@ -324,6 +329,9 @@ def maybe_send_fin_chart(chat_id: int, text: str) -> None:
         except Exception:
             pass
     except Exception as exc:
+        # 使用者明確下 /fin chart 時，回覆完整錯誤原因
+        if is_explicit_chart_cmd:
+            safe_send(chat_id, f"⚠️ {symbol} /fin chart 失敗：{exc}")
         logging.warning("send fin chart failed: %s", exc)
 
 

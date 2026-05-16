@@ -27,9 +27,9 @@ def clear_tech_df_cache(symbol: str | None = None) -> None:
 
 
 def get_volume_price_judgement(df: pd.DataFrame) -> str:
-    """量價評斷（9分類）。以明顯漲跌與量能起伏作判斷。"""
+    """Volume/Price regime（9 類）。"""
     if df is None or len(df) < 3:
-        return "價平量平"
+        return "Price Flat / Volume Flat"
 
     close_now = float(df["Close"].iloc[-1])
     close_prev = float(df["Close"].iloc[-2])
@@ -57,17 +57,17 @@ def get_volume_price_judgement(df: pd.DataFrame) -> str:
         vol_state = "平"
 
     mapping = {
-        ("漲", "增"): "價漲量漲",
-        ("漲", "縮"): "價漲量縮",
-        ("漲", "平"): "價漲量平",
-        ("跌", "增"): "價跌量增",
-        ("跌", "縮"): "價跌量縮",
-        ("跌", "平"): "價跌量平",
-        ("平", "增"): "價平量增",
-        ("平", "縮"): "價平量縮",
-        ("平", "平"): "價平量平",
+        ("漲", "增"): "Price Up / Volume Up",
+        ("漲", "縮"): "Price Up / Volume Down",
+        ("漲", "平"): "Price Up / Volume Flat",
+        ("跌", "增"): "Price Down / Volume Up",
+        ("跌", "縮"): "Price Down / Volume Down",
+        ("跌", "平"): "Price Down / Volume Flat",
+        ("平", "增"): "Price Flat / Volume Up",
+        ("平", "縮"): "Price Flat / Volume Down",
+        ("平", "平"): "Price Flat / Volume Flat",
     }
-    return mapping.get((price_state, vol_state), "價平量平")
+    return mapping.get((price_state, vol_state), "Price Flat / Volume Flat")
 
 
 def generate_tech_chart_buffer(symbol: str, dpi: int = 130, theme: str = "dark") -> io.BytesIO:
