@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from utils import safe_round
+from utils import get_signal_light, safe_round
 
 
 def help_text() -> list[str]:
@@ -130,19 +130,8 @@ def tech_report(data: dict[str, Any]) -> list[str]:
 
     short_tp_text, swing_tp_text = _format_take_profit_targets()
 
-    def get_status_icon(status: str) -> str:
-        if "大買" in status:
-            return "🔥"
-        if "中買" in status or "小買" in status:
-            return "✅"
-        if "大賣" in status:
-            return "💀"
-        if "中賣" in status or "小賣" in status:
-            return "⚠️"
-        return "⚪"
-
-    attack_icon = get_status_icon(attack)
-    whale_icon = "🐋" if "買" in whale else ("🦈" if "賣" in whale else "⚪")
+    attack_icon = get_signal_light(attack)
+    whale_icon = get_signal_light(whale)
 
     # 第一頁：基礎技術量化
     page1 = (
@@ -173,7 +162,8 @@ def tech_report(data: dict[str, Any]) -> list[str]:
     support_line = tdst.get("support") or {}
     resistance_line = tdst.get("resistance") or {}
     signal_type = signal.get("signal_type", "NONE")
-    signal_icon = "🟢" if signal_type == "STRONG_LONG" else "🔴" if signal_type == "STRONG_SHORT" else "⚪"
+    signal_light_key = "買" if signal_type == "STRONG_LONG" else ("賣" if signal_type == "STRONG_SHORT" else "中立")
+    signal_icon = get_signal_light(signal_light_key)
     entry_zone = signal.get("entry_zone") or {}
     signal_reasons = signal.get("reasons") or []
     signal_reason_text = "\n".join([f"  • {reason}" for reason in signal_reasons[:3]]) or "  • 尚無訊號。"
@@ -228,7 +218,7 @@ def tech_compare_report(data_list: list[dict[str, Any]]) -> str:
 
 
 def status_text(version: str, brain_status: str, system_status: str, ping_ok: bool) -> list[str]:
-    icon = "🟢" if ping_ok else "🔴"
+    icon = get_signal_light("買" if ping_ok else "賣")
     page1 = (
         f"🔍 **顧問系統狀態報告 (1/2)**\n"
         f"━━━━━━━━━━━━━━━━━\n"
@@ -449,6 +439,7 @@ def hidden_op_text(current_model: str) -> str:
         "📌 **指令清單**\n"
         "• `/op help` - 顯示此隱藏指令教學\n"
         "• `/op model [flash|pro]` - 切換 AI 模型\n"
+        "• `/op fontcheck` - 檢查 CJK/Emoji 字型載入、目錄掃描與路徑命中\n"
         "• `/op user list` - 查看使用者清單 (Admin)\n"
         "• `/op user log [頁數] [ID/名稱/@username]` - 查指定使用者互動紀錄 (Admin)\n"
         "• `/op del [ID/名稱/@username]` - 刪除指定使用者資料（60 秒內二次輸入確認）\n"

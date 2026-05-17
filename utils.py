@@ -176,3 +176,33 @@ def safe_round(value: Any, decimals: int = 2) -> Any:
         return float(d.quantize(target, rounding=ROUND_HALF_UP))
     except (ValueError, TypeError, Exception):
         return value
+
+
+def get_signal_light(status: str) -> str:
+    """統一燈號規則：買方=綠燈、中立=白燈、賣方=紅燈。"""
+    text = str(status or "")
+
+    bullish_keywords = (
+        "買",
+        "攻擊",
+        "強力攻擊",
+        "多頭",
+        "做多",
+        "看漲",
+        "LONG",
+    )
+    bearish_keywords = (
+        "賣",
+        "拋售",
+        "強力拋售",
+        "空頭",
+        "做空",
+        "看跌",
+        "SHORT",
+    )
+
+    if any(k in text for k in bullish_keywords):
+        return "🟢"
+    if any(k in text for k in bearish_keywords):
+        return "🔴"
+    return "⚪"

@@ -354,9 +354,12 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
 
         # 僅在計數為 9 時顯示數字 (統一顯示於 K 線上方，避免壓到燭體)
         if bcnt == 9 or scnt == 9:
+            high_i = float(df_plot["High"].iloc[i])
+            low_i = float(df_plot["Low"].iloc[i])
+            y_td9 = high_i + (high_i - low_i) * 0.16
             price_ax.text(
                 xvals[i],
-                float(df_plot["High"].iloc[i]) * 1.03,
+                y_td9,
                 "9",
                 color="#BF00FF",  # 亮紫色
                 fontsize=7.5,

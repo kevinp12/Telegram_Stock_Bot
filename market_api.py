@@ -821,7 +821,10 @@ def generate_professional_chart(df: pd.DataFrame, symbol: str, theme: str = "dar
 
     money_fmt = FuncFormatter(format_money)
     plot_df = df.tail(5).copy()
-    plot_df['quarter'] = plot_df['end'].dt.strftime('%y-Q%q')
+    # 修正：strftime 不支援 %q，改用 pandas Period 生成正確季度標籤
+    # 例如 2025Q1 -> 25-Q1
+    q_labels = plot_df['end'].dt.to_period('Q').astype(str)
+    plot_df['quarter'] = q_labels.str.replace(r'^(\d{4})Q([1-4])$', r'\1-Q\2', regex=True).str[2:]
     plot_df['margin'] = (plot_df['net_income'] / plot_df['revenue'] * 100).fillna(0)
     
     # 1. 甜甜圈圖 (Donut Chart) - 收入與利潤組成
