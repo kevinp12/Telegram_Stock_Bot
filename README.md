@@ -150,6 +150,8 @@ gemini_stock_bot_full/
 - `/fin chart [symbol]`：直接輸出財報圖；若失敗會回覆明確原因（資料不足或錯誤訊息）
 - `/fin compare A B [C]`：多標的比較（文字 + 合併對比圖）
 - `/whale [symbol]`：內部人/機構動向
+- `/bt` / `/backtest`：量化回測（含雙策略、大盤濾網、部位控管）
+- `/sim` / `/simulator`：蒙地卡羅模擬（幾何布朗運動 GBM 修正）
 - `/ask [symbol] [question]`：任意深度問答
 
 ## C. Portfolio & Automation
@@ -171,7 +173,7 @@ gemini_stock_bot_full/
 | Domain | Commands |
 |---|---|
 | Market | `/now`, `/risk`, `/marco`, `/news` |
-| Analysis | `/tech`, `/chart`, `/chart theme`, `/tech compare`, `/fin`, `/fin chart`, `/fin compare`, `/whale`, `/ask` |
+| Analysis | `/tech`, `/chart`, `/chart theme`, `/tech compare`, `/fin`, `/fin chart`, `/fin compare`, `/whale`, `/ask`, `/bt`, `/sim` |
 | Portfolio | `/buy`, `/sell`, `/list`, `/watch ...`, `/sweep ...` |
 | System | `/status`, `/quota`, `/bc ...`, `/help`, `/op ...`, `/ulog ...` |
 

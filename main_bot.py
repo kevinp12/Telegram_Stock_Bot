@@ -405,6 +405,8 @@ def setup_bot_commands() -> None:
         telebot.types.BotCommand("fin", "📊 個股財報與 EPS"),
         telebot.types.BotCommand("whale", "🐋 大鯨魚/內部人追蹤"),
         telebot.types.BotCommand("tech", "📊 專業量化分析"),
+        telebot.types.BotCommand("backtest", "📊 量化回測"),
+        telebot.types.BotCommand("simulator", "🔮 蒙地卡羅模擬"),
         telebot.types.BotCommand("chart", "🖼️ 戰術圖表"),
         telebot.types.BotCommand("risk", "🛡️ 市場風險雷達"),
         telebot.types.BotCommand("marco", "📊 宏觀數據雷達"),

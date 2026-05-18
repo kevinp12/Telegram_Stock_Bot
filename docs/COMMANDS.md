@@ -22,13 +22,13 @@
 | `/news` | 新聞與 AI 解讀 | `main_bot.on_news` → `command.cmd_news` |
 | `/whale` | 內部人/機構追蹤 | `main_bot.on_whale` → `command.cmd_whale` |
 | `/ask` | 深度問答 | `main_bot.on_ask` → `command.cmd_ask` |
-| `/bt` `/backtest` | 長線量化回測 | `main_bot.on_backtest` → `command.cmd_backtest` |
-| `/sim` `/simulator` | 蒙地卡羅價格模擬 | `main_bot.on_simulator` → `command.cmd_simulator` |
+| `/bt` `/backtest` | 量化回測（含雙策略、大盤濾網、部位控管） | `main_bot.on_backtest` → `command.cmd_backtest` |
+| `/sim` `/simulator` | 蒙地卡羅模擬（幾何布朗運動 GBM 修正） | `main_bot.on_simulator` → `command.cmd_simulator` |
 | `/buy` `/sell` `/list` | 持倉管理 | `command.cmd_buy/sell/list` |
 | `/watch` `/sweep` | 監控清單管理 | `command.cmd_watch/sweep` |
 | `/bc` | 自動推播設定 | `command.cmd_bc` |
 | `/status` | 系統狀態 | `command.cmd_status` |
-| `/quota` | Token 配額 | `command.cmd_quota` |
+| `/quota` | 配額與累積成本估算 (T1 等級 NTD) | `command.cmd_quota` |
 | `/ulog` | 管理者快速查 user.log（支援頁數） | `main_bot.on_ulog` → `command.cmd_ulog` |
 | `/help` | 指令教學頁 | `frame.help_text` |
 

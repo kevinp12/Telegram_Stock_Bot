@@ -35,6 +35,8 @@ def help_text() -> list[str]:
         "• `/fin compare A B`：多標的財務橫向比較（含合併對比圖）\n"
         "• `/tech [代號]`：量化與 SMC 結構儀表板\n"
         "• `/chart [代號]`：輸出戰術圖\n"
+        "• `/bt`：量化回測（含雙策略、大盤濾網、部位控管）\n"
+        "• `/sim`：蒙地卡羅模擬（幾何布朗運動 GBM 修正）\n"
         "• `./chart [代號]`：也可用點斜線快速輸入\n"
         "• `/whale [代號]`：內部人與機構持倉追蹤\n"
         "• `/sweep add|del|list|clear`：狙擊監控清單\n\n"
