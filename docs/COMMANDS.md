@@ -22,6 +22,8 @@
 | `/news` | 新聞與 AI 解讀 | `main_bot.on_news` → `command.cmd_news` |
 | `/whale` | 內部人/機構追蹤 | `main_bot.on_whale` → `command.cmd_whale` |
 | `/ask` | 深度問答 | `main_bot.on_ask` → `command.cmd_ask` |
+| `/bt` `/backtest` | 長線量化回測 | `main_bot.on_backtest` → `command.cmd_backtest` |
+| `/sim` `/simulator` | 蒙地卡羅價格模擬 | `main_bot.on_simulator` → `command.cmd_simulator` |
 | `/buy` `/sell` `/list` | 持倉管理 | `command.cmd_buy/sell/list` |
 | `/watch` `/sweep` | 監控清單管理 | `command.cmd_watch/sweep` |
 | `/bc` | 自動推播設定 | `command.cmd_bc` |
@@ -71,6 +73,8 @@
 
 ## 5. 近期功能更新（2026-05）
 
+- `/bt` / `/backtest`：實作 10 年期長線量化策略回測 (VCP + FVG)。
+- `/sim` / `/simulator`：實作 2,000 次路徑的蒙地卡羅未來一年價格模擬。
 - `/fin [代號]`：文字分析後自動嘗試送出財報圖
 - `/fin chart [代號]`：支援顯式圖表指令與明確錯誤回報
 - `/fin compare A B [C]`：比較文字後自動附加合併對比圖

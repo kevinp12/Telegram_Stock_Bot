@@ -8,6 +8,7 @@ import logging
 import math
 import random
 import re
+import io
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -23,8 +24,9 @@ import tech_indicators
 import utils
 from config import ADMIN_ID, BOT_START_TIME, VERSION
 from utils import safe_round
+from quant_engine import data_loader, strategy_long_term, backtest_core, monte_carlo, strategy_tech_combined
 
-STOCK_RE = re.compile(r"\b[A-Z]{2,5}\b")
+STOCK_RE = re.compile(r"\b[A-Z0-9\.\-]{1,6}\b")
 FIN_COMPARE_STATE: dict[int, list[str]] = {}
 DATA_CLEAR_CONFIRM_STATE: dict[int, datetime] = {}
 OP_DELETE_CONFIRM_STATE: dict[int, tuple[str, datetime]] = {}
@@ -1366,12 +1368,44 @@ def cmd_op(text: str, user_id: int) -> str:
 
 
 def cmd_quota(user_id: int) -> str:
-    """獲取 Token 配額使用情況。"""
+    """顯示 Gemini API 使用配額與 T1 Tier 累積估計費用 (台幣)。"""
+    is_admin = _is_admin(user_id)
+    
+    # 獲取個人與全局數據
     used_today, _ = database.get_daily_tokens(user_id)
+    cum_input, cum_output = database.get_cumulative_tokens(user_id)
+    global_input, global_output = database.get_cumulative_tokens(None) # 全全局
+    
     from config import DAILY_TOKEN_LIMIT
+    
+    usd_to_twd = 32.5
+    
+    # 成本計算函數
+    def _calc_twd(inp, out):
+        usd = (inp / 1_000_000 * 1.25) + (out / 1_000_000 * 3.75)
+        return usd * usd_to_twd
+
+    personal_cum_twd = _calc_twd(cum_input, cum_output)
+    global_cum_twd = _calc_twd(global_input, global_output)
 
     percent = (used_today / DAILY_TOKEN_LIMIT) * 100
-    return frame.quota_text(used_today, DAILY_TOKEN_LIMIT, percent)
+    base_text = frame.quota_text(used_today, DAILY_TOKEN_LIMIT, percent)
+    
+    reply = base_text
+    reply += "\n💰 **個人費用分析 (T1 Tier)**\n"
+    reply += f"• 個人累積消耗：約 **NT$ {personal_cum_twd:.2f}** 元\n"
+    
+    if is_admin:
+        reply += "\n🔐 **管理者全局統計 (全機累積)**\n"
+        reply += f"• 總計輸入 Token：{global_input:,}\n"
+        reply += f"• 總計輸出 Token：{global_output:,}\n"
+        reply += f"• **全機總費用：NT$ {global_cum_twd:.2f}** 元\n"
+        reply += "━━━━━━━━━━━━━━\n"
+    else:
+        reply += "━━━━━━━━━━━━━━\n"
+        reply += "💡 註：成本以 1.5 Pro 定價估算，僅供參考。"
+        
+    return reply
 
 
 def _build_comprehensive_news(user_name: str, user_id: int) -> str:
@@ -1608,3 +1642,143 @@ def handle_natural_language(text: str, user_name: str, user_id: int | None = Non
     # 一般日常對話
     model_pref = database.get_user_model_preference(user_id) if user_id is not None else None
     return ai_core.chat_with_user(text, user_name, None, None, user_id=user_id, model=model_pref)
+
+
+def cmd_backtest(message_text: str, user_id: int) -> str | tuple[str, io.BytesIO | None]:
+    """處理 /backtest 或 /bt 指令：支援多種策略模式。"""
+    parts = message_text.split()
+    
+    # 1. 顯示教學 (如果沒輸入代號)
+    if len(parts) < 2:
+        help_text = (
+            "📊 **量化回測系統教學**\n"
+            "━━━━━━━━━━━━━━\n"
+            "🔍 **基本用法：**\n"
+            "• `/bt [代號]`：使用「10年趨勢波段策略」(預設)\n"
+            "• `/bt tech [代號]`：使用「/tech 指標綜合策略」(EMA+MACD+FVG)\n\n"
+            "📈 **範例：**\n"
+            "• `/bt NVDA`\n"
+            "• `/bt tech TSLA`\n\n"
+            "💡 **策略說明：**\n"
+            "1. **預設策略**：專注於長線趨勢跟蹤與波動收縮，適合持倉 1-2 年。\n"
+            "2. **技術策略**：結合您平日看的 /tech 指標，更注重動能與進場位校準。"
+        )
+        return help_text
+
+    # 2. 判斷模式與代號
+    mode = "default"
+    ticker = ""
+    
+    if parts[1].lower() == "tech":
+        if len(parts) < 3:
+            return "⚠️ 請在 tech 後輸入股票代號，例如：`/bt tech AAPL`"
+        mode = "tech"
+        ticker = parts[2].strip().upper()
+    else:
+        ticker = parts[1].strip().upper()
+
+    # 安全性檢查
+    if ticker.startswith('/') or not re.fullmatch(r"[A-Z0-9\.\-]{1,6}", ticker):
+        return f"❌ 錯誤的代號格式：`{ticker}`。請輸入正確的美股代號。"
+
+    try:
+        # 3. 抓取資料 (10年復權數據)
+        df = data_loader.get_long_term_data(ticker, years=10)
+        if df.empty:
+            return f"❌ 找不到 `{ticker}` 的歷史資料。可能原因：代號錯誤、數據源暫時異常或標的已下市。"
+
+        # 4. 根據模式產生訊號
+        strategy_name = ""
+        if mode == "tech":
+            df_signals = strategy_tech_combined.calculate_tech_signals(df)
+            strategy_name = "Tech 指標綜合策略"
+        else:
+            df_signals = strategy_long_term.generate_signals(df)
+            strategy_name = "長線趨勢跟蹤策略"
+
+        # 5. 計算績效 (機構級精密計算)
+        result = backtest_core.calculate_metrics(df_signals)
+        if isinstance(result, dict) and "error" in result:
+            return f"📊 **{ticker} 量化回測** ({strategy_name})\n━━━━━━━━━━━━━━\n❌ {result['error']}\n\n💡 提示：策略在此標的 10 年內未觸發任何符合條件的交易訊號。"
+
+        metrics, df_trades = result
+
+        # 6. 組合回覆文字
+        reply = f"📊 **{ticker} 10年長線量化回測**\n"
+        reply += f"核心邏輯：{strategy_name}\n"
+        reply += f"━━━━━━━━━━━━━━\n"
+        reply += f"• **策略總報酬：{metrics['total_return_pct']:.1f}%**\n"
+        reply += f"• 基準總報酬：{metrics['benchmark_return_pct']:.1f}%\n"
+        reply += f"• 夏普比率 (Sharpe)：{metrics['sharpe_ratio']:.2f}\n"
+        reply += f"• 最大回撤 (MDD)：{metrics['max_drawdown_pct']:.1f}%\n\n"
+        reply += f"📈 **交易績效統計：**\n"
+        reply += f"• 勝率 (Win Rate)：{metrics['win_rate']*100:.1f}%\n"
+        reply += f"• 盈虧比 (P/L Ratio)：{metrics['payoff_ratio']:.2f}\n"
+        reply += f"• 平均持倉天數：{metrics['avg_hold_days']:.0f} 天\n"
+        reply += f"• 總交易次數：{metrics['total_trades']} 次\n"
+        reply += f"━━━━━━━━━━━━━━\n"
+        reply += "⚠️ *註：手續費與滑價已計入，數據僅供參考。*"
+
+        # 7. 生成美化圖表
+        chart_buf = backtest_core.generate_backtest_chart(df_signals, ticker)
+        
+        return reply, chart_buf
+    except Exception as e:
+        logging.error(f"Backtest error for {ticker}: {e}")
+        return f"❌ 回測系統執行異常：{str(e)}\n請聯繫管理員檢查數據介面。"
+
+
+def cmd_simulator(message_text: str, user_id: int) -> str | tuple[str, io.BytesIO | None]:
+    """處理 /simulator 或 /sim 指令：蒙地卡羅價格預測。"""
+    parts = message_text.split()
+    if len(parts) < 2:
+        help_text = (
+            "🔮 **蒙地卡羅模擬系統教學**\n"
+            "━━━━━━━━━━━━━━\n"
+            "🔍 **基本用法：**\n"
+            "• `/sim [代號]`：模擬未來 1 年的價格機率分佈\n\n"
+            "📈 **範例：**\n"
+            "• `/sim NVDA`\n\n"
+            "💡 **系統特色：**\n"
+            "1. **風險修正**：引入漂移收縮，防止因過去暴漲導致的過度樂觀預測。\n"
+            "2. **黑天鵝模型**：採用 t-分佈模擬肥尾風險，更精確反映崩盤機率。"
+        )
+        return help_text
+
+    ticker = parts[1].strip().upper()
+    if ticker.startswith('/') or not re.fullmatch(r"[A-Z0-9\.\-]{1,6}", ticker):
+        return f"❌ 錯誤的代號格式：`{ticker}`。請輸入正確的美股代號。"
+
+    try:
+        # 抓取基礎資料
+        df = data_loader.get_long_term_data(ticker, years=1)
+        if df.empty:
+            return f"❌ 找不到 `{ticker}` 的歷史資料。無法建立模擬基礎。"
+
+        # 執行 2000 次路徑模擬
+        sim_results = monte_carlo.run_monte_carlo(df, days=252, simulations=2000)
+        if not sim_results:
+            return f"❌ `{ticker}` 模擬數據計算異常。"
+
+        res, price_paths = sim_results
+
+        reply = f"🔮 **{ticker} 蒙地卡羅未來 1 年價格模擬**\n"
+        reply += f"━━━━━━━━━━━━━━\n"
+        reply += f"• 目前價格：${res['current_price']:.2f}\n\n"
+        reply += f"📈 **核心預測 (1年後)：**\n"
+        reply += f"• 價格中位數：${res['median_final_price']:.2f}\n"
+        reply += f"• 樂觀目標 (P95)：${res['pct_95']:.2f}\n"
+        reply += f"• 悲觀支撐 (P5)：${res['pct_5']:.2f}\n"
+        reply += f"• 上漲機率：{res['prob_positive']*100:.1f}%\n\n"
+        reply += f"🛡️ **風險指標：**\n"
+        reply += f"• 在險價值 (VaR 95%)：{res['var_95_pct']:.1f}%\n"
+        reply += f"• 條件在險價值 (CVaR)：{res['cvar_95_pct']:.1f}%\n"
+        reply += "━━━━━━━━━━━━━━\n"
+        reply += "💡 註：此預測已針對歷史偏誤進行收縮修正，並包含肥尾風險模擬。"
+
+        chart_buf = monte_carlo.generate_simulation_chart(price_paths, res['current_price'], ticker)
+
+        return reply, chart_buf
+    except Exception as e:
+        logging.error(f"Simulator error for {ticker}: {e}")
+        return f"❌ 模擬系統執行異常：{str(e)}"

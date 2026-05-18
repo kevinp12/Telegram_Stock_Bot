@@ -662,6 +662,66 @@ def on_tech(m):
     maybe_send_tech_chart(m.chat.id, m.text or "", user_id=user_id, user_name=user_name, username=get_username(m))
 
 
+@bot.message_handler(commands=["bt", "backtest"])
+def on_backtest(m):
+    user_id, user_name = register_user(m)
+    record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/backtest")
+    
+    # 讀取通知
+    status_msg = bot.reply_to(m, "⏳ 正在執行量化回測分析，這可能需要幾秒鐘...")
+    
+    try:
+        result = command.cmd_backtest(m.text or "", user_id)
+        
+        if isinstance(result, tuple):
+            reply, chart_buf = result
+            if chart_buf:
+                bot.send_photo(m.chat.id, chart_buf, caption=reply, parse_mode="Markdown")
+            else:
+                safe_send(m.chat.id, reply)
+        else:
+            safe_send(m.chat.id, result)
+    except Exception as e:
+        logging.error(f"Backtest execution failed: {e}")
+        safe_send(m.chat.id, f"❌ 回測執行時發生未預期錯誤：{str(e)}")
+    finally:
+        # 刪除讀取通知
+        try:
+            bot.delete_message(m.chat.id, status_msg.message_id)
+        except Exception:
+            pass
+
+
+@bot.message_handler(commands=["sim", "simulator"])
+def on_simulator(m):
+    user_id, user_name = register_user(m)
+    record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/simulator")
+    
+    # 讀取通知
+    status_msg = bot.reply_to(m, "⏳ 正在生成蒙地卡羅模擬路徑，請稍候...")
+    
+    try:
+        result = command.cmd_simulator(m.text or "", user_id)
+
+        if isinstance(result, tuple):
+            reply, chart_buf = result
+            if chart_buf:
+                bot.send_photo(m.chat.id, chart_buf, caption=reply, parse_mode="Markdown")
+            else:
+                safe_send(m.chat.id, reply)
+        else:
+            safe_send(m.chat.id, result)
+    except Exception as e:
+        logging.error(f"Simulator execution failed: {e}")
+        safe_send(m.chat.id, f"❌ 模擬執行時發生未預期錯誤：{str(e)}")
+    finally:
+        # 刪除讀取通知
+        try:
+            bot.delete_message(m.chat.id, status_msg.message_id)
+        except Exception:
+            pass
+
+
 @bot.message_handler(commands=["chart"])
 def on_chart(m):
     user_id, user_name = register_user(m)

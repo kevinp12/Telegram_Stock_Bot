@@ -485,6 +485,21 @@ def get_token_stats(user_id: int | None = None) -> dict[str, float]:
     return {"min": 0, "max": 0, "avg": 0}
 
 
+def get_cumulative_tokens(user_id: int | None = None) -> tuple[int, int]:
+    """獲取累積已用 Token (輸入與輸出)。"""
+    query = "SELECT SUM(prompt_tokens), SUM(output_tokens) FROM token_logs"
+    params = []
+    if user_id is not None:
+        query += " WHERE user_id = ?"
+        params.append(user_id)
+    
+    with get_conn() as conn:
+        row = conn.execute(query, params).fetchone()
+        if row and row[0] is not None:
+            return int(row[0]), int(row[1])
+    return 0, 0
+
+
 def save_trade(user_id: int, symbol: str, price: float, quantity: float) -> None:
     with get_conn() as conn:
         conn.execute(
