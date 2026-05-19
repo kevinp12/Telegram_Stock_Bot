@@ -84,7 +84,7 @@ def run_monte_carlo(df: pd.DataFrame, days: int = 252, simulations: int = 2000):
     if len(clean_returns) < 20:
         return None
     
-    current_price = float(df['Close'].iloc[-1])
+    current_price = float(np.clip(df['Close'].iloc[-1], 1e-6, 1e9))
     daily_mu = _robust_drift(log_returns)
     params = _fit_arch_garch_params(clean_returns) or _fit_garch_like_params(clean_returns)
     base_daily_vol = float(np.std(clean_returns)) or 0.02
@@ -108,12 +108,15 @@ def run_monte_carlo(df: pd.DataFrame, days: int = 252, simulations: int = 2000):
         jump_counts = np.random.poisson(jump_lambda_daily, size=simulations)
         jump_component = np.where(jump_counts > 0, np.random.normal(jump_mu, jump_sigma, simulations) * jump_counts, 0.0)
         simulated_returns = (daily_mu - 0.5 * variances) + sigma * z + jump_component
+        simulated_returns = np.clip(simulated_returns, -0.95, 0.95)
         prices = prices * np.exp(simulated_returns)
+        prices = np.clip(prices, 1e-6, 1e9)
         price_paths[day, :] = prices
         variances = params["omega"] + params["alpha"] * np.square(simulated_returns) + params["beta"] * variances
+        variances = np.clip(variances, 1e-10, 1.0)
     
     # 4. 取得最終價格分佈
-    final_prices = price_paths[-1, :]
+    final_prices = np.clip(price_paths[-1, :], 1e-6, 1e9)
     
     p50 = np.percentile(final_prices, 50)
     p95 = np.percentile(final_prices, 95)

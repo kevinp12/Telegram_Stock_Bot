@@ -1655,28 +1655,59 @@ def handle_natural_language(text: str, user_name: str, user_id: int | None = Non
     return ai_core.chat_with_user(text, user_name, None, None, user_id=user_id, model=model_pref)
 
 
-def cmd_backtest(message_text: str, user_id: int) -> str | tuple[str, io.BytesIO | None]:
+def cmd_backtest(message_text: str, user_id: int) -> str | list[str] | tuple[list[str], io.BytesIO | None]:
     """處理 /backtest 或 /bt 指令：支援多種策略模式。"""
     parts = message_text.split()
     
     # 1. 顯示教學 (如果沒輸入代號)
     if len(parts) < 2:
-        help_text = (
-            "📊 **量化回測系統教學**\n"
+        return [
+            "📊 **量化回測系統｜使用教學 (1/2)**\n"
             "━━━━━━━━━━━━━━\n"
-            "🔍 **基本用法：**\n"
-            "• `/bt [代號]`：使用「10年趨勢波段策略」(預設)\n"
-            "• `/bt tech [代號]`：使用「/tech 指標綜合策略」(EMA+MACD+FVG)\n\n"
-            "📈 **範例：**\n"
+            "🧭 **指令用法**\n"
+            "• `/bt [代號]`：10 年長線趨勢策略（預設）\n"
+            "• `/bt tech [代號]`：技術綜合策略（EMA/MACD/FVG）\n"
+            "• `/bt model [1|2|3]`：切換保守/普通/激進模板\n\n"
+            "🧪 **快速範例**\n"
             "• `/bt NVDA`\n"
-            "• `/bt tech TSLA`\n\n"
-            "💡 **策略說明：**\n"
-            "1. **預設策略**：專注於長線趨勢跟蹤與波動收縮，適合持倉 1-2 年。\n"
-            "2. **技術策略**：結合您平日看的 /tech 指標，更注重動能與進場位校準。"
-        )
-        return help_text
+            "• `/bt tech TSLA`\n"
+            "• `/bt model 2`",
+            "📘 **量化回測系統｜策略說明 (2/2)**\n"
+            "━━━━━━━━━━━━━━\n"
+            "1) **長線趨勢策略**\n"
+            "• 目標：抓大波段、降低無效交易\n"
+            "• 適合：中長期持有者\n\n"
+            "2) **Tech 綜合策略**\n"
+            "• 目標：兼顧動能與風險控制\n"
+            "• 適合：想與 `/tech` 訊號一致的操作者\n\n"
+            "💡 建議流程：先 `/bt model` 設好風格，再跑 `/bt tech [代號]`。",
+        ]
 
-    # 2. 判斷模式與代號
+    # 2. /bt model 設定與查詢
+    if len(parts) >= 2 and parts[1].lower() == "model":
+        if len(parts) == 2:
+            cur = database.get_user_bt_model(user_id)
+            names = {1: "保守", 2: "普通", 3: "激進"}
+            return (
+                "⚙️ **/bt tech 模板設定**\n"
+                "━━━━━━━━━━━━━━\n"
+                f"目前模型：`{cur}`（{names.get(cur, '普通')}）\n\n"
+                "可用指令：\n"
+                "• `/bt model 1`：保守\n"
+                "• `/bt model 2`：普通\n"
+                "• `/bt model 3`：激進"
+            )
+        try:
+            mid = int(parts[2])
+        except Exception:
+            return "❌ 用法錯誤：`/bt model [1|2|3]`"
+        if mid not in {1, 2, 3}:
+            return "❌ 模型只支援 `1/2/3`。例如：`/bt model 2`"
+        database.set_user_bt_model(user_id, mid)
+        names = {1: "保守", 2: "普通", 3: "激進"}
+        return f"✅ `/bt tech` 模板已切換為：`{mid}`（{names[mid]}）"
+
+    # 3. 判斷模式與代號
     mode = "default"
     ticker = ""
     
@@ -1693,16 +1724,18 @@ def cmd_backtest(message_text: str, user_id: int) -> str | tuple[str, io.BytesIO
         return f"❌ 錯誤的代號格式：`{ticker}`。請輸入正確的美股代號。"
 
     try:
-        # 3. 抓取資料 (10年復權數據)
+        # 4. 抓取資料 (10年復權數據)
         df = data_loader.get_long_term_data(ticker, years=10)
         if df.empty:
             return f"❌ 找不到 `{ticker}` 的歷史資料。可能原因：代號錯誤、數據源暫時異常或標的已下市。"
 
-        # 4. 根據模式產生訊號
+        # 5. 根據模式產生訊號
         strategy_name = ""
         if mode == "tech":
-            df_signals = strategy_tech_combined.calculate_tech_signals(df)
-            strategy_name = "Tech 指標綜合策略"
+            bt_model = database.get_user_bt_model(user_id)
+            df_signals = strategy_tech_combined.calculate_tech_signals(df, model_id=bt_model)
+            model_name = strategy_tech_combined.BT_MODEL_TEMPLATES.get(bt_model, strategy_tech_combined.BT_MODEL_TEMPLATES[2])["name"]
+            strategy_name = f"Tech 指標綜合策略（模型{bt_model}-{model_name}）"
         else:
             df_signals = strategy_long_term.generate_signals(df)
             strategy_name = "長線趨勢跟蹤策略"
@@ -1715,51 +1748,66 @@ def cmd_backtest(message_text: str, user_id: int) -> str | tuple[str, io.BytesIO
         metrics, df_trades = result
 
         # 6. 組合回覆文字
-        reply = f"📊 **{ticker} 10年長線量化回測**\n"
-        reply += f"核心邏輯：{strategy_name}\n"
-        reply += f"━━━━━━━━━━━━━━\n"
-        reply += f"• **策略總報酬：{metrics['total_return_pct']:.1f}%**\n"
-        reply += f"• 基準總報酬：{metrics['benchmark_return_pct']:.1f}%\n"
-        reply += f"• 年化報酬率：{metrics['annual_return_pct']:.1f}%\n"
-        reply += f"• 夏普比率 (Sharpe)：{metrics['sharpe_ratio']:.2f}\n"
-        reply += f"• 索提諾比率 (Sortino)：{metrics['sortino_ratio']:.2f}\n"
-        reply += f"• 卡瑪比率 (Calmar)：{metrics['calmar_ratio']:.2f}\n"
-        reply += f"• 最大回撤 (MDD)：{metrics['max_drawdown_pct']:.1f}%\n\n"
-        reply += f"• 最長回撤修復期：{metrics['drawdown_duration_days']} 個交易日\n"
-        reply += f"• 潰瘍指數 (Ulcer Index)：{metrics['ulcer_index']:.2f}\n\n"
-        reply += f"📈 **交易績效統計：**\n"
-        reply += f"• 勝率 (Win Rate)：{metrics['win_rate']*100:.1f}%\n"
-        reply += f"• 盈虧比 (P/L Ratio)：{metrics['payoff_ratio']:.2f}\n"
-        reply += f"• 平均持倉天數：{metrics['avg_hold_days']:.0f} 天\n"
-        reply += f"• 總交易次數：{metrics['total_trades']} 次\n"
-        reply += "━━━━━━━━━━━━━━\n"
-        reply += "⚠️ *註：手續費與滑價已計入；Sortino/Calmar/UI 用於衡量下行風險與持倉壓力。*"
+        page1 = (
+            f"📊 **{ticker}｜10年量化回測總覽 (1/2)**\n"
+            f"策略：`{strategy_name}`\n"
+            "━━━━━━━━━━━━━━\n"
+            f"• **策略總報酬**：`{metrics['total_return_pct']:.1f}%`\n"
+            f"• 基準總報酬：`{metrics['benchmark_return_pct']:.1f}%`\n"
+            f"• 年化報酬率：`{metrics['annual_return_pct']:.1f}%`\n"
+            f"• 最大回撤 (MDD)：`{metrics['max_drawdown_pct']:.1f}%`\n"
+            f"• 夏普 / 索提諾 / 卡瑪：`{metrics['sharpe_ratio']:.2f}` / `{metrics['sortino_ratio']:.2f}` / `{metrics['calmar_ratio']:.2f}`\n\n"
+            f"📈 **交易統計**\n"
+            f"• 勝率：`{metrics['win_rate']*100:.1f}%`\n"
+            f"• 盈虧比：`{metrics['payoff_ratio']:.2f}`\n"
+            f"• 平均持倉：`{metrics['avg_hold_days']:.0f}` 天\n"
+            f"• 總交易次數：`{metrics['total_trades']}` 次"
+        )
+        page2 = (
+            f"📘 **{ticker}｜指標解讀 (2/2)**\n"
+            "━━━━━━━━━━━━━━\n"
+            f"• **MDD**：從高點回撤的最大跌幅（越小越抗跌）\n"
+            f"• **Sharpe**：每單位總波動的報酬效率\n"
+            f"• **Sortino**：只看下行波動的報酬效率\n"
+            f"• **Calmar**：年化報酬 ÷ 最大回撤\n"
+            f"• **Ulcer Index**：持倉壓力（回撤深且久會變大）\n"
+            f"• 回撤修復期：`{metrics['drawdown_duration_days']}` 個交易日\n"
+            f"• 潰瘍指數：`{metrics['ulcer_index']:.2f}`\n"
+            "━━━━━━━━━━━━━━\n"
+            "⚠️ *回測已含手續費與滑價；歷史績效不代表未來結果。*"
+        )
 
         # 7. 生成美化圖表
         chart_buf = backtest_core.generate_backtest_chart(df_signals, ticker)
         
-        return reply, chart_buf
+        return [page1, page2], chart_buf
     except Exception as e:
         logging.error(f"Backtest error for {ticker}: {e}")
         return f"❌ 回測系統執行異常：{str(e)}\n請聯繫管理員檢查數據介面。"
 
 
-def cmd_simulator(message_text: str, user_id: int) -> str | tuple[str, io.BytesIO | None]:
+def cmd_simulator(message_text: str, user_id: int) -> str | list[str] | tuple[list[str], io.BytesIO | None]:
     """處理 /simulator 或 /sim 指令：蒙地卡羅價格預測。"""
     parts = message_text.split()
     if len(parts) < 2:
-        help_text = (
-            "🔮 **蒙地卡羅模擬系統教學**\n"
+        return [
+            "🔮 **蒙地卡羅模擬｜使用教學 (1/2)**\n"
             "━━━━━━━━━━━━━━\n"
-            "🔍 **基本用法：**\n"
-            "• `/sim [代號]`：模擬未來 1 年的價格機率分佈\n\n"
-            "📈 **範例：**\n"
-            "• `/sim NVDA`\n\n"
-            "💡 **系統特色：**\n"
-            "1. **風險修正**：引入漂移收縮，防止因過去暴漲導致的過度樂觀預測。\n"
-            "2. **黑天鵝模型**：採用 t-分佈模擬肥尾風險，更精確反映崩盤機率。"
-        )
-        return help_text
+            "🧭 用法：`/sim [代號]`\n"
+            "🧪 範例：`/sim NVDA`\n\n"
+            "輸出重點：\n"
+            "• 中位數價格 / P95 / P5\n"
+            "• VaR95 / CVaR / 年化波動率\n"
+            "• 跳躍與肥尾風險參數",
+            "📘 **蒙地卡羅模擬｜術語白話 (2/2)**\n"
+            "━━━━━━━━━━━━━━\n"
+            "• **P95 / P5**：樂觀與悲觀分位點\n"
+            "• **VaR95**：95% 信心水準下，常態最差虧損門檻\n"
+            "• **CVaR**：超過 VaR 後，尾端平均虧損\n"
+            "• **肥尾**：極端事件機率高於常態分配\n"
+            "• **跳躍**：財報/黑天鵝造成的瞬間跳空\n"
+            "• **動態波動**：波動率會隨市場狀態改變（非固定）",
+        ]
 
     ticker = parts[1].strip().upper()
     if ticker.startswith('/') or not re.fullmatch(r"[A-Z0-9\.\-]{1,6}", ticker):
@@ -1778,28 +1826,44 @@ def cmd_simulator(message_text: str, user_id: int) -> str | tuple[str, io.BytesI
 
         res, price_paths = sim_results
 
-        reply = f"🔮 **{ticker} 蒙地卡羅未來 1 年價格模擬**\n"
-        reply += f"━━━━━━━━━━━━━━\n"
-        reply += f"• 目前價格：${res['current_price']:.2f}\n\n"
-        reply += f"📈 **核心預測 (1年後)：**\n"
-        reply += f"• 價格中位數：${res['median_final_price']:.2f}\n"
-        reply += f"• 樂觀目標 (P95)：${res['pct_95']:.2f}\n"
-        reply += f"• 悲觀支撐 (P5)：${res['pct_5']:.2f}\n"
-        reply += f"• 上漲機率：{res['prob_positive']*100:.1f}%\n\n"
-        reply += f"🛡️ **風險指標：**\n"
-        reply += f"• 在險價值 (VaR 95%)：{res['var_95_pct']:.1f}%\n"
-        reply += f"• 條件在險價值 (CVaR)：{res['cvar_95_pct']:.1f}%\n"
-        reply += f"• 年化漂移假設：{res.get('annualized_drift_pct', 0):.1f}%\n"
-        reply += f"• 年化波動率估計：{res.get('annualized_vol_pct', 0):.1f}%\n"
-        reply += f"• 波動模型：{res.get('garch_source', 'GARCH-like')}\n"
-        reply += f"• 年化跳躍次數估計：{res.get('jump_lambda_annual', 0):.1f} 次\n"
-        reply += f"• 跳躍幅度標準差：{res.get('jump_sigma_pct', 0):.1f}%\n"
-        reply += "━━━━━━━━━━━━━━\n"
-        reply += "💡 註：此預測採 Student-t 肥尾、GARCH-like 動態波動與 Merton 跳躍擴散，較能反映恐慌波動與財報跳空風險。"
+        risk_warning = ""
+        if float(res.get('var_95_pct', 0)) <= -50 or float(res.get('annualized_vol_pct', 0)) >= 80:
+            risk_warning = "[🚨 極端妖股警告：波動率過大，請極度縮小倉位或放棄交易！]\n\n"
+
+        page1 = (
+            risk_warning
+            + f"🔮 **{ticker}｜蒙地卡羅未來1年模擬 (1/2)**\n"
+            + "━━━━━━━━━━━━━━\n"
+            + f"• 目前價格：`${res['current_price']:.2f}`\n"
+            + f"• 中位數價格：`${res['median_final_price']:.2f}`\n"
+            + f"• 樂觀目標 P95：`${res['pct_95']:.2f}`（前 5% 強勢情境）\n"
+            + f"• 悲觀支撐 P5：`${res['pct_5']:.2f}`（後 5% 壓力情境）\n"
+            + f"• 上漲機率：`{res['prob_positive']*100:.1f}%`\n\n"
+            + "🛡️ **核心風險（白話）**\n"
+            + f"• VaR95：`{res['var_95_pct']:.1f}%`（一般壞情況的虧損門檻）\n"
+            + f"• CVaR：`{res['cvar_95_pct']:.1f}%`（極端壞情況的平均虧損）\n"
+            + f"• 年化波動率：`{res.get('annualized_vol_pct', 0):.1f}%`\n"
+            + f"• 年化漂移：`{res.get('annualized_drift_pct', 0):.1f}%`\n"
+            + "━━━━━━━━━━━━━━\n"
+            + "💡 模型含 **肥尾 + 跳躍 + 動態波動**，比純常態模型更貼近真實市場。"
+        )
+
+        page2 = (
+            f"📘 **{ticker}｜術語解讀 (2/2)**\n"
+            "━━━━━━━━━━━━━━\n"
+            "• **肥尾 (Fat Tail)**：極端漲跌比常態分配更常發生\n"
+            "• **跳躍 (Jump)**：單日突發大跳空（財報/黑天鵝）\n"
+            "• **動態波動**：波動率會隨市場緊張程度改變\n"
+            f"• 波動模型：`{res.get('garch_source', 'GARCH-like')}`\n"
+            f"• 年化跳躍次數：`{res.get('jump_lambda_annual', 0):.1f}` 次\n"
+            f"• 跳躍幅度標準差：`{res.get('jump_sigma_pct', 0):.1f}%`\n"
+            "━━━━━━━━━━━━━━\n"
+            "⚠️ 用法建議：用 P5 / VaR / CVaR 先算可承受虧損，再決定倉位。"
+        )
 
         chart_buf = monte_carlo.generate_simulation_chart(price_paths, res['current_price'], ticker)
 
-        return reply, chart_buf
+        return [page1, page2], chart_buf
     except Exception as e:
         logging.error(f"Simulator error for {ticker}: {e}")
         return f"❌ 模擬系統執行異常：{str(e)}"

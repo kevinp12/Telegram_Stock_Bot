@@ -151,7 +151,9 @@ gemini_stock_bot_full/
 - `/fin compare A B [C]`：多標的比較（文字 + 合併對比圖）
 - `/whale [symbol]`：內部人/機構動向
 - `/bt` / `/backtest`：量化回測（含雙策略、大盤濾網、部位控管）
+- `/bt model [1|2|3]`：切換 `/bt tech` 模板（保守 / 普通 / 激進）
 - `/sim` / `/simulator`：蒙地卡羅模擬（幾何布朗運動 GBM 修正）
+- `/sim`：若 `VaR95 <= -50%` 或 `年化波動率 >= 80%`，自動加上極端風險警告
 - `/ask [symbol] [question]`：任意深度問答
 
 ## C. Portfolio & Automation
@@ -299,6 +301,20 @@ python3 -m py_compile main_bot.py command.py frame.py market_api.py ai_core.py b
 - `/fin chart [symbol]`：強制要求傳圖，若失敗會回覆具體原因。
 - `/fin compare A B [C]`：除了比較文字，還會附上合併對比圖。
 - 針對 NaN/inf 財報欄位已做清洗，降低個股（如 AMD）出圖失敗機率。
+
+### /bt 模板與 /sim 風險控制（近期更新）
+
+- `/bt model 1`：保守（較低中樞倉位、較嚴停損）
+- `/bt model 2`：普通（預設）
+- `/bt model 3`：激進（較高中樞倉位、較寬停損）
+- 模板設定會綁定使用者並套用到 `/bt tech [symbol]`
+- 蒙地卡羅已加入 `np.clip` 防溢位，降低 AAOI 類標的的 NaN 風險
+- 高風險條件觸發時，會自動加上「🚨 極端妖股警告」
+
+### 指令操作體驗（讀取中提示）
+
+- `/bt`、`/sim`、`/fin compare` 會先顯示「讀取中」訊息，完成後自動刪除
+- 保留錯誤訊息，避免無回應感
 
 ### Theme 功能說明
 

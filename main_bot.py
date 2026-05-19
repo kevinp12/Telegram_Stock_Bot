@@ -470,11 +470,11 @@ def setup_bot_commands() -> None:
         telebot.types.BotCommand("now", "⚡ 即時全景 + 總損益"),
         telebot.types.BotCommand("list", "📋 持股詳細明細"),
         telebot.types.BotCommand("news", "📰 即時新聞與市場報告"),
-        telebot.types.BotCommand("fin", "📊 個股財報與 EPS"),
+        telebot.types.BotCommand("fin", "📊 個股財報 / compare / chart"),
         telebot.types.BotCommand("whale", "🐋 大鯨魚/內部人追蹤"),
         telebot.types.BotCommand("tech", "📊 專業量化分析"),
-        telebot.types.BotCommand("backtest", "📊 量化回測"),
-        telebot.types.BotCommand("simulator", "🔮 蒙地卡羅模擬"),
+        telebot.types.BotCommand("backtest", "📊 量化回測（含 /bt model）"),
+        telebot.types.BotCommand("simulator", "🔮 蒙地卡羅（含極端風險警告）"),
         telebot.types.BotCommand("chart", "🖼️ 戰術圖表"),
         telebot.types.BotCommand("risk", "🛡️ 市場風險雷達"),
         telebot.types.BotCommand("marco", "📊 宏觀數據雷達"),
@@ -483,7 +483,7 @@ def setup_bot_commands() -> None:
         telebot.types.BotCommand("data", "🧹 資料清除（需二次確認）"),
         telebot.types.BotCommand("quota", "💳 API 使用配額"),
         telebot.types.BotCommand("status", "🔍 AI 連線驗證"),
-        telebot.types.BotCommand("help", "🎯 指揮手冊"),
+        telebot.types.BotCommand("help", "🎯 指揮手冊（美化版）"),
     ]
     bot.set_my_commands(commands)
 
@@ -737,9 +737,7 @@ def on_backtest(m):
     user_id, user_name = register_user(m)
     record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/backtest")
     
-    # 讀取通知
-    status_msg = bot.reply_to(m, "⏳ 正在執行量化回測分析，這可能需要幾秒鐘...")
-    
+    status_msg = bot.reply_to(m, "📊 正在執行 SMC 回測與生成報表...")
     try:
         result = command.cmd_backtest(m.text or "", user_id)
         
@@ -765,7 +763,6 @@ def on_backtest(m):
         logging.error(f"Backtest execution failed: {e}")
         safe_send(m.chat.id, f"❌ 回測執行時發生未預期錯誤：{str(e)}")
     finally:
-        # 刪除讀取通知
         try:
             bot.delete_message(m.chat.id, status_msg.message_id)
         except Exception:
@@ -777,9 +774,7 @@ def on_simulator(m):
     user_id, user_name = register_user(m)
     record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/simulator")
     
-    # 讀取通知
-    status_msg = bot.reply_to(m, "⏳ 正在生成蒙地卡羅模擬路徑，請稍候...")
-    
+    status_msg = bot.reply_to(m, "🔮 正在生成蒙地卡羅路徑與風險分布...")
     try:
         result = command.cmd_simulator(m.text or "", user_id)
 
@@ -805,7 +800,6 @@ def on_simulator(m):
         logging.error(f"Simulator execution failed: {e}")
         safe_send(m.chat.id, f"❌ 模擬執行時發生未預期錯誤：{str(e)}")
     finally:
-        # 刪除讀取通知
         try:
             bot.delete_message(m.chat.id, status_msg.message_id)
         except Exception:
@@ -856,12 +850,7 @@ def on_chart(m):
 def on_risk(m):
     user_id, user_name = register_user(m)
     record_user_log_safely(user_id, user_name, get_username(m), m.text or "/risk", source="/risk")
-    result = run_with_loading(
-        m,
-        "🛡️ 正在整理市場風險雷達...",
-        lambda: command.cmd_risk(user_id=user_id, user_name=user_name),
-        error_prefix="風險雷達讀取失敗",
-    )
+    result = command.cmd_risk(user_id=user_id, user_name=user_name)
     if result is not None:
         reply(m, result)
 
@@ -870,12 +859,7 @@ def on_risk(m):
 def on_marco(m):
     user_id, user_name = register_user(m)
     record_user_log_safely(user_id, user_name, get_username(m), m.text or "/marco", source="/marco")
-    pages = run_with_loading(
-        m,
-        "📊 正在整理宏觀雷達...",
-        lambda: command.cmd_marco(user_id=user_id, user_name=user_name),
-        error_prefix="宏觀雷達讀取失敗",
-    )
+    pages = command.cmd_marco(user_id=user_id, user_name=user_name)
     if pages:
         send_paged_message(m.chat.id, pages)
 
@@ -891,18 +875,13 @@ def on_now(m):
     bot.send_chat_action(m.chat.id, "typing")
     user_id, user_name = register_user(m)
     record_user_log_safely(user_id, user_name, get_username(m), m.text or "/now", source="/now")
-    loading_message = reply(m, "⏳ 正在整理最新行情...")
     try:
         sections = command.cmd_now(user_id, user_name)
-        if loading_message:
-            bot.delete_message(m.chat.id, loading_message.message_id)
         if isinstance(sections, (list, tuple)):
             send_paged_message(m.chat.id, sections)
         else:
             reply(m, sections)
     except Exception as exc:
-        if loading_message:
-            bot.delete_message(m.chat.id, loading_message.message_id)
         reply(m, "⚠️ 讀取行情失敗。")
 
 
@@ -942,12 +921,7 @@ def on_sweep(m):
 def on_news(m):
     user_id, user_name = register_user(m)
     record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/news")
-    msgs = run_with_loading(
-        m,
-        "📰 正在讀取新聞...",
-        lambda: command.cmd_news(m.text or "", user_name, user_id),
-        error_prefix="讀取新聞失敗",
-    )
+    msgs = command.cmd_news(m.text or "", user_name, user_id)
     if msgs:
         for msg in msgs:
             safe_send(m.chat.id, msg)
@@ -961,14 +935,13 @@ def on_fin(m):
     text = m.text or ""
     parts = text.split()
     is_compare = len(parts) >= 2 and parts[1].lower() == "compare"
+    status_msg = None
     if is_compare:
-        result = run_with_loading(
-            m,
-            "📊 正在整理財報比較與 AI 評析，請稍候...",
-            lambda: command.cmd_fin(text, user_id),
-            error_prefix="財報查詢失敗",
-        )
-        if result is None:
+        status_msg = bot.reply_to(m, "📊 正在整理財報比較與 AI 評析...")
+        try:
+            result = command.cmd_fin(text, user_id)
+        except Exception as exc:
+            reply(m, f"⚠️ 財報查詢失敗：{exc}")
             return
     else:
         try:
@@ -989,19 +962,23 @@ def on_fin(m):
         theme = _USER_CHART_THEME.get(user_id, "dark")
         maybe_send_fin_chart(m.chat.id, text, theme=theme, user_id=user_id, user_name=user_name, username=get_username(m))
 
+    if status_msg is not None:
+        try:
+            bot.delete_message(m.chat.id, status_msg.message_id)
+        except Exception:
+            pass
+
 
 @bot.message_handler(commands=["whale"])
 def on_whale(m):
     user_id, user_name = register_user(m)
     record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/whale")
-    result = run_with_loading(
-        m,
-        "🐋 正在追蹤大鯨魚與內部人動向...",
-        lambda: command.cmd_whale(m.text or "", user_id),
-        error_prefix="鯨魚情報查詢失敗",
-    )
-    if result is not None:
-        reply(m, result)
+    try:
+        result = command.cmd_whale(m.text or "", user_id)
+        if result is not None:
+            reply(m, result)
+    except Exception as exc:
+        reply(m, f"⚠️ 鯨魚情報查詢失敗：{exc}")
 
 
 @bot.message_handler(commands=["quota"])

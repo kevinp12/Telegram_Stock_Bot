@@ -35,8 +35,10 @@ def help_text() -> list[str]:
         "• `/fin compare A B`：多標的財務橫向比較（含合併對比圖）\n"
         "• `/tech [代號]`：量化與 SMC 結構儀表板\n"
         "• `/chart [代號]`：輸出戰術圖\n"
-        "• `/bt`：量化回測（含雙策略、大盤濾網、部位控管）\n"
-        "• `/sim`：蒙地卡羅模擬（幾何布朗運動 GBM 修正）\n"
+        "• `/bt [代號]`：量化回測（預設長線策略）\n"
+        "• `/bt tech [代號]`：技術綜合回測\n"
+        "• `/bt model [1|2|3]`：切換保守/普通/激進模板\n"
+        "• `/sim [代號]`：蒙地卡羅模擬（含 VaR / CVaR / 肥尾 / 跳躍 / 動態波動）\n"
         "• `./chart [代號]`：也可用點斜線快速輸入\n"
         "• `/whale [代號]`：內部人與機構持倉追蹤\n"
         "• `/sweep add|del|list|clear`：狙擊監控清單\n\n"
@@ -46,7 +48,8 @@ def help_text() -> list[str]:
         "• `/quota`：今日 Token 配額使用\n"
         "• `/status`：系統與模型狀態\n"
         "━━━━━━━━━━━━━━━━━\n"
-        "💡 _提示：可先用 /now 看全局，再用 /tech、/fin、/news 深挖單一標的。_"
+        "💡 _提示：可先用 /now 看全局，再用 /tech、/fin、/news 深挖單一標的。_\n"
+        "💡 _/menu 可在 Telegram 指令選單快速操作。_"
     )
     return [part1, part2]
 

@@ -304,6 +304,8 @@ def init_db() -> None:
             c.execute("ALTER TABLE users ADD COLUMN bc_timer INTEGER DEFAULT 120")
         if "last_bc_ts" not in existing_columns:
             c.execute("ALTER TABLE users ADD COLUMN last_bc_ts REAL DEFAULT 0")
+        if "bt_model" not in existing_columns:
+            c.execute("ALTER TABLE users ADD COLUMN bt_model INTEGER DEFAULT 2")
         conn.commit()
 
 
@@ -492,6 +494,26 @@ def get_user_model_preference(user_id: int) -> str:
         if row and row[0] in {"flash", "pro"}:
             return str(row[0])
         return "flash"
+
+
+def set_user_bt_model(user_id: int, model_id: int) -> None:
+    """設定 /bt tech 模型模板：1 保守、2 普通、3 激進。"""
+    model_id = int(model_id)
+    if model_id not in {1, 2, 3}:
+        model_id = 2
+    with get_conn() as conn:
+        conn.execute("UPDATE users SET bt_model=? WHERE user_id=?", (model_id, user_id))
+        conn.commit()
+
+
+def get_user_bt_model(user_id: int) -> int:
+    with get_conn() as conn:
+        row = conn.execute("SELECT bt_model FROM users WHERE user_id=?", (user_id,)).fetchone()
+        if row and str(row[0]).isdigit():
+            val = int(row[0])
+            if val in {1, 2, 3}:
+                return val
+        return 2
 
 
 def get_user_display_name(user_id: int) -> str:

@@ -22,8 +22,8 @@
 | `/news` | 新聞與 AI 解讀 | `main_bot.on_news` → `command.cmd_news` |
 | `/whale` | 內部人/機構追蹤 | `main_bot.on_whale` → `command.cmd_whale` |
 | `/ask` | 深度問答 | `main_bot.on_ask` → `command.cmd_ask` |
-| `/bt` `/backtest` | 量化回測（含雙策略、大盤濾網、部位控管） | `main_bot.on_backtest` → `command.cmd_backtest` |
-| `/sim` `/simulator` | 蒙地卡羅模擬（幾何布朗運動 GBM 修正） | `main_bot.on_simulator` → `command.cmd_simulator` |
+| `/bt` `/backtest` | 量化回測（支援 `/bt model 1/2/3`） | `main_bot.on_backtest` → `command.cmd_backtest` |
+| `/sim` `/simulator` | 蒙地卡羅模擬（含極端風險警告） | `main_bot.on_simulator` → `command.cmd_simulator` |
 | `/buy` `/sell` `/list` | 持倉管理 | `command.cmd_buy/sell/list` |
 | `/watch` `/sweep` | 監控清單管理 | `command.cmd_watch/sweep` |
 | `/bc` | 自動推播設定 | `command.cmd_bc` |
@@ -73,10 +73,24 @@
 
 ## 5. 近期功能更新（2026-05）
 
-- `/bt` / `/backtest`：實作 10 年期長線量化策略回測 (VCP + FVG)。
-- `/sim` / `/simulator`：實作 2,000 次路徑的蒙地卡羅未來一年價格模擬。
+### 量化回測與模擬強化
+- `/bt model [1|2|3]`：新增保守/普通/激進模板切換（與使用者綁定）。
+- `/bt tech [代號]`：自動套用模板（1=保守、2=普通、3=激進）。
+- `/bt` / `/backtest` 回測結果分頁：第一頁為績效數據，第二頁為指標解讀。
+- `/sim` / `/simulator`：蒙地卡羅模擬結果分頁：第一頁為核心數據，第二頁為術語白話說明。
+- 蒙地卡羅 NaN 防護：加入 `np.clip`（價格/報酬/變異數）避免溢位。
+- 極端風險標籤：當 `VaR95 <= -50%` 或 `年化波動率 >= 80%`，回覆最上方加上妖股警告。
+
+### 操作體驗提升
+- `/bt`、`/sim`、`/fin compare`：新增「讀取中」訊息，完成後自動刪除（保留錯誤訊息）。
+- Telegram Menu 指令描述全面美化。
+- `/help` 整理：「深度分析模組」新增 `/bt model`、/sim 含肥尾/跳躍說明。
+
+### /tech /fin 圖表持續優化
 - `/fin [代號]`：文字分析後自動嘗試送出財報圖
 - `/fin chart [代號]`：支援顯式圖表指令與明確錯誤回報
 - `/fin compare A B [C]`：比較文字後自動附加合併對比圖
 - 圖表量價標示改為英文（避免中文字型缺失）
 - 已移除新聞主題池常數 `TECH_THEMES`（非 `/chart` 主題功能）
+- `/bt` / `/backtest`：實作 10 年期長線量化策略回測 (VCP + FVG)。
+- `/sim` / `/simulator`：實作 2,000 次路徑的蒙地卡羅未來一年價格模擬。
