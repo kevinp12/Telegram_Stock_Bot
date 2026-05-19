@@ -9,3 +9,4 @@ psutil>=5.9.0
 feedparser>=6.0.10
 mplfinance>=0.12.10b0
 scipy>=1.13.0
+arch>=8.0.0

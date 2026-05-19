@@ -10,6 +10,7 @@ def generate_signals(df: pd.DataFrame) -> pd.DataFrame:
 
     # --- 1. 指標準備 ---
     df['SMA_50'] = df['Close'].rolling(window=50).mean()
+    df['SMA_150'] = df['Close'].rolling(window=150).mean()
     df['SMA_200'] = df['Close'].rolling(window=200).mean()
     df['20_High'] = df['Close'].rolling(window=20).max()
     
@@ -18,6 +19,14 @@ def generate_signals(df: pd.DataFrame) -> pd.DataFrame:
     high_close = (df['High'] - df['Close'].shift()).abs()
     low_close = (df['Low'] - df['Close'].shift()).abs()
     df['ATR'] = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(14).mean()
+    df['Rolling_Max_20'] = df['High'].rolling(20).max()
+
+    # 長線出場訊號：放寬停利與趨勢破壞判定，避免強勢股震盪洗盤過早下車。
+    cond_exit_trend_broken = (df['Close'] < df['SMA_150']).rolling(3).sum() == 3
+    cond_exit_trailing = df['Close'] < (df['Rolling_Max_20'] - 3 * df['ATR'])
+    cond_overextended = df['Close'] > (df['SMA_150'] * 1.3)
+    cond_exit_profit_protect = cond_overextended & (df['Close'] < df['SMA_50'])
+    df['Sell_Signal'] = cond_exit_trend_broken | cond_exit_trailing | cond_exit_profit_protect
     
     # 抓取大盤濾網數據 (SPY)
     spy_df = data_loader.get_market_benchmark(years=12) # 多抓一點確保對齊
@@ -60,8 +69,8 @@ def generate_signals(df: pd.DataFrame) -> pd.DataFrame:
                 df.iat[i+1, df.columns.get_loc('Position_Size')] = pos_size
                 df.iat[i+1, df.columns.get_loc('Execution_Price')] = exec_price
         else:
-            # 出場條件：跌破 50 日均線 或 大盤轉壞
-            if current_close < sma_50 or not market_ok:
+            # 出場條件：雙重長線出場邏輯；大盤濾網只限制新進場，不再直接砍倉。
+            if df.iat[i, df.columns.get_loc('Sell_Signal')]:
                 in_position = False
                 exec_price = next_open * 0.9992
                 df.iat[i+1, df.columns.get_loc('Position_Size')] = 0

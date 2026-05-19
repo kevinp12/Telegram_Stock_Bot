@@ -14,6 +14,8 @@ from config import BASE_DIR, DB_NAME
 
 USER_LOG_PATH = Path(BASE_DIR) / "user.log"
 USER_LOG_TTL_SECONDS = 7 * 24 * 60 * 60
+CHAT_MEMORY_TTL_SECONDS = 3 * 24 * 60 * 60
+CHAT_MEMORY_MAX_ROWS = 16
 
 
 def _to_ts(dt: datetime) -> float:
@@ -86,9 +88,11 @@ def record_user_interaction(
     if not question:
         return
     prune_user_log()
+    item_ts = _now_ts()
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     item = {
-        "ts": _now_ts(),
-        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "ts": item_ts,
+        "created_at": created_at,
         "user_id": int(user_id),
         "display_name": (display_name or "").strip(),
         "username": (username or "").strip(),
@@ -97,14 +101,62 @@ def record_user_interaction(
         "answer": answer[:12000],
         "file_id": file_id,
     }
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO user_interactions
+                (ts, created_at, user_id, display_name, username, source, question, answer, file_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item_ts,
+                    created_at,
+                    int(user_id),
+                    item["display_name"],
+                    item["username"],
+                    item["source"],
+                    item["question"],
+                    item["answer"],
+                    item["file_id"],
+                ),
+            )
+            cutoff = item_ts - USER_LOG_TTL_SECONDS
+            conn.execute("DELETE FROM user_interactions WHERE ts < ?", (cutoff,))
+            conn.commit()
+    except sqlite3.OperationalError:
+        # init_db 尚未執行時保留 file fallback，啟動後會自動建表。
+        pass
     with USER_LOG_PATH.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(item, ensure_ascii=False) + "\n")
 
 
 def get_user_interaction_logs(user_id: int, limit: int = 10, page: int = 1) -> tuple[list[dict], int]:
-    """讀取指定使用者 7 天內暫存互動紀錄（支援分頁）。"""
+    """讀取指定使用者 7 天內暫存互動紀錄（支援分頁）。優先 DB，兼容舊 user.log。"""
     prune_user_log()
-    entries = [item for item in _read_user_log_entries() if int(item.get("user_id", 0) or 0) == int(user_id)]
+    entries: list[dict] = []
+    cutoff = _now_ts() - USER_LOG_TTL_SECONDS
+    try:
+        with get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("DELETE FROM user_interactions WHERE ts < ?", (cutoff,))
+            rows = conn.execute(
+                """
+                SELECT id, ts, created_at, user_id, display_name, username, source, question, answer, file_id
+                FROM user_interactions
+                WHERE user_id=? AND ts>=?
+                ORDER BY ts DESC, id DESC
+                """,
+                (int(user_id), cutoff),
+            ).fetchall()
+            conn.commit()
+            entries = [dict(r) for r in rows]
+    except sqlite3.OperationalError:
+        entries = []
+
+    # 舊版 user.log fallback：若 DB 暫無紀錄，仍能讀到舊資料。
+    if not entries:
+        entries = [item for item in _read_user_log_entries() if int(item.get("user_id", 0) or 0) == int(user_id)]
     entries.sort(key=lambda item: (float(item.get("ts", 0) or 0), int(item.get("id", 0) or 0)), reverse=True)
     size = max(1, int(limit))
     total = len(entries)
@@ -192,6 +244,36 @@ def init_db() -> None:
             )
             """)
 
+        # 使用者互動紀錄：取代單純 user.log，保留 7 天，支援 /ulog 圖片 file_id 回放。
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS user_interactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts REAL NOT NULL,
+                created_at TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                display_name TEXT,
+                username TEXT,
+                source TEXT,
+                question TEXT NOT NULL,
+                answer TEXT,
+                file_id TEXT
+            )
+            """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_user_interactions_user_ts ON user_interactions(user_id, ts DESC)")
+
+        # 自然對話記憶：3 天 TTL，重啟後仍可延續話題。
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS chat_memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                text TEXT NOT NULL,
+                ts REAL NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_chat_memory_user_ts ON chat_memory(user_id, ts DESC)")
+
         # 檢查是否需要遷移舊資料 (如果 user_id 欄位不存在則新增)
         try:
             c.execute("SELECT user_id FROM trades LIMIT 1")
@@ -222,6 +304,89 @@ def init_db() -> None:
             c.execute("ALTER TABLE users ADD COLUMN bc_timer INTEGER DEFAULT 120")
         if "last_bc_ts" not in existing_columns:
             c.execute("ALTER TABLE users ADD COLUMN last_bc_ts REAL DEFAULT 0")
+        conn.commit()
+
+
+def prune_chat_memory(user_id: int | None = None) -> None:
+    """清除超過 3 天的自然對話記憶。"""
+    cutoff = _now_ts() - CHAT_MEMORY_TTL_SECONDS
+    with get_conn() as conn:
+        if user_id is None:
+            conn.execute("DELETE FROM chat_memory WHERE ts < ?", (cutoff,))
+        else:
+            conn.execute("DELETE FROM chat_memory WHERE user_id=? AND ts < ?", (int(user_id), cutoff))
+        conn.commit()
+
+
+def get_chat_memory(user_id: int, limit: int = CHAT_MEMORY_MAX_ROWS) -> list[dict]:
+    """取得使用者 3 天內最近自然對話記憶，依時間由舊到新回傳。"""
+    prune_chat_memory(user_id)
+    with get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT role, text, ts, created_at
+            FROM chat_memory
+            WHERE user_id=?
+            ORDER BY ts DESC, id DESC
+            LIMIT ?
+            """,
+            (int(user_id), int(limit)),
+        ).fetchall()
+    return [dict(r) for r in reversed(rows)]
+
+
+def append_chat_memory(user_id: int, role: str, text: str, *, max_rows: int = CHAT_MEMORY_MAX_ROWS) -> None:
+    """寫入自然對話記憶，並限制每位使用者保留筆數與 3 天 TTL。"""
+    clean_text = (text or "").strip()
+    clean_role = role if role in {"user", "model"} else "user"
+    if not clean_text:
+        return
+    now_ts = _now_ts()
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO chat_memory (user_id, role, text, ts, created_at) VALUES (?, ?, ?, ?, ?)",
+            (int(user_id), clean_role, clean_text, now_ts, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        )
+        cutoff = now_ts - CHAT_MEMORY_TTL_SECONDS
+        conn.execute("DELETE FROM chat_memory WHERE user_id=? AND ts < ?", (int(user_id), cutoff))
+        conn.execute(
+            """
+            DELETE FROM chat_memory
+            WHERE user_id=? AND id NOT IN (
+                SELECT id FROM chat_memory WHERE user_id=? ORDER BY ts DESC, id DESC LIMIT ?
+            )
+            """,
+            (int(user_id), int(user_id), int(max_rows)),
+        )
+        conn.commit()
+
+
+def replace_chat_memory(user_id: int, history: list[dict], *, max_rows: int = CHAT_MEMORY_MAX_ROWS) -> None:
+    """以精簡後 history 覆蓋 DB 記憶，用於 context 過長裁切後同步。"""
+    now_ts = _now_ts()
+    with get_conn() as conn:
+        conn.execute("DELETE FROM chat_memory WHERE user_id=?", (int(user_id),))
+        for item in history[-max_rows:]:
+            role = item.get("role", "user") if isinstance(item, dict) else "user"
+            text = str(item.get("text", "") if isinstance(item, dict) else "").strip()
+            if not text:
+                continue
+            conn.execute(
+                "INSERT INTO chat_memory (user_id, role, text, ts, created_at) VALUES (?, ?, ?, ?, ?)",
+                (int(user_id), role if role in {"user", "model"} else "user", text, now_ts, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+            )
+            now_ts += 0.001
+        conn.commit()
+
+
+def clear_chat_memory(user_id: int | None = None) -> None:
+    """清除自然對話記憶。"""
+    with get_conn() as conn:
+        if user_id is None:
+            conn.execute("DELETE FROM chat_memory")
+        else:
+            conn.execute("DELETE FROM chat_memory WHERE user_id=?", (int(user_id),))
         conn.commit()
 
 

@@ -39,9 +39,77 @@ stats = BrainStats()
 _client: genai.Client | None = None
 _last_alert_percent = 0
 
-# Module A: 48-Hour Persistent Memory (In-Memory Dictionary)
+# Module A: 3-Day Lightweight Persistent Memory (SQLite + small in-process fallback)
 user_memory: dict[int, dict] = {}
-MEMORY_TIMEOUT = 172800  # 48小時 (秒)
+MEMORY_TIMEOUT = 3 * 24 * 60 * 60  # 3 天 (秒)
+MEMORY_MAX_TURNS = 8  # 最多保留最近 8 輪（user+model 約 16 則），避免 context 與 RAM 爆量
+MEMORY_MAX_USER_CHARS = 900
+MEMORY_MAX_MODEL_CHARS = 1400
+
+
+def _clip_memory_text(text: str, role: str) -> str:
+    """壓縮單則記憶內容，保留語意但避免佔用過多 context/RAM。"""
+    compact = " ".join((text or "").strip().split())
+    limit = MEMORY_MAX_MODEL_CHARS if role == "model" else MEMORY_MAX_USER_CHARS
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1].rstrip() + "…"
+
+
+def _prune_user_memory(now: float | None = None) -> None:
+    """移除超過 TTL 的使用者記憶，避免長時間運作時記憶字典持續膨脹。"""
+    current = now or time.time()
+    expired = [uid for uid, item in user_memory.items() if current - float(item.get("timestamp", 0) or 0) > MEMORY_TIMEOUT]
+    for uid in expired:
+        user_memory.pop(uid, None)
+    try:
+        database.prune_chat_memory()
+    except Exception as exc:
+        logging.debug("[Brain] prune DB chat memory skipped: %s", exc)
+
+
+def clear_user_memory(user_id: int | None = None) -> None:
+    """清除單一使用者或全部自然對話記憶（RAM fallback + DB）。"""
+    if user_id is None:
+        user_memory.clear()
+    else:
+        user_memory.pop(int(user_id), None)
+    try:
+        database.clear_chat_memory(user_id)
+    except Exception as exc:
+        logging.debug("[Brain] clear DB chat memory skipped: %s", exc)
+
+
+def _load_memory_history(user_id_int: int, now: float) -> list[dict[str, str]]:
+    """優先從 DB 載入 3 天記憶；DB 不可用時 fallback 到 RAM。"""
+    try:
+        rows = database.get_chat_memory(user_id_int, limit=MEMORY_MAX_TURNS * 2)
+        return [
+            {"role": str(row.get("role", "user")), "text": _clip_memory_text(str(row.get("text", "")), str(row.get("role", "user")))}
+            for row in rows
+            if str(row.get("text", "")).strip()
+        ]
+    except Exception as exc:
+        logging.debug("[Brain] load DB chat memory fallback to RAM: %s", exc)
+        if user_id_int not in user_memory or (now - user_memory[user_id_int].get("timestamp", 0) > MEMORY_TIMEOUT):
+            user_memory[user_id_int] = {"timestamp": now, "history": []}
+        user_memory[user_id_int]["timestamp"] = now
+        raw_history = user_memory[user_id_int].get("history", [])
+        return [
+            {"role": h.get("role", "user"), "text": _clip_memory_text(str(h.get("text", "")), str(h.get("role", "user")))}
+            for h in raw_history[-MEMORY_MAX_TURNS * 2 :]
+            if str(h.get("text", "")).strip()
+        ]
+
+
+def _save_memory_history(user_id_int: int, history: list[dict[str, str]]) -> None:
+    """同步精簡後記憶到 DB；若 DB 不可用則寫 RAM fallback。"""
+    trimmed = history[-MEMORY_MAX_TURNS * 2 :]
+    try:
+        database.replace_chat_memory(user_id_int, trimmed, max_rows=MEMORY_MAX_TURNS * 2)
+    except Exception as exc:
+        logging.debug("[Brain] save DB chat memory fallback to RAM: %s", exc)
+        user_memory[user_id_int] = {"timestamp": time.time(), "history": trimmed}
 
 
 def is_quota_exhausted_error(message: str) -> bool:
@@ -285,18 +353,16 @@ def generate_text(
     user_id: int | None = None,
     urls: list[str] | None = None,
 ) -> str:
-    """呼叫 Gemini 產生文字，支援 48 小時持久記憶與 context 容錯機制。"""
+    """呼叫 Gemini 產生文字，支援 3 天輕量記憶與 context 容錯機制。"""
     client = get_client()
 
-    # Module A: 歷史紀錄管理 (48-Hour TTL)
+    # Module A: 歷史紀錄管理 (3-Day TTL + 輕量上限)
     now = time.time()
+    _prune_user_memory(now)
     history = []
     if user_id is not None:
         user_id_int = int(user_id)
-        if user_id_int not in user_memory or (now - user_memory[user_id_int].get("timestamp", 0) > MEMORY_TIMEOUT):
-            user_memory[user_id_int] = {"timestamp": now, "history": []}
-        user_memory[user_id_int]["timestamp"] = now
-        history = user_memory[user_id_int]["history"]
+        history = _load_memory_history(user_id_int, now)
 
     if mode.lower() == "pro":
         chain = PRO_FALLBACK_MODELS
@@ -342,10 +408,11 @@ def generate_text(
                 # 成功後更新持久記憶
                 if user_id is not None:
                     user_id_int = int(user_id)
-                    user_memory[user_id_int]["history"] = current_history + [
-                        {"role": "user", "text": prompt},
-                        {"role": "model", "text": text.strip()},
+                    updated_history = current_history + [
+                        {"role": "user", "text": _clip_memory_text(prompt, "user")},
+                        {"role": "model", "text": _clip_memory_text(text.strip(), "model")},
                     ]
+                    _save_memory_history(user_id_int, updated_history)
 
                 # 追蹤流量
                 usage = getattr(response, "usage_metadata", None)

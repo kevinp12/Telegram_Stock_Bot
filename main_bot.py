@@ -214,6 +214,37 @@ def record_user_log_safely(
         logging.warning("record user.log failed: %s", exc)
 
 
+def send_photo_with_user_log(
+    chat_id: int,
+    photo,
+    *,
+    caption: str = "",
+    parse_mode: str | None = None,
+    user_id: int | None = None,
+    user_name: str = "User",
+    username: str = "",
+    question: str = "",
+    source: str = "chart",
+):
+    """統一發送圖表並把 Telegram file_id 寫入 user.log，供 /ulog 日後調圖。"""
+    msg = bot.send_photo(chat_id, photo=photo, caption=caption, parse_mode=parse_mode)
+    if user_id:
+        try:
+            file_id = msg.photo[-1].file_id if msg and msg.photo else None
+            record_user_log_safely(
+                int(user_id),
+                user_name,
+                username,
+                question or caption or "圖表",
+                caption or None,
+                source=source,
+                file_id=file_id,
+            )
+        except Exception as exc:
+            logging.warning("record chart file_id failed: %s", exc)
+    return msg
+
+
 def reply(message, text: str | list[str], parse_mode: str | None = "Markdown", reply_markup: any = None):
     return safe_send(message.chat.id, text, parse_mode=parse_mode, reply_markup=reply_markup)
 
@@ -259,13 +290,17 @@ def maybe_send_tech_chart(
     try:
         buf = tech_indicators.generate_tech_chart_buffer(symbol, theme=theme)
         
-        # 發送圖表並提取 file_id
-        msg = bot.send_photo(chat_id, photo=buf, caption=f"{symbol} Tactical Chart")
-        
-        # 紀錄 Log (包含 file_id)
-        if user_id:
-            file_id = msg.photo[-1].file_id if msg and msg.photo else None
-            record_user_log_safely(user_id, user_name, username, text, source="chart", file_id=file_id)
+        # 發送圖表並提取 file_id，供 /ulog 日後調圖
+        send_photo_with_user_log(
+            chat_id,
+            buf,
+            caption=f"{symbol} Tactical Chart",
+            user_id=user_id,
+            user_name=user_name,
+            username=username,
+            question=text,
+            source="chart",
+        )
             
         _TECH_CHART_LAST_TS[key] = now_ts
     except Exception as exc:
@@ -283,7 +318,15 @@ def maybe_send_tech_chart(
             pass
 
 
-def maybe_send_fin_chart(chat_id: int, text: str, *, theme: str = "dark") -> None:
+def maybe_send_fin_chart(
+    chat_id: int,
+    text: str,
+    *,
+    theme: str = "dark",
+    user_id: int | None = None,
+    user_name: str = "User",
+    username: str = "",
+) -> None:
     """/fin 圖表輸出：支援 /fin [symbol] 與 /fin chart [symbol]。"""
     parts = (text or "").split()
     if not parts or parts[0].lower() != "/fin":
@@ -334,7 +377,16 @@ def maybe_send_fin_chart(chat_id: int, text: str, *, theme: str = "dark") -> Non
         for _ in range(2):
             try:
                 fin_buf.seek(0)
-                bot.send_photo(chat_id, photo=fin_buf, caption=f"{symbol} Financial Chart (Rev/NI/Margin/QoQ)")
+                send_photo_with_user_log(
+                    chat_id,
+                    fin_buf,
+                    caption=f"{symbol} Financial Chart (Rev/NI/Margin/QoQ)",
+                    user_id=user_id,
+                    user_name=user_name,
+                    username=username,
+                    question=text,
+                    source="/fin_chart",
+                )
                 sent = True
                 break
             except Exception as exc:
@@ -357,7 +409,14 @@ def maybe_send_fin_chart(chat_id: int, text: str, *, theme: str = "dark") -> Non
         logging.warning("send fin chart failed: %s", exc)
 
 
-def maybe_send_fin_compare_chart(chat_id: int, text: str) -> None:
+def maybe_send_fin_compare_chart(
+    chat_id: int,
+    text: str,
+    *,
+    user_id: int | None = None,
+    user_name: str = "User",
+    username: str = "",
+) -> None:
     """/fin compare 後附加合併對比圖（2~3 檔）。"""
     parts = (text or "").split()
     if len(parts) < 4 or parts[0].lower() != "/fin" or parts[1].lower() != "compare":
@@ -371,7 +430,16 @@ def maybe_send_fin_compare_chart(chat_id: int, text: str) -> None:
         if buf is None:
             safe_send(chat_id, "ℹ️ /fin compare 對比圖資料不足，暫時無法出圖。")
             return
-        bot.send_photo(chat_id, photo=buf, caption=f"{' vs '.join(symbols)} Financial Comparison Chart")
+        send_photo_with_user_log(
+            chat_id,
+            buf,
+            caption=f"{' vs '.join(symbols)} Financial Comparison Chart",
+            user_id=user_id,
+            user_name=user_name,
+            username=username,
+            question=text,
+            source="/fin_compare_chart",
+        )
     except Exception as exc:
         logging.warning("send fin compare chart failed: %s", exc)
     finally:
@@ -678,7 +746,17 @@ def on_backtest(m):
         if isinstance(result, tuple):
             reply, chart_buf = result
             if chart_buf:
-                bot.send_photo(m.chat.id, chart_buf, caption=reply, parse_mode="Markdown")
+                send_photo_with_user_log(
+                    m.chat.id,
+                    chart_buf,
+                    caption=reply,
+                    parse_mode="Markdown",
+                    user_id=user_id,
+                    user_name=user_name,
+                    username=get_username(m),
+                    question=m.text or "",
+                    source="/backtest_chart",
+                )
             else:
                 safe_send(m.chat.id, reply)
         else:
@@ -708,7 +786,17 @@ def on_simulator(m):
         if isinstance(result, tuple):
             reply, chart_buf = result
             if chart_buf:
-                bot.send_photo(m.chat.id, chart_buf, caption=reply, parse_mode="Markdown")
+                send_photo_with_user_log(
+                    m.chat.id,
+                    chart_buf,
+                    caption=reply,
+                    parse_mode="Markdown",
+                    user_id=user_id,
+                    user_name=user_name,
+                    username=get_username(m),
+                    question=m.text or "",
+                    source="/simulator_chart",
+                )
             else:
                 safe_send(m.chat.id, reply)
         else:
@@ -896,10 +984,10 @@ def on_fin(m):
 
     # /fin compare 送合併圖；其餘 /fin 送單檔圖
     if is_compare:
-        maybe_send_fin_compare_chart(m.chat.id, text)
+        maybe_send_fin_compare_chart(m.chat.id, text, user_id=user_id, user_name=user_name, username=get_username(m))
     else:
         theme = _USER_CHART_THEME.get(user_id, "dark")
-        maybe_send_fin_chart(m.chat.id, text, theme=theme)
+        maybe_send_fin_chart(m.chat.id, text, theme=theme, user_id=user_id, user_name=user_name, username=get_username(m))
 
 
 @bot.message_handler(commands=["whale"])
@@ -1131,10 +1219,10 @@ def on_text(m):
                 reply(m, result)
             parts = text.split()
             if len(parts) >= 2 and parts[1].lower() == "compare":
-                maybe_send_fin_compare_chart(m.chat.id, text)
+                maybe_send_fin_compare_chart(m.chat.id, text, user_id=user_id, user_name=user_name, username=get_username(m))
             else:
                 theme = _USER_CHART_THEME.get(user_id, "dark")
-                maybe_send_fin_chart(m.chat.id, text, theme=theme)
+                maybe_send_fin_chart(m.chat.id, text, theme=theme, user_id=user_id, user_name=user_name, username=get_username(m))
             return
         if lowered.startswith("/whale"):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/whale")

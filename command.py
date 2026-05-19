@@ -1709,15 +1709,20 @@ def cmd_backtest(message_text: str, user_id: int) -> str | tuple[str, io.BytesIO
         reply += f"━━━━━━━━━━━━━━\n"
         reply += f"• **策略總報酬：{metrics['total_return_pct']:.1f}%**\n"
         reply += f"• 基準總報酬：{metrics['benchmark_return_pct']:.1f}%\n"
+        reply += f"• 年化報酬率：{metrics['annual_return_pct']:.1f}%\n"
         reply += f"• 夏普比率 (Sharpe)：{metrics['sharpe_ratio']:.2f}\n"
+        reply += f"• 索提諾比率 (Sortino)：{metrics['sortino_ratio']:.2f}\n"
+        reply += f"• 卡瑪比率 (Calmar)：{metrics['calmar_ratio']:.2f}\n"
         reply += f"• 最大回撤 (MDD)：{metrics['max_drawdown_pct']:.1f}%\n\n"
+        reply += f"• 最長回撤修復期：{metrics['drawdown_duration_days']} 個交易日\n"
+        reply += f"• 潰瘍指數 (Ulcer Index)：{metrics['ulcer_index']:.2f}\n\n"
         reply += f"📈 **交易績效統計：**\n"
         reply += f"• 勝率 (Win Rate)：{metrics['win_rate']*100:.1f}%\n"
         reply += f"• 盈虧比 (P/L Ratio)：{metrics['payoff_ratio']:.2f}\n"
         reply += f"• 平均持倉天數：{metrics['avg_hold_days']:.0f} 天\n"
         reply += f"• 總交易次數：{metrics['total_trades']} 次\n"
-        reply += f"━━━━━━━━━━━━━━\n"
-        reply += "⚠️ *註：手續費與滑價已計入，數據僅供參考。*"
+        reply += "━━━━━━━━━━━━━━\n"
+        reply += "⚠️ *註：手續費與滑價已計入；Sortino/Calmar/UI 用於衡量下行風險與持倉壓力。*"
 
         # 7. 生成美化圖表
         chart_buf = backtest_core.generate_backtest_chart(df_signals, ticker)
@@ -1773,8 +1778,13 @@ def cmd_simulator(message_text: str, user_id: int) -> str | tuple[str, io.BytesI
         reply += f"🛡️ **風險指標：**\n"
         reply += f"• 在險價值 (VaR 95%)：{res['var_95_pct']:.1f}%\n"
         reply += f"• 條件在險價值 (CVaR)：{res['cvar_95_pct']:.1f}%\n"
+        reply += f"• 年化漂移假設：{res.get('annualized_drift_pct', 0):.1f}%\n"
+        reply += f"• 年化波動率估計：{res.get('annualized_vol_pct', 0):.1f}%\n"
+        reply += f"• 波動模型：{res.get('garch_source', 'GARCH-like')}\n"
+        reply += f"• 年化跳躍次數估計：{res.get('jump_lambda_annual', 0):.1f} 次\n"
+        reply += f"• 跳躍幅度標準差：{res.get('jump_sigma_pct', 0):.1f}%\n"
         reply += "━━━━━━━━━━━━━━\n"
-        reply += "💡 註：此預測已針對歷史偏誤進行收縮修正，並包含肥尾風險模擬。"
+        reply += "💡 註：此預測採 Student-t 肥尾、GARCH-like 動態波動與 Merton 跳躍擴散，較能反映恐慌波動與財報跳空風險。"
 
         chart_buf = monte_carlo.generate_simulation_chart(price_paths, res['current_price'], ticker)
 

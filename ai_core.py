@@ -151,6 +151,50 @@ def ask_model(
     return ask_flash(prompt, user_name, user_id=user_id, temperature=temperature, max_output_tokens=max_output_tokens, urls=urls)
 
 
+def _is_us_market_question(query: str) -> bool:
+    """偵測「美股今天為何大漲/大跌」這類自然問句。"""
+    q = (query or "").lower()
+    market_terms = ["美股", "大盤", "市場", "標普", "spx", "s&p", "nasdaq", "納斯達克", "qqq", "spy"]
+    move_terms = ["大跌", "大漲", "暴跌", "暴漲", "跌", "漲", "怎麼", "為什麼", "原因", "發生什麼"]
+    return any(term in q for term in market_terms) and any(term in q for term in move_terms)
+
+
+def _format_quote_line(label: str, quote: dict[str, Any]) -> str:
+    price = quote.get("price", "N/A")
+    diff = quote.get("diff", 0)
+    pct = quote.get("pct", 0)
+    if isinstance(price, (int, float)):
+        sign = "+" if float(diff or 0) >= 0 else ""
+        return f"- {label}: {safe_round(price, 2)} ({sign}{safe_round(diff, 2)}, {sign}{safe_round(pct, 2)}%)"
+    return f"- {label}: N/A"
+
+
+def build_us_market_context() -> str:
+    """建立自然對話用的大盤快照；失敗時也要優雅降級。"""
+    try:
+        import market_api
+
+        spx = market_api.get_macro_quote("標普500")
+        ndx = market_api.get_macro_quote("納斯達克")
+        vix = market_api.get_macro_quote("VIX")
+        fear_greed = market_api.get_fear_greed_index()
+        macro = market_api.get_macro_core_snapshot()
+
+        lines = [
+            "【即時/近即時大盤快照】",
+            _format_quote_line("S&P 500", spx),
+            _format_quote_line("Nasdaq", ndx),
+            _format_quote_line("VIX", vix),
+            f"- Fear & Greed: {fear_greed.get('value', 'N/A')} ({fear_greed.get('rating', 'N/A')})",
+            f"- 美債10年期殖利率: {macro.get('us10y', {}).get('value', 'N/A')}｜趨勢: {macro.get('us10y', {}).get('trend', 'N/A')}",
+            f"- 美元指數 DXY: {macro.get('dxy', {}).get('price', 'N/A')} ({macro.get('dxy', {}).get('pct', 'N/A')}%)",
+            f"- Put/Call Ratio: {macro.get('put_call_ratio', {}).get('value', 'N/A')} ({macro.get('put_call_ratio', {}).get('note', 'N/A')})",
+        ]
+        return "\n".join(lines)
+    except Exception as exc:
+        return f"【大盤快照】資料暫時不足：{exc}"
+
+
 def summarize_tech_news(symbol: str, news_item: dict[str, Any], user_name: str, model: str | None = None, user_id: int | None = None) -> str:
     """一般科技新聞：強制輸出情緒分數、重要程度與 Hashtag"""
     title = news_item.get("title", "")
@@ -503,12 +547,19 @@ def chat_with_user(
 """.strip()
         return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.38, max_output_tokens=4000)
 
+    market_context = build_us_market_context() if _is_us_market_question(query) else ""
+    market_section = f"\n\n{market_context}\n" if market_context else ""
+
     prompt = f"""
 {user_name} 說：{query}
+{market_section}
 請以「機構級 AI 副官」身份回答。如果這是一般問題，請直接以最適合的角度給出清晰、專業且務實的回覆。
 回答要有特色，語氣冷靜且精準。
 【要求】
-1. 絕對完整性：嚴禁斷句或草草結束。
-2. 保持簡練且完整，必要時可用符號與縮排排版。
+1. 可自然延續前文話題；若使用者說「那剛剛那個呢 / 繼續 / 然後呢」，請根據 3 天內對話記憶承接。
+2. 若問題涉及美股大漲/大跌，只能依上方大盤快照解釋；資料不足時明確說「目前只能判斷方向，不能硬編新聞」。
+3. 基本應答要像真人顧問：先直接回答，再補 2-4 點重點，最後可給下一步追問方向。
+4. 絕對完整性：嚴禁斷句或草草結束。
+5. 保持簡練且完整，必要時可用符號與縮排排版。
 """.strip()
-    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.5, max_output_tokens=4000)
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.45, max_output_tokens=2600)

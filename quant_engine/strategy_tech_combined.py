@@ -6,15 +6,21 @@ from . import data_loader
 def calculate_tech_signals(df: pd.DataFrame) -> pd.DataFrame:
     """
     將 /tech 指標升級為「波段趨勢策略」：
-    保留精確進場，但改用 10-EMA 追蹤止損，並加入大盤濾網與部位控管。
+    保留精確進場，但出場改為長均線 + MACD 確認，並加入 60 天鎖倉與極端停損。
     """
-    if len(df) < 50:
+    if len(df) < 150:
         return pd.DataFrame()
 
     # 1. 指標計算
     df['EMA10'] = df['Close'].ewm(span=10, adjust=False).mean()
     df['EMA20'] = df['Close'].ewm(span=20, adjust=False).mean()
     df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
+    df['SMA_100'] = df['Close'].rolling(100).mean()
+    df['SMA_150'] = df['Close'].rolling(150).mean()
+
+    ema12 = df['Close'].ewm(span=12, adjust=False).mean()
+    ema26 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = ema12 - ema26
     
     high_low = df['High'] - df['Low']
     high_close = (df['High'] - df['Close'].shift()).abs()
@@ -44,23 +50,36 @@ def calculate_tech_signals(df: pd.DataFrame) -> pd.DataFrame:
     
     df['Raw_Buy_Signal'] = cond_ema_trend & cond_fvg & cond_rsi_safe & df['Market_Filter']
     
-    # --- 執行模擬 (10-EMA 追蹤止損 + 部位控管) ---
+    # --- 執行模擬 (長均線出場 + 60天鎖倉 + 極端停損 + 部位控管) ---
     df['Position_Size'] = 0.0
     in_position = False
+    entry_price = 0.0
+    entry_index = 0
     
-    for i in range(len(df) - 1):
+    for i in range(150, len(df) - 1):
         market_ok = df.iat[i, df.columns.get_loc('Market_Filter')]
+        close_price = df.iat[i, df.columns.get_loc('Close')]
         
         if not in_position:
             if df.iat[i, df.columns.get_loc('Raw_Buy_Signal')]:
                 in_position = True
+                entry_price = close_price
+                entry_index = i
                 # 波動率部位控管
-                atr_pct = (df.iat[i, df.columns.get_loc('ATR')] / df.iat[i, df.columns.get_loc('Close')]) if df.iat[i, df.columns.get_loc('Close')] > 0 else 0.02
+                atr_pct = (df.iat[i, df.columns.get_loc('ATR')] / close_price) if close_price > 0 else 0.02
                 pos_size = min(1.0, 0.02 / atr_pct) if atr_pct > 0 else 1.0
                 df.iat[i+1, df.columns.get_loc('Position_Size')] = pos_size
         else:
-            cond_exit_trend = df.iat[i, df.columns.get_loc('Close')] < df.iat[i, df.columns.get_loc('EMA10')]
-            if cond_exit_trend or not market_ok:
+            holding_days = i - entry_index
+            hard_stop = close_price <= entry_price * 0.85
+            macd_negative = df.iat[i, df.columns.get_loc('MACD')] < 0
+            below_long_ma = (
+                close_price < df.iat[i, df.columns.get_loc('SMA_100')]
+                or close_price < df.iat[i, df.columns.get_loc('SMA_150')]
+            )
+            long_exit = below_long_ma and macd_negative
+            # 買入後至少持有 60 個交易日，除非跌破 -15% 極端停損。
+            if hard_stop or (holding_days >= 60 and long_exit):
                 in_position = False
                 df.iat[i+1, df.columns.get_loc('Position_Size')] = 0
             else:

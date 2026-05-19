@@ -3,8 +3,31 @@ import numpy as np
 import io
 import logging
 
+
+TRADING_DAYS = 252
+
+
+def _max_drawdown_duration(drawdown: pd.Series) -> int:
+    """計算最長回撤修復時間：從跌破新高到再次創高的最長交易日數。"""
+    max_duration = 0
+    current_duration = 0
+    for value in drawdown.fillna(0):
+        if value < 0:
+            current_duration += 1
+            max_duration = max(max_duration, current_duration)
+        else:
+            current_duration = 0
+    return int(max_duration)
+
+
+def _ulcer_index(drawdown: pd.Series) -> float:
+    """Ulcer Index：回撤深度與持續時間的綜合壓力指標，單位為百分比。"""
+    dd_pct = drawdown.fillna(0).clip(upper=0) * 100
+    return float(np.sqrt(np.mean(np.square(dd_pct)))) if len(dd_pct) else 0.0
+
+
 def calculate_metrics(df: pd.DataFrame):
-    """計算詳細的交易層級數據 (包含 MDD, Sharpe Ratio, 勝率)。"""
+    """計算詳細交易與風險指標：MDD、Duration、UI、Sharpe、Sortino、Calmar。"""
     if df.empty:
         return {"error": "資料為空"}, None
 
@@ -42,18 +65,32 @@ def calculate_metrics(df: pd.DataFrame):
     df['Strategy_CumReturn'] = (1 + df['Strategy_Return']).cumprod()
     df['Benchmark_CumReturn'] = (1 + df['Close'].pct_change().fillna(0)).cumprod()
     
-    # Max Drawdown
+    # Max Drawdown / Duration / Ulcer Index
     cum_max = df['Strategy_CumReturn'].cummax()
     df['Drawdown'] = (df['Strategy_CumReturn'] - cum_max) / cum_max
     max_drawdown = df['Drawdown'].min()
+    drawdown_duration = _max_drawdown_duration(df['Drawdown'])
+    ulcer_index = _ulcer_index(df['Drawdown'])
     
-    # Sharpe Ratio (使用淨報酬)
-    daily_returns = df['Strategy_Return'][df['Position'] == 1]
+    # 風險調整後報酬：使用完整策略日報酬，空手日為 0，避免只看持倉日高估風險效率。
+    daily_returns = df['Strategy_Return'].fillna(0)
+    risk_free_daily = 0.02 / TRADING_DAYS
     if not daily_returns.empty:
-        excess_returns = daily_returns - (0.02 / 252)
-        sharpe_ratio = np.sqrt(252) * excess_returns.mean() / excess_returns.std() if excess_returns.std() != 0 else 0
+        excess_returns = daily_returns - risk_free_daily
+        ret_std = excess_returns.std()
+        sharpe_ratio = np.sqrt(TRADING_DAYS) * excess_returns.mean() / ret_std if ret_std and ret_std != 0 else 0
+
+        downside_returns = np.minimum(excess_returns, 0)
+        downside_dev = np.sqrt(np.mean(np.square(downside_returns)))
+        sortino_ratio = np.sqrt(TRADING_DAYS) * excess_returns.mean() / downside_dev if downside_dev and downside_dev != 0 else 0
     else:
         sharpe_ratio = 0
+        sortino_ratio = 0
+
+    years = max(len(df) / TRADING_DAYS, 1 / TRADING_DAYS)
+    final_equity = float(df['Strategy_CumReturn'].iloc[-1])
+    annual_return = (final_equity ** (1 / years) - 1) if final_equity > 0 else -1
+    calmar_ratio = annual_return / abs(max_drawdown) if max_drawdown < 0 else float('inf')
 
     metrics = {
         "total_trades": len(trades),
@@ -63,8 +100,13 @@ def calculate_metrics(df: pd.DataFrame):
         "avg_hold_days": df_trades['hold_days'].mean(),
         "total_return_pct": (df['Strategy_CumReturn'].iloc[-1] - 1) * 100,
         "benchmark_return_pct": (df['Benchmark_CumReturn'].iloc[-1] - 1) * 100,
+        "annual_return_pct": annual_return * 100,
         "max_drawdown_pct": max_drawdown * 100,
-        "sharpe_ratio": sharpe_ratio
+        "drawdown_duration_days": drawdown_duration,
+        "ulcer_index": ulcer_index,
+        "sharpe_ratio": sharpe_ratio,
+        "sortino_ratio": sortino_ratio,
+        "calmar_ratio": calmar_ratio,
     }
     
     avg_win = metrics['avg_win']
