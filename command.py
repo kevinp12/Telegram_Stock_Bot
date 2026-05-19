@@ -1747,10 +1747,14 @@ def cmd_backtest(message_text: str, user_id: int) -> str | list[str] | tuple[lis
 
         metrics, df_trades = result
 
-        # 6. 組合回覆文字
+        # 6. 組合回覆文字，加入目前模型資訊
+        bt_model = database.get_user_bt_model(user_id)
+        model_names = {1: "保守", 2: "普通", 3: "激進"}
+        model_str = f"{bt_model}（{model_names.get(bt_model, '普通')}）"
         page1 = (
             f"📊 **{ticker}｜10年量化回測總覽 (1/2)**\n"
             f"策略：`{strategy_name}`\n"
+            f"⚙️ 目前後台模型：`{model_str}`\n"
             "━━━━━━━━━━━━━━\n"
             f"• **策略總報酬**：`{metrics['total_return_pct']:.1f}%`\n"
             f"• 基準總報酬：`{metrics['benchmark_return_pct']:.1f}%`\n"
