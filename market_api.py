@@ -22,7 +22,7 @@ except Exception:
 
 import ai_core
 import sec_api
-from config import BLS_API_KEY, FINNHUB_KEY, FRED_API_KEY, NEWS_API_KEY
+from config import API_NINJAS_KEY, BLS_API_KEY, FINNHUB_KEY, FMP_API_KEY, FRED_API_KEY, NEWS_API_KEY
 from utils import safe_round, setup_matplotlib_cjk_font
 
 finnhub_client = None
@@ -178,6 +178,15 @@ NEWS_SOURCE_ALIASES = {
     "SEEKINGALPHA": "SeekingAlpha",
     "SA": "SeekingAlpha",
     "JIN10": "金十",
+}
+
+# 準確性優先序（數字越小越優先）
+DATA_SOURCE_PRIORITY: dict[str, list[str]] = {
+    "insider_form4": ["SEC-API", "Finnhub", "FMP", "API-Ninjas"],
+    "institutional_13f": ["SEC-API", "Finnhub", "FMP", "API-Ninjas"],
+    "financial_statement": ["SEC EDGAR", "Yahoo Finance"],
+    "quote_realtime": ["Finnhub", "Yahoo Finance"],
+    "news": ["NewsAPI(高品質域名)", "Yahoo Finance"],
 }
 
 RELATED_NEWS_TOPICS = {
@@ -610,13 +619,15 @@ def get_stock_history_summary(symbol: str) -> dict[str, Any]:
 
 def get_stock_snapshot(symbol: str) -> dict[str, Any]:
     symbol = symbol.upper()
-    quote = quote_from_yahoo(symbol)
+    # 新鮮度優先：個股即時報價優先走 Finnhub，失敗再回 Yahoo
+    quote = get_macro_quote(symbol)
     history = get_stock_history_summary(symbol)
     return {
         **history,
         "price": safe_round(quote.get("price", history.get("price"))),
         "diff": safe_round(quote.get("diff", 0)),
         "pct": safe_round(quote.get("pct", 0)),
+        "quote_source": "Finnhub" if finnhub_client else "Yahoo Finance",
     }
 
 
@@ -748,6 +759,35 @@ def get_stock_fundamentals(symbol: str) -> dict[str, Any]:
                 data["revenue_growth_qoq"] = f"{'+' if growth >= 0 else ''}{safe_round(growth, 2)}%"
     except Exception as exc:
         logging.debug("quarterly earnings unavailable for %s: %s", symbol, exc)
+
+    # 準確性優先：若 SEC 財報可用，覆蓋核心財務欄位
+    try:
+        sec_df = sec_api.fetch_sec_financials(symbol)
+        if sec_df is not None and not sec_df.empty:
+            latest = sec_df.iloc[-1]
+            data["latest_quarter"] = str(latest["end"].date())
+            data["latest_quarter_eps"] = safe_round(latest.get("eps"))
+            data["latest_quarter_revenue"] = format_number(latest.get("revenue"))
+            data["net_income"] = format_number(latest.get("net_income"))
+            rev = float(latest.get("revenue") or 0)
+            ni = float(latest.get("net_income") or 0)
+            if rev > 0:
+                data["profit_margin"] = f"{safe_round((ni / rev) * 100, 2)}%"
+
+            if len(sec_df) >= 2:
+                prev = sec_df.iloc[-2]
+                prev_rev = float(prev.get("revenue") or 0)
+                if prev_rev != 0:
+                    growth = (rev - prev_rev) / prev_rev * 100
+                    data["revenue_growth_qoq"] = f"{'+' if growth >= 0 else ''}{safe_round(growth, 2)}%"
+
+            data["financial_source"] = "SEC EDGAR (priority)"
+        else:
+            data["financial_source"] = "Yahoo Finance"
+    except Exception as exc:
+        logging.debug("SEC overlay unavailable for %s: %s", symbol, exc)
+        data["financial_source"] = "Yahoo Finance"
+
     return data
 
 
@@ -1075,36 +1115,280 @@ def fetch_portfolio_history(symbols: list[str]) -> dict[str, dict[str, float]]:
 
 
 def fetch_insider_transactions(symbol: str, limit: int = 15) -> list[dict[str, Any]]:
-    """獲取內線交易紀錄 (Form 4)。"""
-    if not finnhub_client:
+    """獲取內線交易紀錄（準確性優先）：SEC-API/Finnhub/FMP/API-Ninjas 多路備援。"""
+    symbol = (symbol or "").upper().strip()
+    if not symbol:
         return []
+
+    def _norm_name(v: Any) -> str:
+        return str(v or "").strip()
+
+    def _norm_date(v: Any) -> str:
+        s = str(v or "").strip()
+        return s[:10] if s else ""
+
+    def _norm_change(v: Any) -> float:
+        try:
+            return float(v or 0)
+        except Exception:
+            return 0.0
+
+    def _norm_price(v: Any) -> float:
+        try:
+            return float(v or 0)
+        except Exception:
+            return 0.0
+
+    def _build_row(name: Any, date: Any, change: Any, price: Any, source: str, title: Any = "") -> dict[str, Any]:
+        return {
+            "name": _norm_name(name),
+            "filingDate": _norm_date(date),
+            "change": _norm_change(change),
+            "transactionPrice": _norm_price(price),
+            "title": _norm_name(title),
+            "source": source,
+        }
+
+    raw_rows: list[dict[str, Any]] = []
+
+    # 1) SEC (最準確，官方來源)
     try:
-        # 獲取最近一年的數據
-        end_date = datetime.now().strftime("%Y-%m-%d")
-        start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
-        res = finnhub_client.stock_insider_transactions(symbol, _from=start_date, to=end_date)
-        data = res.get("data", [])
-        # 按日期降序排列
-        data.sort(key=lambda x: x.get("filingDate", ""), reverse=True)
-        return data[:limit]
+        cik = sec_api.get_cik(symbol)
+        if cik:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+            start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+            sec_api_url = "https://api.sec-api.io/insider-trading"
+            sec_api_key = ""
+            try:
+                from config import SEC_API_KEY  # type: ignore
+                sec_api_key = str(SEC_API_KEY or "").strip()
+            except Exception:
+                sec_api_key = ""
+            if sec_api_key:
+                payload = {
+                    "query": {
+                        "query_string": {
+                            "query": f"issuer.cik:{int(cik)} AND filedAt:[{start_date} TO {end_date}]"
+                        }
+                    },
+                    "from": "0",
+                    "size": str(limit * 3),
+                    "sort": [{"filedAt": {"order": "desc"}}],
+                }
+                headers = {"Authorization": sec_api_key, "Content-Type": "application/json"}
+                r = requests.post(sec_api_url, json=payload, headers=headers, timeout=10)
+                if r.ok:
+                    for item in (r.json() or {}).get("transactions", [])[: limit * 3]:
+                        raw_rows.append(
+                            _build_row(
+                                item.get("reportingOwnerName") or item.get("ownerName"),
+                                item.get("filedAt") or item.get("transactionDate"),
+                                item.get("securitiesTransacted") or item.get("amount") or 0,
+                                item.get("price") or 0,
+                                "SEC-API",
+                                item.get("reportingOwnerTitle") or "",
+                            )
+                        )
     except Exception as exc:
-        logging.warning("fetch_insider_transactions failed for %s: %s", symbol, exc)
-        return []
+        logging.debug("SEC-API insider fallback skip for %s: %s", symbol, exc)
+
+    # 2) Finnhub
+    if finnhub_client:
+        try:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+            start_date = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+            res = finnhub_client.stock_insider_transactions(symbol, _from=start_date, to=end_date)
+            data = res.get("data", [])
+            for item in data[: limit * 3]:
+                raw_rows.append(
+                    _build_row(
+                        item.get("name"),
+                        item.get("filingDate") or item.get("transactionDate"),
+                        item.get("change") or item.get("share"),
+                        item.get("transactionPrice") or item.get("price"),
+                        "Finnhub",
+                        item.get("title") or "",
+                    )
+                )
+        except Exception as exc:
+            logging.warning("Finnhub insider failed for %s: %s", symbol, exc)
+
+    # 3) FMP (可選)
+    if FMP_API_KEY:
+        try:
+            url = f"https://financialmodelingprep.com/api/v4/insider-trading?symbol={symbol}&apikey={FMP_API_KEY}"
+            r = requests.get(url, timeout=10)
+            if r.ok:
+                for item in (r.json() or [])[: limit * 2]:
+                    raw_rows.append(
+                        _build_row(
+                            item.get("reportingName") or item.get("name"),
+                            item.get("transactionDate") or item.get("filingDate"),
+                            item.get("securitiesTransacted") or item.get("acquistionOrDisposition"),
+                            item.get("price") or item.get("securitiesOwned"),
+                            "FMP",
+                            item.get("typeOfOwner") or "",
+                        )
+                    )
+        except Exception as exc:
+            logging.debug("FMP insider failed for %s: %s", symbol, exc)
+
+    # 4) API Ninjas (可選)
+    if API_NINJAS_KEY:
+        try:
+            url = f"https://api.api-ninjas.com/v1/insidertrading?ticker={symbol}"
+            r = requests.get(url, headers={"X-Api-Key": API_NINJAS_KEY}, timeout=10)
+            if r.ok:
+                for item in (r.json() or [])[: limit * 2]:
+                    raw_rows.append(
+                        _build_row(
+                            item.get("insider_name") or item.get("name"),
+                            item.get("filing_date") or item.get("transaction_date"),
+                            item.get("shares") or item.get("share_change"),
+                            item.get("price") or 0,
+                            "API-Ninjas",
+                            item.get("title") or "",
+                        )
+                    )
+        except Exception as exc:
+            logging.debug("API-Ninjas insider failed for %s: %s", symbol, exc)
+
+    # 去重 + 準確性優先排序
+    source_rank = {"SEC-API": 1, "Finnhub": 2, "FMP": 3, "API-Ninjas": 4}
+    dedup: dict[tuple[str, str, int], dict[str, Any]] = {}
+    for row in raw_rows:
+        key = (str(row.get("name", "")).upper(), str(row.get("filingDate", "")), int(abs(float(row.get("change", 0) or 0))))
+        prev = dedup.get(key)
+        if not prev or source_rank.get(str(row.get("source")), 99) < source_rank.get(str(prev.get("source")), 99):
+            dedup[key] = row
+
+    merged = list(dedup.values())
+    merged.sort(key=lambda x: (str(x.get("filingDate", "")), -abs(float(x.get("change", 0) or 0))), reverse=True)
+    return merged[:limit]
 
 
 def fetch_institutional_ownership(symbol: str, limit: int = 10) -> list[dict[str, Any]]:
-    """獲取機構持倉紀錄 (13F)。"""
-    if not finnhub_client:
+    """獲取機構持倉（13F）多路整合：SEC-API/Finnhub/FMP/API-Ninjas（準確性優先）。"""
+    symbol = (symbol or "").upper().strip()
+    if not symbol:
         return []
+
+    def _to_float(v: Any) -> float:
+        try:
+            return float(v or 0)
+        except Exception:
+            return 0.0
+
+    def _row(holder: Any, report_date: Any, change: Any, shares: Any, source: str) -> dict[str, Any]:
+        return {
+            "holder": str(holder or "").strip(),
+            "reportDate": str(report_date or "")[:10],
+            "change": _to_float(change),
+            "share": _to_float(shares),
+            "source": source,
+        }
+
+    merged_raw: list[dict[str, Any]] = []
+
+    # 1) SEC-API（13F 聚合）
     try:
-        res = finnhub_client.institutional_ownership(symbol)
-        data = res.get("data", [])
-        # 按持股數量或最新報表日期排序
-        data.sort(key=lambda x: x.get("reportDate", ""), reverse=True)
-        return data[:limit]
+        sec_api_key = ""
+        try:
+            from config import SEC_API_KEY  # type: ignore
+            sec_api_key = str(SEC_API_KEY or "").strip()
+        except Exception:
+            sec_api_key = ""
+        if sec_api_key:
+            url = "https://api.sec-api.io/institutional-ownership"
+            payload = {
+                "query": {"query_string": {"query": f"ticker:{symbol}"}},
+                "from": "0",
+                "size": str(limit * 3),
+                "sort": [{"reportDate": {"order": "desc"}}],
+            }
+            r = requests.post(url, json=payload, headers={"Authorization": sec_api_key, "Content-Type": "application/json"}, timeout=10)
+            if r.ok:
+                for item in (r.json() or {}).get("data", [])[: limit * 3]:
+                    merged_raw.append(
+                        _row(
+                            item.get("institutionName") or item.get("holder"),
+                            item.get("reportDate"),
+                            item.get("change") or 0,
+                            item.get("shares") or item.get("value") or 0,
+                            "SEC-API",
+                        )
+                    )
     except Exception as exc:
-        logging.warning("fetch_institutional_ownership failed for %s: %s", symbol, exc)
-        return []
+        logging.debug("SEC-API institutional failed for %s: %s", symbol, exc)
+
+    # 2) Finnhub
+    if finnhub_client:
+        try:
+            res = finnhub_client.institutional_ownership(symbol)
+            data = res.get("data", [])
+            for item in data[: limit * 3]:
+                merged_raw.append(
+                    _row(
+                        item.get("name") or item.get("holder"),
+                        item.get("reportDate"),
+                        item.get("change") or 0,
+                        item.get("share") or item.get("shares") or 0,
+                        "Finnhub",
+                    )
+                )
+        except Exception as exc:
+            logging.warning("Finnhub institutional failed for %s: %s", symbol, exc)
+
+    # 3) FMP
+    if FMP_API_KEY:
+        try:
+            url = f"https://financialmodelingprep.com/api/v3/institutional-holder/{symbol}?apikey={FMP_API_KEY}"
+            r = requests.get(url, timeout=10)
+            if r.ok:
+                for item in (r.json() or [])[: limit * 2]:
+                    merged_raw.append(
+                        _row(
+                            item.get("holder"),
+                            item.get("dateReported") or item.get("reportDate"),
+                            item.get("change") or 0,
+                            item.get("shares") or 0,
+                            "FMP",
+                        )
+                    )
+        except Exception as exc:
+            logging.debug("FMP institutional failed for %s: %s", symbol, exc)
+
+    # 4) API Ninjas 預留
+    if API_NINJAS_KEY:
+        try:
+            url = f"https://api.api-ninjas.com/v1/institutionalholdings?ticker={symbol}"
+            r = requests.get(url, headers={"X-Api-Key": API_NINJAS_KEY}, timeout=10)
+            if r.ok:
+                for item in (r.json() or [])[: limit * 2]:
+                    merged_raw.append(
+                        _row(
+                            item.get("holder") or item.get("institution"),
+                            item.get("report_date") or item.get("reportDate"),
+                            item.get("change") or 0,
+                            item.get("shares") or 0,
+                            "API-Ninjas",
+                        )
+                    )
+        except Exception as exc:
+            logging.debug("API-Ninjas institutional failed for %s: %s", symbol, exc)
+
+    # 去重 + 準確性優先
+    source_rank = {"SEC-API": 1, "Finnhub": 2, "FMP": 3, "API-Ninjas": 4}
+    dedup: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in merged_raw:
+        key = (str(row.get("holder", "")).upper(), str(row.get("reportDate", "")))
+        prev = dedup.get(key)
+        if not prev or source_rank.get(str(row.get("source")), 99) < source_rank.get(str(prev.get("source")), 99):
+            dedup[key] = row
+
+    rows = list(dedup.values())
+    rows.sort(key=lambda x: (str(x.get("reportDate", "")), abs(float(x.get("change", 0) or 0))), reverse=True)
+    return rows[:limit]
 
 
 def fetch_news_multi(symbol: str, limit: int = 3) -> list[dict[str, str]]:
@@ -1150,8 +1434,22 @@ def fetch_news_multi(symbol: str, limit: int = 3) -> list[dict[str, str]]:
     except Exception as exc:
         logging.warning("Yahoo news failed for %s: %s", symbol, exc)
 
-    news_list.sort(key=lambda x: x.get("publishedAt") or "", reverse=True)
-    return news_list[:limit]
+    # 新鮮度排序 + 標題去重（同標題保留較高優先來源）
+    source_rank = {"NewsAPI": 1, "Yahoo Finance": 2}
+    dedup: dict[str, dict[str, str]] = {}
+    for item in news_list:
+        title_key = str(item.get("title") or "").strip().lower()
+        if not title_key:
+            continue
+        prev = dedup.get(title_key)
+        cur_rank = source_rank.get(str(item.get("source") or ""), 99)
+        prev_rank = source_rank.get(str((prev or {}).get("source") or ""), 99)
+        if (not prev) or cur_rank < prev_rank:
+            dedup[title_key] = item
+
+    merged = list(dedup.values())
+    merged.sort(key=lambda x: x.get("publishedAt") or "", reverse=True)
+    return merged[:limit]
 
 
 def get_news_source_list() -> str:

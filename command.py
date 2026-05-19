@@ -1095,29 +1095,40 @@ def cmd_whale(text: str, user_id: int) -> str:
     def _build_whale_focus_summary(insiders: list[dict[str, Any]], insts: list[dict[str, Any]]) -> str:
         insider_buy = 0
         insider_sell = 0
+        insider_sources: dict[str, int] = {}
         for item in insiders[:20]:
             chg = float(item.get("change", 0) or 0)
             if chg > 0:
                 insider_buy += 1
             elif chg < 0:
                 insider_sell += 1
+            src = str(item.get("source") or "Unknown")
+            insider_sources[src] = insider_sources.get(src, 0) + 1
 
         inst_add = 0
         inst_reduce = 0
+        inst_sources: dict[str, int] = {}
         for item in insts[:20]:
             chg = float(item.get("change", 0) or 0)
             if chg > 0:
                 inst_add += 1
             elif chg < 0:
                 inst_reduce += 1
+            src = str(item.get("source") or "Unknown")
+            inst_sources[src] = inst_sources.get(src, 0) + 1
 
         insider_bias = "偏多" if insider_buy > insider_sell else "偏空" if insider_sell > insider_buy else "中性"
         inst_bias = "偏多" if inst_add > inst_reduce else "偏空" if inst_reduce > inst_add else "中性"
+        insider_src_text = "、".join(f"{k}:{v}" for k, v in sorted(insider_sources.items(), key=lambda x: -x[1])) or "N/A"
+        inst_src_text = "、".join(f"{k}:{v}" for k, v in sorted(inst_sources.items(), key=lambda x: -x[1])) or "N/A"
 
         return (
             "🎯 **大戶與內部人重點（系統摘要）**\n"
             f"• 內部人方向：{insider_bias}（買入 {insider_buy} / 賣出 {insider_sell}）\n"
             f"• 機構方向：{inst_bias}（加倉 {inst_add} / 減倉 {inst_reduce}）\n"
+            f"• 內線來源分布：{insider_src_text}\n"
+            f"• 機構來源分布：{inst_src_text}\n"
+            "• 來源優先序（準確性）：SEC-API > Finnhub > FMP > API-Ninjas\n"
             "• 註：以上為最近資料筆數統計，AI 解讀需以名單細節為準。"
         )
 
