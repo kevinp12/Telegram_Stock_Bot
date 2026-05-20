@@ -1110,8 +1110,10 @@ def cmd_news(text: str, user_name: str, user_id: int) -> list[str]:
         market_line = f"現價：{snapshot.get('price', 'N/A')}，" f"漲跌：{snapshot.get('diff', 'N/A')}，" f"漲幅：{snapshot.get('pct', 'N/A')}%"
     else:
         ai_prompt = (
-            f"請以副官身分針對此新聞主題「{raw_query}」進行 SMC 結構影響分析。"
-            "使用者要求：輸出精煉且具備戰術價值的內容，細節要講清楚，嚴格遵守副官人格與標籤規範。"
+            f"請以副官身分針對以下新聞主題「{raw_query}」進行 SMC 結構影響分析。\n\n"
+            f"新聞標題：{title}\n"
+            f"摘要內容：{outline}\n\n"
+            "使用者要求：請根據上述新聞內容，輸出精煉且具備戰術價值的內容，細節要講清楚，嚴格遵守副官人格與標籤規範。"
         )
         model_pref = database.get_user_model_preference(user_id)
         ai_answer = ai_core.ask_model(
@@ -1989,7 +1991,7 @@ def _generate_month_calendar_image(events: list[dict[str, str]], generated_at: s
         except Exception:
             continue
 
-    headers = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    headers = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
     table_data: list[list[str]] = []
     for w in weeks:
         row = []
@@ -2001,16 +2003,17 @@ def _generate_month_calendar_image(events: list[dict[str, str]], generated_at: s
                 row.append(f"{d}\n{tags}" if tags else str(d))
         table_data.append(row)
 
-    fig, ax = plt.subplots(figsize=(14, 9), facecolor="#0B1020")
+    # 放大輸出，貼近 Telegram 大圖展示
+    fig, ax = plt.subplots(figsize=(18, 13), facecolor="#0B1020")
     ax.axis("off")
-    title = f"US Market Calendar {year}-{month:02d}"
-    fig.text(0.01, 0.98, f"Generated at: {generated_at}", color="#E2E8F0", fontsize=10, va="top", ha="left")
-    fig.text(0.5, 0.95, title, color="#F8FAFC", fontsize=18, va="top", ha="center", weight="bold")
+    title = f"美股重大事件月曆 {year}年{month:02d}月"
+    fig.text(0.01, 0.98, f"生成時間：{generated_at}", color="#E2E8F0", fontsize=12, va="top", ha="left")
+    fig.text(0.5, 0.95, title, color="#F8FAFC", fontsize=24, va="top", ha="center", weight="bold")
 
     tbl = ax.table(cellText=table_data, colLabels=headers, loc="center", cellLoc="left", colLoc="center")
     tbl.auto_set_font_size(False)
-    tbl.set_fontsize(10)
-    tbl.scale(1.1, 2.2)
+    tbl.set_fontsize(13)
+    tbl.scale(1.25, 2.9)
 
     for (r, c), cell in tbl.get_celld().items():
         cell.set_edgecolor("#334155")
@@ -2030,7 +2033,7 @@ def _generate_month_calendar_image(events: list[dict[str, str]], generated_at: s
                 cell.set_text_props(color="#CBD5E1")
 
     buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=220, bbox_inches="tight", facecolor="#0B1020")
+    plt.savefig(buf, format="png", dpi=260, bbox_inches="tight", facecolor="#0B1020")
     plt.close(fig)
     buf.seek(0)
     return buf

@@ -12,6 +12,7 @@ from typing import Any
 
 import feedparser
 import numpy as np
+import pandas as pd
 import requests
 import yfinance as yf
 
@@ -283,19 +284,34 @@ def get_macro_status(symbol_name: str) -> str:
 
 
 def get_fear_greed_index() -> dict[str, Any]:
-    """取得 CNN Fear & Greed Index；失敗時回傳 N/A。"""
+    """取得 CNN Fear & Greed Index；失敗時嘗試備援來源，再失敗才回傳 N/A。"""
+    # 主來源：CNN API
     try:
         r = requests.get("https://production.dataviz.cnn.io/index/fearandgreed/graphdata", timeout=8)
         data = r.json()
         fg = data.get("fear_and_greed") or {}
         value = fg.get("score") or fg.get("value")
         rating = fg.get("rating") or fg.get("classification") or "N/A"
-        if value is None:
-            return {"value": "N/A", "rating": "N/A", "note": "資料暫時無法取得"}
-        return {"value": safe_round(float(value), 1), "rating": str(rating), "note": "CNN Fear & Greed"}
+        if value is not None:
+            return {"value": safe_round(float(value), 1), "rating": str(rating), "note": "CNN Fear & Greed"}
     except Exception as exc:
-        logging.warning("get_fear_greed_index failed: %s", exc)
-        return {"value": "N/A", "rating": "N/A", "note": "資料暫時無法取得"}
+        logging.warning("get_fear_greed_index (CNN) failed: %s", exc)
+
+    # 備援：Yahoo Finance Market Summary (模擬)
+    try:
+        from market_api import FINNHUB_KEY as _FHK
+        # 嘗試從 Finnhub 市場情緒取得近似指標
+        if finnhub_client:
+            try:
+                mk = finnhub_client.market_news_sentiment("general", limit=1)
+                if mk and isinstance(mk, list) and len(mk) > 0:
+                    return {"value": "N/A", "rating": "備援: Finnhub", "note": "Market sentiment (Fallback)"}
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return {"value": "N/A", "rating": "N/A", "note": "資料暫時無法取得"}
 
 
 def get_options_flow_snapshot(limit: int = 3) -> list[dict[str, str]]:

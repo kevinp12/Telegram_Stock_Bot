@@ -240,6 +240,11 @@ def safe_send(chat_id, text: str | list[str] | tuple[str, ...], parse_mode: str 
             bot.send_message(chat_id, chunk, parse_mode=parse_mode, reply_markup=markup)
         except Exception as exc:
             logging.error(f"Failed to send message chunk: {exc}")
+            if parse_mode == "Markdown":
+                try:
+                    bot.send_message(chat_id, chunk, parse_mode=None, reply_markup=markup)
+                except Exception as exc2:
+                    logging.error(f"Failed to send message chunk even without Markdown: {exc2}")
         time.sleep(1.0)
 
 
@@ -548,7 +553,6 @@ def setup_bot_commands() -> None:
     commands = [
         telebot.types.BotCommand("now", "⚡ 即時全景 + 總損益"),
         telebot.types.BotCommand("calendar", "🗓️ 宏觀與事件日曆"),
-        telebot.types.BotCommand("calender", "🗓️ 宏觀與事件日曆(別名)"),
         telebot.types.BotCommand("theory", "📘 交易百科教學"),
         telebot.types.BotCommand("list", "📋 持股詳細明細"),
         telebot.types.BotCommand("news", "📰 即時新聞與市場報告"),
@@ -1068,8 +1072,7 @@ def on_news(m):
     try:
         msgs = command.cmd_news(m.text or "", user_name, user_id)
         if msgs:
-            for msg in msgs:
-                safe_send(m.chat.id, msg)
+            send_paged_message(m.chat.id, msgs)
     except Exception as e:
         logging.error(f"News fetch failed: {e}")
         safe_send(m.chat.id, f"❌ 新聞查詢異常：{str(e)}")
@@ -1214,7 +1217,7 @@ def on_theory(m):
         reply(m, pages)
 
 
-@bot.message_handler(commands=["calendar", "calender"])
+@bot.message_handler(commands=["calendar"])
 def on_calendar(m):
     user_id, user_name = register_user(m)
     record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/calendar")
@@ -1388,8 +1391,9 @@ def on_text(m):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/news")
             status_msg = bot.reply_to(m, "📰 正在搜尋最新新聞與 AI 分析...")
             try:
-                for msg in command.cmd_news(text, user_name, user_id):
-                    safe_send(m.chat.id, msg)
+                msgs = command.cmd_news(text, user_name, user_id)
+                if msgs:
+                    send_paged_message(m.chat.id, msgs)
             except Exception as exc:
                 logging.error("News command failed: %s", exc)
                 safe_send(m.chat.id, f"❌ 新聞查詢異常：{exc}")
@@ -1443,7 +1447,16 @@ def on_text(m):
             return
         if lowered.startswith("/whale"):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/whale")
-            reply(m, command.cmd_whale(text, user_id))
+            status_msg = bot.reply_to(m, "🐋 正在抓取內部人與機構持倉資料...")
+            try:
+                result = command.cmd_whale(text, user_id)
+                if result is not None:
+                    reply(m, result)
+            except Exception as exc:
+                logging.error("Whale command failed: %s", exc)
+                safe_send(m.chat.id, f"⚠️ 鯨魚情報查詢失敗：{exc}")
+            finally:
+                delete_loading_safe(m, status_msg)
             return
 
         if lowered.startswith("/bc"):
