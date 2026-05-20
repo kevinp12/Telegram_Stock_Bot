@@ -35,20 +35,19 @@ _CIK_MAP_LOADED_AT: float = 0.0
 CIK_MAP_TTL_SECONDS = 6 * 60 * 60
 
 def _load_cik_map(force_refresh: bool = False) -> None:
-    """從 SEC 官方獲取所有上市公司的 Ticker 與 CIK 映射關係。"""
+    """Load Ticker-CIK mapping from SEC."""
     global _CIK_MAP, _CIK_MAP_LOADED_AT
     now = time.time()
     if not force_refresh and _CIK_MAP and (now - _CIK_MAP_LOADED_AT) < CIK_MAP_TTL_SECONDS:
         return
     try:
-        response = requests.get(SEC_TICKER_MAP_URL, headers=SEC_HEADERS, timeout=10)
+        response = requests.get(SEC_TICKER_MAP_URL, headers=SEC_HEADERS, timeout=7)
         response.raise_for_status()
         data = response.json()
         new_map: Dict[str, str] = {}
-        # 映射格式：{"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}}
         for entry in data.values():
             ticker = str(entry["ticker"]).upper().strip()
-            cik_str = str(entry["cik_str"]).zfill(10)  # CIK 必須補滿 10 位數
+            cik_str = str(entry["cik_str"]).zfill(10)
             new_map[ticker] = cik_str
         _CIK_MAP = new_map
         _CIK_MAP_LOADED_AT = now
@@ -79,7 +78,7 @@ def get_financial_diagnostics(ticker: str) -> Dict[str, Any]:
 
     try:
         url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
-        response = requests.get(url, headers=SEC_DATA_HEADERS, timeout=15)
+        response = requests.get(url, headers=SEC_DATA_HEADERS, timeout=7)
         result["http_status"] = response.status_code
         if response.status_code != 200:
             result["reason"] = "companyfacts_http_error"
@@ -155,13 +154,12 @@ def fetch_sec_financials(ticker: str) -> Optional[pd.DataFrame]:
 
     url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
     try:
-        response = requests.get(url, headers=SEC_DATA_HEADERS, timeout=15)
+        response = requests.get(url, headers=SEC_DATA_HEADERS, timeout=7)
         if response.status_code != 200:
-            # 資料新鮮度策略：若 companyfacts 失敗，強制刷新 CIK map 後重試一次
             _load_cik_map(force_refresh=True)
             fresh_cik = _CIK_MAP.get(ticker.upper(), cik)
             retry_url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{fresh_cik}.json"
-            retry_resp = requests.get(retry_url, headers=SEC_DATA_HEADERS, timeout=15)
+            retry_resp = requests.get(retry_url, headers=SEC_DATA_HEADERS, timeout=7)
             if retry_resp.status_code != 200:
                 logging.warning(
                     "SEC companyfacts request failed for %s (cik=%s retry_cik=%s): HTTP %s/%s",
