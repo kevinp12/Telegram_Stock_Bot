@@ -329,6 +329,13 @@ def get_client() -> genai.Client:
     return _client
 
 
+def reset_client() -> genai.Client:
+    """重建 client（用於連線狀態異常或 session 衝突復原）。"""
+    global _client
+    _client = None
+    return get_client()
+
+
 def normalize_model_name(name: str) -> str:
     return (name or "").replace("models/", "").strip()
 
@@ -441,6 +448,7 @@ def generate_text(
 
             # 安全網重試機制：若 Context 過長則移除最舊對話後重試
             current_history = list(history)
+            session_retried = False
             while True:
                 try:
                     # 組合 Content 陣列
@@ -499,6 +507,12 @@ def generate_text(
 
                 except Exception as exc:
                     msg = str(exc).lower()
+                    if ("session already exists" in msg or ("session" in msg and "already exists" in msg)) and not session_retried:
+                        logging.warning("⚠️ [Brain] 偵測到 Session 衝突，重建 client 並重試一次 (%s)", clean_model)
+                        client = reset_client()
+                        session_retried = True
+                        continue
+
                     # API Token 防爆機制：若報錯且有歷史紀錄，移除最舊的一組 (User+Model) 後重試
                     if ("token" in msg or "length" in msg or "400" in msg or "invalid argument" in msg) and current_history:
                         logging.warning("⚠️ [Brain] Context 可能過長，移除最舊歷史後重試 (%s)", clean_model)

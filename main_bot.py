@@ -83,15 +83,15 @@ if not TELEGRAM_TOKEN or len(TELEGRAM_TOKEN) < 10:
     logging.error("❌ 錯誤：TELEGRAM_TOKEN 未設定或格式不正確。請檢查 .env 檔案內容。")
     sys.exit(1)
 
-bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=True, num_threads=4)
+bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=True, num_threads=2)
 PAGED_MESSAGE_CACHE: OrderedDict[str, list[str]] = OrderedDict()
-_HEAVY_TASK_SEMAPHORE = threading.BoundedSemaphore(value=2)
+_HEAVY_TASK_SEMAPHORE = threading.BoundedSemaphore(value=1)
 _USER_HEAVY_TASK_TS: OrderedDict[tuple[int, str], float] = OrderedDict()
 
 
 def add_to_paged_cache(token: str, pages: list[str]) -> None:
     """限制分頁快取上限，避免長時間運作造成記憶體累積。"""
-    while len(PAGED_MESSAGE_CACHE) >= 50:
+    while len(PAGED_MESSAGE_CACHE) >= 20:
         PAGED_MESSAGE_CACHE.popitem(last=False)
     PAGED_MESSAGE_CACHE[token] = pages
 TECH_CHART_COOLDOWN_SECONDS = 45

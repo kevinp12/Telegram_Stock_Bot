@@ -9,8 +9,6 @@ import math
 import random
 import re
 import io
-import subprocess
-from pathlib import Path
 import calendar as pycalendar
 from datetime import datetime, timedelta
 from typing import Any
@@ -33,58 +31,6 @@ STOCK_RE = re.compile(r"\b[A-Z0-9\.\-]{1,6}\b")
 FIN_COMPARE_STATE: dict[int, list[str]] = {}
 DATA_CLEAR_CONFIRM_STATE: dict[int, datetime] = {}
 OP_DELETE_CONFIRM_STATE: dict[int, tuple[str, datetime]] = {}
-STRESS_TEST_LOG_PATH = Path("logs/stress_test.log")
-
-
-def _assess_stress_result(output: str) -> tuple[str, str]:
-    """依壓測輸出給出 1GB RAM 安全等級。"""
-    rss_peak = None
-    err_count = None
-    m1 = re.search(r"rss_peak_mb=([0-9]+(?:\.[0-9]+)?)", output)
-    m2 = re.search(r"err=([0-9]+)", output)
-    if m1:
-        rss_peak = float(m1.group(1))
-    if m2:
-        err_count = int(m2.group(1))
-
-    if rss_peak is None or err_count is None:
-        return "⚠️ 無法評分", "未能完整解析壓測輸出。"
-
-    if err_count == 0 and rss_peak <= 700:
-        return "✅ 安全", f"RSS 峰值 {rss_peak:.2f}MB，錯誤 0，對 1GB RAM 屬安全區。"
-    if err_count <= 2 and rss_peak <= 850:
-        return "🟡 可接受", f"RSS 峰值 {rss_peak:.2f}MB，錯誤 {err_count}，接近警戒，建議觀察。"
-    return "🔴 風險", f"RSS 峰值 {rss_peak:.2f}MB 或錯誤 {err_count} 偏高，建議降 workers/seconds。"
-
-
-def _append_stress_log(text: str) -> None:
-    STRESS_TEST_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(STRESS_TEST_LOG_PATH, "a", encoding="utf-8") as f:
-        f.write(text.rstrip() + "\n")
-
-
-def _build_perf_snapshot_text() -> str:
-    """回傳目前程序效能快照，供 /op perf 觀測穩定性。"""
-    proc = psutil.Process()
-    rss_mb = proc.memory_info().rss / (1024 * 1024)
-    vms_mb = proc.memory_info().vms / (1024 * 1024)
-    cpu_pct = proc.cpu_percent(interval=0.15)
-    sys_mem = psutil.virtual_memory()
-    uptime_sec = max(0, int((datetime.now() - BOT_START_TIME).total_seconds()))
-    uptime_h = uptime_sec // 3600
-    uptime_m = (uptime_sec % 3600) // 60
-
-    return (
-        "🩺 系統即時效能快照\n"
-        "━━━━━━━━━━━━━━\n"
-        f"• Process CPU：`{cpu_pct:.1f}%`\n"
-        f"• Process RSS：`{rss_mb:.1f} MB`\n"
-        f"• Process VMS：`{vms_mb:.1f} MB`\n"
-        f"• 系統記憶體使用：`{sys_mem.percent:.1f}%`\n"
-        f"• 系統可用記憶體：`{sys_mem.available / (1024*1024):.0f} MB`\n"
-        f"• 活躍執行緒：`{proc.num_threads()}`\n"
-        f"• Bot 運行時間：`{uptime_h}h {uptime_m}m`"
-    )
 
 
 def _get_runtime_profile() -> tuple[str, int, int]:
@@ -1378,88 +1324,6 @@ def cmd_op(text: str, user_id: int) -> str:
             "• 調整後再重啟 bot，確保所有使用者一致套用。"
         )
 
-    if sub == "stresstest":
-        if len(parts) >= 3 and parts[2].lower() == "run":
-            workers = 5
-            seconds = 20
-            mode = "dry"
-
-            if len(parts) >= 4:
-                try:
-                    workers = max(1, min(20, int(parts[3])))
-                except Exception:
-                    return "❌ workers 格式錯誤。用法：`/op stresstest run [workers] [seconds] [dry|real]`"
-            if len(parts) >= 5:
-                try:
-                    seconds = max(5, min(180, int(parts[4])))
-                except Exception:
-                    return "❌ seconds 格式錯誤。用法：`/op stresstest run [workers] [seconds] [dry|real]`"
-            if len(parts) >= 6:
-                m = parts[5].lower().strip()
-                if m not in {"dry", "real"}:
-                    return "❌ mode 只支援 `dry` 或 `real`。"
-                mode = m
-
-            cmd = [
-                "python3",
-                "tools/stress_test_bot.py",
-                "--workers",
-                str(workers),
-                "--seconds",
-                str(seconds),
-                "--mode",
-                mode,
-            ]
-            try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=seconds + 30)
-                output = (result.stdout or "").strip()
-                err = (result.stderr or "").strip()
-                if result.returncode != 0:
-                    return (
-                    _append_stress_log(
-                        f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] FAIL workers={workers} seconds={seconds} mode={mode} rc={result.returncode} err={err[:300]}"
-                    )
-                    or
-                        "❌ 壓測執行失敗\n"
-                        "━━━━━━━━━━━━━━\n"
-                        f"Command: `{' '.join(cmd)}`\n"
-                        f"Return code: `{result.returncode}`\n"
-                        f"stderr: `{err[:1200] or 'N/A'}`"
-                    )
-
-                grade, note = _assess_stress_result(output)
-                _append_stress_log(
-                    f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] OK workers={workers} seconds={seconds} mode={mode} grade={grade} note={note}"
-                )
-
-                return (
-                    "✅ 壓測執行完成\n"
-                    "━━━━━━━━━━━━━━\n"
-                    f"參數：workers=`{workers}` seconds=`{seconds}` mode=`{mode}`\n\n"
-                    f"1GB RAM 評級：{grade}\n"
-                    f"判讀：{note}\n"
-                    f"紀錄檔：`{STRESS_TEST_LOG_PATH}`\n\n"
-                    f"```\n{output[:3000]}\n```"
-                )
-            except subprocess.TimeoutExpired:
-                return "⏱️ 壓測逾時，請降低 seconds 或 workers 後重試。"
-
-        return (
-            "🧪 壓力測試腳本說明（5~10 併發）\n"
-            "━━━━━━━━━━━━━━\n"
-            "已內建腳本：`tools/stress_test_bot.py`\n\n"
-            "一鍵執行（Tele 端）：\n"
-            "`/op stresstest run 5 20 dry`\n"
-            "`/op stresstest run 10 20 dry`\n"
-            "`/op stresstest run 5 15 real`\n\n"
-            "建議先跑乾測（不打 API）：\n"
-            "`python3 tools/stress_test_bot.py --workers 5 --seconds 30 --mode dry`\n"
-            "`python3 tools/stress_test_bot.py --workers 10 --seconds 30 --mode dry`\n\n"
-            "若要真實測試（會呼叫市場資料流程）：\n"
-            "`python3 tools/stress_test_bot.py --workers 5 --seconds 20 --mode real`\n\n"
-            "觀察重點：RSS 峰值、平均延遲、錯誤數是否穩定。"
-        )
-
     if sub == "log":
         if len(parts) > 2 and parts[2].lower() == "clear":
             try:
@@ -1477,37 +1341,6 @@ def cmd_op(text: str, user_id: int) -> str:
 
     if sub == "user":
         return cmd_user(text, user_id)
-
-    if sub == "perf":
-        return _build_perf_snapshot_text()
-
-    if sub == "fontcheck":
-        try:
-            info = utils.debug_cjk_font_loading()
-            files = info.get("scanned_files", [])
-            lines = [
-                "🔤 CJK 字型診斷",
-                "━━━━━━━━━━━━━━",
-                f"• CJK_FONT_DIR：`{info.get('cjk_font_dir_env') or '(empty)'}`",
-                f"• ENV 路徑存在：`{info.get('env_dir_exists')}`",
-                f"• ENV 為資料夾：`{info.get('env_dir_is_dir')}`",
-                f"• 選中字型：`{info.get('picked_font')}`",
-                f"• Emoji 字型：`{', '.join(info.get('emoji_fonts', [])) or '(none)'}`",
-                f"• 掃描字型檔：`{len(files)}`",
-            ]
-            scan_counts = info.get("scan_counts", {}) or {}
-            if scan_counts:
-                lines.append("\n📊 目錄掃描統計：")
-                for d, c in scan_counts.items():
-                    lines.append(f"• `{d}` -> `{c}`")
-            if files:
-                lines.append("\n📁 字型檔（最多顯示前 15 筆）：")
-                lines.extend(f"• `{p}`" for p in files[:15])
-            else:
-                lines.append("\n⚠️ 未掃描到任何字型檔，請檢查部署路徑與打包內容。")
-            return "\n".join(lines)
-        except Exception as exc:
-            return f"❌ fontcheck 執行失敗：`{exc}`"
 
     if sub == "del":
         if len(parts) < 3:
