@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 import re
 import time
+import gc
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -42,7 +44,7 @@ _last_alert_percent = 0
 # Module A: 3-Day Lightweight Persistent Memory (SQLite + small in-process fallback)
 user_memory: dict[int, dict] = {}
 MEMORY_TIMEOUT = 3 * 24 * 60 * 60  # 3 天 (秒)
-MEMORY_MAX_TURNS = 8  # 最多保留最近 8 輪（user+model 約 16 則），避免 context 與 RAM 爆量
+MEMORY_MAX_TURNS = 5  # 最多保留最近 5 輪（user+model 約 10 則），進一步降低 context 與 RAM 壓力
 MEMORY_MAX_USER_CHARS = 900
 MEMORY_MAX_MODEL_CHARS = 1400
 
@@ -354,7 +356,12 @@ def generate_text(
     urls: list[str] | None = None,
 ) -> str:
     """呼叫 Gemini 產生文字，支援 3 天輕量記憶與 context 容錯機制。"""
+    # 每次生成前先觸發 GC，降低長時間運作下的記憶體碎片/殘留
+    gc.collect()
     client = get_client()
+
+    # 若未來切換到 stateful chats.create()，請使用隨機 session_id 避免 collision
+    _session_id_hint = f"session_{uuid.uuid4().hex[:8]}"
 
     # Module A: 歷史紀錄管理 (3-Day TTL + 輕量上限)
     now = time.time()
@@ -376,88 +383,92 @@ def generate_text(
     model_chain = filter_available(chain)
     last_exc = None
 
-    for model in model_chain:
-        clean_model = normalize_model_name(model)
-        if not clean_model:
-            continue
+    try:
+        for model in model_chain:
+            clean_model = normalize_model_name(model)
+            if not clean_model:
+                continue
 
-        # 安全網重試機制：若 Context 過長則移除最舊對話後重試
-        current_history = list(history)
-        while True:
-            try:
-                # 組合 Content 陣列
-                contents = []
-                for h in current_history:
-                    contents.append(types.Content(role=h["role"], parts=[types.Part(text=h["text"])]))
-                contents.append(types.Content(role="user", parts=[types.Part(text=prompt)]))
+            # 安全網重試機制：若 Context 過長則移除最舊對話後重試
+            current_history = list(history)
+            while True:
+                try:
+                    # 組合 Content 陣列
+                    contents = []
+                    for h in current_history:
+                        contents.append(types.Content(role=h["role"], parts=[types.Part(text=h["text"])]))
+                    contents.append(types.Content(role="user", parts=[types.Part(text=prompt)]))
 
-                logging.info("🧠 [Brain] mode=%s model=%s history_len=%d", mode, clean_model, len(current_history))
-                response = client.models.generate_content(
-                    model=clean_model,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_instruction or None,
-                        temperature=temperature,
-                        max_output_tokens=max_output_tokens,
-                    ),
-                )
-                text = getattr(response, "text", None)
-                if not text:
-                    raise RuntimeError("Gemini returned empty text")
+                    logging.info("🧠 [Brain] mode=%s model=%s history_len=%d", mode, clean_model, len(current_history))
+                    response = client.models.generate_content(
+                        model=clean_model,
+                        contents=contents,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_instruction or None,
+                            temperature=temperature,
+                            max_output_tokens=max_output_tokens,
+                        ),
+                    )
+                    text = getattr(response, "text", None)
+                    if not text:
+                        raise RuntimeError("Gemini returned empty text")
 
-                # 成功後更新持久記憶
-                if user_id is not None:
-                    user_id_int = int(user_id)
-                    updated_history = current_history + [
-                        {"role": "user", "text": _clip_memory_text(prompt, "user")},
-                        {"role": "model", "text": _clip_memory_text(text.strip(), "model")},
-                    ]
-                    _save_memory_history(user_id_int, updated_history)
-
-                # 追蹤流量
-                usage = getattr(response, "usage_metadata", None)
-                if usage:
-                    token_count = usage.total_token_count
+                    # 成功後更新持久記憶
                     if user_id is not None:
-                        used_today = database.update_daily_tokens(user_id, token_count)
-                        stats.total_tokens = used_today
-                        check_quota_alert(used_today)
-                    else:
-                        used_today = 0
+                        user_id_int = int(user_id)
+                        updated_history = current_history + [
+                            {"role": "user", "text": _clip_memory_text(prompt, "user")},
+                            {"role": "model", "text": _clip_memory_text(text.strip(), "model")},
+                        ]
+                        _save_memory_history(user_id_int, updated_history)
 
-                stats.success += 1
-                stats.last_model = clean_model
-                stats.last_mode = mode
-                stats.last_error = "N/A"
-                log_gemini_success(user_id, clean_model, response, text, max_output_tokens, urls=urls)
-                return text.strip()
+                    # 追蹤流量
+                    usage = getattr(response, "usage_metadata", None)
+                    if usage:
+                        token_count = usage.total_token_count
+                        if user_id is not None:
+                            used_today = database.update_daily_tokens(user_id, token_count)
+                            stats.total_tokens = used_today
+                            check_quota_alert(used_today)
+                        else:
+                            used_today = 0
 
-            except Exception as exc:
-                msg = str(exc).lower()
-                # API Token 防爆機制：若報錯且有歷史紀錄，移除最舊的一組 (User+Model) 後重試
-                if ("token" in msg or "length" in msg or "400" in msg or "invalid argument" in msg) and current_history:
-                    logging.warning("⚠️ [Brain] Context 可能過長，移除最舊歷史後重試 (%s)", clean_model)
-                    if len(current_history) >= 2:
-                        current_history = current_history[2:]
-                    else:
-                        current_history = []
-                    continue
+                    stats.success += 1
+                    stats.last_model = clean_model
+                    stats.last_mode = mode
+                    stats.last_error = "N/A"
+                    log_gemini_success(user_id, clean_model, response, text, max_output_tokens, urls=urls)
+                    return text.strip()
 
-                last_exc = exc
-                stats.last_error = str(exc)[:500]
-                log_gemini_error(user_id, clean_model, exc, urls=urls)
+                except Exception as exc:
+                    msg = str(exc).lower()
+                    # API Token 防爆機制：若報錯且有歷史紀錄，移除最舊的一組 (User+Model) 後重試
+                    if ("token" in msg or "length" in msg or "400" in msg or "invalid argument" in msg) and current_history:
+                        logging.warning("⚠️ [Brain] Context 可能過長，移除最舊歷史後重試 (%s)", clean_model)
+                        if len(current_history) >= 2:
+                            current_history = current_history[2:]
+                        else:
+                            current_history = []
+                        continue
 
-                if is_quota_exhausted_error(msg):
-                    if stats.alert_callback:
-                        used_today, _ = database.get_daily_tokens(user_id) if user_id else (0, 0)
-                        stats.alert_callback(f"❌ 【流量耗盡】\nAPI 回傳 429 錯誤。\n目前今日已使用：{used_today:,}")
+                    last_exc = exc
+                    stats.last_error = str(exc)[:500]
+                    log_gemini_error(user_id, clean_model, exc, urls=urls)
 
-                logging.warning("⚠️ [Brain] %s failed: %s", clean_model, msg[:300])
-                break  # 跳出 while True，嘗試下一個 model 備援
+                    if is_quota_exhausted_error(msg):
+                        if stats.alert_callback:
+                            used_today, _ = database.get_daily_tokens(user_id) if user_id else (0, 0)
+                            stats.alert_callback(f"❌ 【流量耗盡】\nAPI 回傳 429 錯誤。\n目前今日已使用：{used_today:,}")
 
-    stats.fail += 1
-    reason = str(last_exc)[:300] if last_exc else "unknown error"
-    return f"❌ 顧問大腦連線失敗。原因：{reason}"
+                    logging.warning("⚠️ [Brain] %s failed: %s", clean_model, msg[:300])
+                    break  # 跳出 while True，嘗試下一個 model 備援
+
+        stats.fail += 1
+        reason = str(last_exc)[:300] if last_exc else "unknown error"
+        return f"❌ 顧問大腦連線失敗。原因：{reason}"
+    finally:
+        # 每次生成後立即回收大型暫存物件
+        gc.collect()
 
 
 def ping(user_id: int | None = None) -> bool:

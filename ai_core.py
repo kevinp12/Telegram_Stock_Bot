@@ -95,7 +95,7 @@ def ask_flash(
     *,
     user_id: int | None = None,
     temperature: float = 0.45,
-    max_output_tokens: int = 4000,
+    max_output_tokens: int = 1200,
     urls: list[str] | None = None,
 ) -> str:
     current_time = get_current_time_str()
@@ -118,7 +118,7 @@ def ask_pro(
     *,
     user_id: int | None = None,
     temperature: float = 0.35,
-    max_output_tokens: int = 4000,
+    max_output_tokens: int = 1600,
     urls: list[str] | None = None,
 ) -> str:
     current_time = get_current_time_str()
@@ -142,7 +142,7 @@ def ask_model(
     *,
     user_id: int | None = None,
     temperature: float = 0.35,
-    max_output_tokens: int = 4000,
+    max_output_tokens: int = 1600,
     urls: list[str] | None = None,
 ) -> str:
     model_name = (model or "flash").strip().lower()
@@ -217,7 +217,7 @@ def summarize_tech_news(symbol: str, news_item: dict[str, Any], user_name: str, 
 3. 可補充 SMC 觀點，但僅作輔助，不可喧賓奪主。
 4. 固定段落：A消息重點、B多空催化、C風險點、D交易觀察。
 """
-    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=2500, urls=[url] if url else None)
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=1200, urls=[url] if url else None)
 
 
 def summarize_earnings_report(symbol: str, news_item: dict[str, Any], user_name: str, model: str | None = None, user_id: int | None = None) -> str:
@@ -242,7 +242,7 @@ def summarize_earnings_report(symbol: str, news_item: dict[str, Any], user_name:
 3. 技術面只可放在最後「市場反應觀察」一句，不可主導全文。
 4. 固定段落：A關鍵數字、B財報解讀、C估值影響、D後續追蹤。
 """
-    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.2, max_output_tokens=2500, urls=[url] if url else None)
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.2, max_output_tokens=1200, urls=[url] if url else None)
 
 
 def analyze_tech_comparison(data_list: list[dict[str, Any]], user_name: str, model: str | None = None, user_id: int | None = None) -> str:
@@ -257,7 +257,7 @@ def analyze_tech_comparison(data_list: list[dict[str, Any]], user_name: str, mod
 2. 根據 Attack Gauge 與 Whale Volume 給出買入、觀望、避險建議。
 3. 若 VIX 高於 25，需特別強調保守策略。
 """
-    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=2000)
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=1000)
 
 
 def infer_related_news_terms(symbol: str, user_name: str, *, user_id: int | None = None) -> list[str]:
@@ -335,7 +335,7 @@ def ask_ai_investment_advice(
 請嚴格套用【標準輸出模板】進行深度分析，並特別注意 VIX 濾網規則。
 請確保【多時區量化與 SMC 儀表板】中的數值與上述提供的一致。
 """.strip()
-    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=4000, urls=urls)
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=1400, urls=urls)
 
 
 def ask_stock_brief(
@@ -363,7 +363,7 @@ def ask_stock_brief(
 3. 保持精簡、可讀，不要寫成超長報告。
 4. 若數據不足要直接講，不可腦補。
 """.strip()
-    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=1600)
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=900)
 
 
 def analyze_financial_snapshot(
@@ -393,7 +393,7 @@ def analyze_financial_snapshot(
 3. 若資料缺失要明確標註「資料不足」。
 4. 技術面最多 1 段作輔助觀察。
 """.strip()
-    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=2200, urls=urls)
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=1200, urls=urls)
 
 
 def compare_financials(
@@ -454,7 +454,7 @@ def compare_financials(
         "3. 根據最新新聞與未來催化劑，給出戰略排序。\n"
         "4. 回應必須詳盡且專業，展現強大的數據洞察力。"
     )
-    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=4000, urls=all_urls)
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=1400, urls=all_urls)
 
 
 def analyze_whale_insider(
@@ -522,7 +522,7 @@ def analyze_whale_insider(
    E. 戰術建議（僅 3 點）
 5. 輸出必須詳細，講透徹，嚴格遵守副官標籤規範，絕對不要斷句。
 """
-    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=3500)
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=1200)
 
 
 def chat_with_user(
@@ -545,7 +545,7 @@ def chat_with_user(
 2. 包含 SMC 核心位、POC 參考。
 3. 內容精確，不需要過度展開，但要將話講完，絕對不要斷句。
 """.strip()
-        return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.38, max_output_tokens=4000)
+        return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.38, max_output_tokens=1200)
 
     market_context = build_us_market_context() if _is_us_market_question(query) else ""
     market_section = f"\n\n{market_context}\n" if market_context else ""
@@ -562,4 +562,4 @@ def chat_with_user(
 4. 絕對完整性：嚴禁斷句或草草結束。
 5. 保持簡練且完整，必要時可用符號與縮排排版。
 """.strip()
-    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.45, max_output_tokens=2600)
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.45, max_output_tokens=1200)

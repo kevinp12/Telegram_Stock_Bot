@@ -9,6 +9,8 @@ import signal
 import sys
 import threading
 import time
+import gc
+from collections import OrderedDict
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -64,11 +66,58 @@ if not TELEGRAM_TOKEN or len(TELEGRAM_TOKEN) < 10:
     logging.error("❌ 錯誤：TELEGRAM_TOKEN 未設定或格式不正確。請檢查 .env 檔案內容。")
     sys.exit(1)
 
-bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=True)
-PAGED_MESSAGE_CACHE: dict[str, list[str]] = {}
+bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=True, num_threads=4)
+PAGED_MESSAGE_CACHE: OrderedDict[str, list[str]] = OrderedDict()
+_HEAVY_TASK_SEMAPHORE = threading.BoundedSemaphore(value=2)
+_USER_HEAVY_TASK_TS: OrderedDict[tuple[int, str], float] = OrderedDict()
+
+
+def add_to_paged_cache(token: str, pages: list[str]) -> None:
+    """限制分頁快取上限，避免長時間運作造成記憶體累積。"""
+    while len(PAGED_MESSAGE_CACHE) >= 50:
+        PAGED_MESSAGE_CACHE.popitem(last=False)
+    PAGED_MESSAGE_CACHE[token] = pages
 TECH_CHART_COOLDOWN_SECONDS = 45
+HEAVY_TASK_USER_COOLDOWN_SECONDS = 12
 _TECH_CHART_LAST_TS: dict[tuple[int, str], float] = {}
 _USER_CHART_THEME: dict[int, str] = {}
+
+
+def _allow_user_heavy_task(user_id: int, task_name: str, cooldown_seconds: int = HEAVY_TASK_USER_COOLDOWN_SECONDS) -> tuple[bool, int]:
+    """使用者級節流：防止短時間重複觸發高成本任務。"""
+    now = time.time()
+    key = (int(user_id), task_name)
+    last_ts = _USER_HEAVY_TASK_TS.get(key, 0.0)
+    remaining = int(cooldown_seconds - (now - last_ts))
+    if remaining > 0:
+        return False, remaining
+
+    _USER_HEAVY_TASK_TS[key] = now
+    _USER_HEAVY_TASK_TS.move_to_end(key)
+    while len(_USER_HEAVY_TASK_TS) > 800:
+        _USER_HEAVY_TASK_TS.popitem(last=False)
+    return True, 0
+
+
+def try_acquire_heavy_task(message, user_id: int, task_name: str, *, cooldown_seconds: int = HEAVY_TASK_USER_COOLDOWN_SECONDS) -> bool:
+    """全域併發 + 使用者節流保護，避免 CPU/RAM 突刺。"""
+    allowed, remaining = _allow_user_heavy_task(user_id, task_name, cooldown_seconds=cooldown_seconds)
+    if not allowed:
+        reply(message, f"⏳ 系統保護中：`{task_name}` 請在 {remaining} 秒後再試。")
+        return False
+
+    if not _HEAVY_TASK_SEMAPHORE.acquire(blocking=False):
+        reply(message, "🛡️ 目前高負載任務較多，請稍後 10-20 秒再試一次。")
+        return False
+    return True
+
+
+def release_heavy_task() -> None:
+    try:
+        _HEAVY_TASK_SEMAPHORE.release()
+    except Exception:
+        pass
+    gc.collect()
 
 
 def get_user_display_name(m) -> str:
@@ -316,6 +365,7 @@ def maybe_send_tech_chart(
             tech_indicators.clear_tech_df_cache(symbol)
         except Exception:
             pass
+        gc.collect()
 
 
 def maybe_send_fin_chart(
@@ -362,6 +412,7 @@ def maybe_send_fin_chart(
             "請稍後重試，系統會自動刷新 SEC 對照與重抓最新資料。"
         )
 
+    fin_buf = None
     try:
         # 強制使用 SEC API 獲取數據
         df = sec_api.fetch_sec_financials(symbol)
@@ -396,17 +447,18 @@ def maybe_send_fin_chart(
             safe_send(chat_id, f"⚠️📤 `{symbol}` 財報圖傳送失敗。原因：{last_exc}")
             logging.warning("send fin chart failed after retry for %s: %s", symbol, last_exc)
 
-        try:
-            fin_buf.close()
-        except Exception:
-            pass
-        finally:
-            fin_buf = None
     except Exception as exc:
         # 使用者明確下 /fin chart 時，回覆完整錯誤原因
         if is_explicit_chart_cmd:
             safe_send(chat_id, f"🚫⚠️ `{symbol}` /fin chart 失敗：{exc}\n\n{_build_fin_diag_message(symbol)}")
         logging.warning("send fin chart failed: %s", exc)
+    finally:
+        if fin_buf is not None:
+            try:
+                fin_buf.close()
+            except Exception:
+                pass
+        gc.collect()
 
 
 def maybe_send_fin_compare_chart(
@@ -448,6 +500,7 @@ def maybe_send_fin_compare_chart(
                 buf.close()
             except Exception:
                 pass
+        gc.collect()
 
 
 def run_with_loading(message, loading_text: str, task_fn, error_prefix: str = "處理失敗"):
@@ -532,7 +585,7 @@ def send_paged_message(chat_id, pages: list[str] | tuple[str, ...], parse_mode: 
         safe_send(chat_id, "⚠️ 沒有可顯示的內容。", parse_mode=parse_mode)
         return
     token = f"{int(time.time() * 1000000) % 10**12:x}"
-    PAGED_MESSAGE_CACHE[token] = clean_pages
+    add_to_paged_cache(token, clean_pages)
     safe_send(
         chat_id,
         clean_pages[0],
@@ -733,6 +786,8 @@ def log_cleanup_job() -> None:
 @bot.message_handler(commands=["tech"])
 def on_tech(m):
     user_id, user_name = register_user(m)
+    if not try_acquire_heavy_task(m, user_id, "tech"):
+        return
     record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/tech")
     status_msg = bot.reply_to(m, "📊 正在跑量化數據與產生 SMC 儀表板...")
     try:
@@ -747,12 +802,16 @@ def on_tech(m):
         safe_send(m.chat.id, f"❌ 技術分析執行異常：{str(e)}")
     finally:
         delete_loading_safe(m, status_msg)
+        release_heavy_task()
 
 
 @bot.message_handler(commands=["bt", "backtest"])
 def on_backtest(m):
     user_id, user_name = register_user(m)
+    if not try_acquire_heavy_task(m, user_id, "backtest"):
+        return
     record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/backtest")
+    chart_buf = None
     
     status_msg = bot.reply_to(m, "📊 正在執行 SMC 回測與生成報表...")
     try:
@@ -785,15 +844,24 @@ def on_backtest(m):
         safe_send(m.chat.id, f"❌ 回測執行時發生未預期錯誤：{str(e)}")
     finally:
         try:
+            if chart_buf:
+                chart_buf.close()
+        except Exception:
+            pass
+        try:
             bot.delete_message(m.chat.id, status_msg.message_id)
         except Exception:
             pass
+        release_heavy_task()
 
 
 @bot.message_handler(commands=["sim", "simulator"])
 def on_simulator(m):
     user_id, user_name = register_user(m)
+    if not try_acquire_heavy_task(m, user_id, "simulator"):
+        return
     record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/simulator")
+    chart_buf = None
     
     status_msg = bot.reply_to(m, "🔮 正在生成蒙地卡羅路徑與風險分布...")
     try:
@@ -826,9 +894,15 @@ def on_simulator(m):
         safe_send(m.chat.id, f"❌ 模擬執行時發生未預期錯誤：{str(e)}")
     finally:
         try:
+            if chart_buf:
+                chart_buf.close()
+        except Exception:
+            pass
+        try:
             bot.delete_message(m.chat.id, status_msg.message_id)
         except Exception:
             pass
+        release_heavy_task()
 
 
 @bot.message_handler(commands=["chart"])
@@ -979,43 +1053,47 @@ def on_news(m):
 @bot.message_handler(commands=["fin"])
 def on_fin(m):
     user_id, _ = register_user(m)
+    if not try_acquire_heavy_task(m, user_id, "fin"):
+        return
     user_name = get_user_display_name(m)
     record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/fin")
     text = m.text or ""
     parts = text.split()
     is_compare = len(parts) >= 2 and parts[1].lower() == "compare"
     status_msg = None
-    if is_compare:
-        status_msg = bot.reply_to(m, "📊 正在整理財報比較與 AI 評析...")
-        try:
-            result = command.cmd_fin(text, user_id)
-        except Exception as exc:
-            reply(m, f"⚠️ 財報查詢失敗：{exc}")
-            return
-    else:
-        try:
-            result = command.cmd_fin(text, user_id)
-        except Exception as exc:
-            reply(m, f"⚠️ 財報查詢失敗：{exc}")
-            return
+    try:
+        if is_compare:
+            status_msg = bot.reply_to(m, "📊 正在整理財報比較與 AI 評析...")
+            try:
+                result = command.cmd_fin(text, user_id)
+            except Exception as exc:
+                reply(m, f"⚠️ 財報查詢失敗：{exc}")
+                return
+        else:
+            try:
+                result = command.cmd_fin(text, user_id)
+            except Exception as exc:
+                reply(m, f"⚠️ 財報查詢失敗：{exc}")
+                return
 
-    if isinstance(result, (list, tuple)):
-        send_paged_message(m.chat.id, result)
-    else:
-        reply(m, result)
+        if isinstance(result, (list, tuple)):
+            send_paged_message(m.chat.id, result)
+        else:
+            reply(m, result)
 
-    # /fin compare 送合併圖；其餘 /fin 送單檔圖
-    if is_compare:
-        maybe_send_fin_compare_chart(m.chat.id, text, user_id=user_id, user_name=user_name, username=get_username(m))
-    else:
-        theme = _USER_CHART_THEME.get(user_id, "dark")
-        maybe_send_fin_chart(m.chat.id, text, theme=theme, user_id=user_id, user_name=user_name, username=get_username(m))
-
-    if status_msg is not None:
-        try:
-            bot.delete_message(m.chat.id, status_msg.message_id)
-        except Exception:
-            pass
+        # /fin compare 送合併圖；其餘 /fin 送單檔圖
+        if is_compare:
+            maybe_send_fin_compare_chart(m.chat.id, text, user_id=user_id, user_name=user_name, username=get_username(m))
+        else:
+            theme = _USER_CHART_THEME.get(user_id, "dark")
+            maybe_send_fin_chart(m.chat.id, text, theme=theme, user_id=user_id, user_name=user_name, username=get_username(m))
+    finally:
+        if status_msg is not None:
+            try:
+                bot.delete_message(m.chat.id, status_msg.message_id)
+            except Exception:
+                pass
+        release_heavy_task()
 
 
 @bot.message_handler(commands=["whale"])
@@ -1070,19 +1148,24 @@ def check_and_send_auto_chart(chat_id, query_text, symbol, user_id, user_name, u
 @bot.message_handler(commands=["ask"])
 def on_ask(m):
     user_id, user_name = register_user(m)
+    if not try_acquire_heavy_task(m, user_id, "ask", cooldown_seconds=8):
+        return
     username = get_username(m)
     query_text = m.text or ""
     
-    result = command.cmd_ask(query_text, user_name, user_id)
-    reply(m, result)
-    record_qa_safely(user_id, query_text, result)
-    record_user_log_safely(user_id, user_name, username, query_text, result, source="/ask")
-    
-    # 自動圖表觸發
-    parts = query_text.split(maxsplit=2)
-    if len(parts) >= 2:
-        symbol = parts[1].upper().strip()
-        check_and_send_auto_chart(m.chat.id, query_text, symbol, user_id, user_name, username)
+    try:
+        result = command.cmd_ask(query_text, user_name, user_id)
+        reply(m, result)
+        record_qa_safely(user_id, query_text, result)
+        record_user_log_safely(user_id, user_name, username, query_text, result, source="/ask")
+        
+        # 自動圖表觸發
+        parts = query_text.split(maxsplit=2)
+        if len(parts) >= 2:
+            symbol = parts[1].upper().strip()
+            check_and_send_auto_chart(m.chat.id, query_text, symbol, user_id, user_name, username)
+    finally:
+        release_heavy_task()
 
 
 @bot.message_handler(commands=["theory"])
@@ -1230,13 +1313,18 @@ def on_text(m):
                 reply(m, result)
             return
         if lowered.startswith("/tech"):
+            if not try_acquire_heavy_task(m, user_id, "tech_text"):
+                return
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/tech")
-            result = command.cmd_tech(text, user_id)
-            if isinstance(result, (list, tuple)):
-                send_paged_message(m.chat.id, result)
-            else:
-                reply(m, result)
-            maybe_send_tech_chart(m.chat.id, text, user_id=user_id, user_name=user_name, username=get_username(m))
+            try:
+                result = command.cmd_tech(text, user_id)
+                if isinstance(result, (list, tuple)):
+                    send_paged_message(m.chat.id, result)
+                else:
+                    reply(m, result)
+                maybe_send_tech_chart(m.chat.id, text, user_id=user_id, user_name=user_name, username=get_username(m))
+            finally:
+                release_heavy_task()
             return
         if lowered.startswith("/chart"):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/chart")
@@ -1294,18 +1382,23 @@ def on_text(m):
                 delete_loading_safe(m, status_msg)
             return
         if lowered.startswith("/fin"):
+            if not try_acquire_heavy_task(m, user_id, "fin_text"):
+                return
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/fin")
-            result = command.cmd_fin(text, user_id)
-            if isinstance(result, (list, tuple)):
-                send_paged_message(m.chat.id, result)
-            else:
-                reply(m, result)
-            parts = text.split()
-            if len(parts) >= 2 and parts[1].lower() == "compare":
-                maybe_send_fin_compare_chart(m.chat.id, text, user_id=user_id, user_name=user_name, username=get_username(m))
-            else:
-                theme = _USER_CHART_THEME.get(user_id, "dark")
-                maybe_send_fin_chart(m.chat.id, text, theme=theme, user_id=user_id, user_name=user_name, username=get_username(m))
+            try:
+                result = command.cmd_fin(text, user_id)
+                if isinstance(result, (list, tuple)):
+                    send_paged_message(m.chat.id, result)
+                else:
+                    reply(m, result)
+                parts = text.split()
+                if len(parts) >= 2 and parts[1].lower() == "compare":
+                    maybe_send_fin_compare_chart(m.chat.id, text, user_id=user_id, user_name=user_name, username=get_username(m))
+                else:
+                    theme = _USER_CHART_THEME.get(user_id, "dark")
+                    maybe_send_fin_chart(m.chat.id, text, theme=theme, user_id=user_id, user_name=user_name, username=get_username(m))
+            finally:
+                release_heavy_task()
             return
         if lowered.startswith("/whale"):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/whale")

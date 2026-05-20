@@ -32,6 +32,40 @@ FIN_COMPARE_STATE: dict[int, list[str]] = {}
 DATA_CLEAR_CONFIRM_STATE: dict[int, datetime] = {}
 OP_DELETE_CONFIRM_STATE: dict[int, tuple[str, datetime]] = {}
 
+
+def _build_perf_snapshot_text() -> str:
+    """回傳目前程序效能快照，供 /op perf 觀測穩定性。"""
+    proc = psutil.Process()
+    rss_mb = proc.memory_info().rss / (1024 * 1024)
+    vms_mb = proc.memory_info().vms / (1024 * 1024)
+    cpu_pct = proc.cpu_percent(interval=0.15)
+    sys_mem = psutil.virtual_memory()
+    uptime_sec = max(0, int((datetime.now() - BOT_START_TIME).total_seconds()))
+    uptime_h = uptime_sec // 3600
+    uptime_m = (uptime_sec % 3600) // 60
+
+    return (
+        "🩺 系統即時效能快照\n"
+        "━━━━━━━━━━━━━━\n"
+        f"• Process CPU：`{cpu_pct:.1f}%`\n"
+        f"• Process RSS：`{rss_mb:.1f} MB`\n"
+        f"• Process VMS：`{vms_mb:.1f} MB`\n"
+        f"• 系統記憶體使用：`{sys_mem.percent:.1f}%`\n"
+        f"• 系統可用記憶體：`{sys_mem.available / (1024*1024):.0f} MB`\n"
+        f"• 活躍執行緒：`{proc.num_threads()}`\n"
+        f"• Bot 運行時間：`{uptime_h}h {uptime_m}m`"
+    )
+
+
+def _get_runtime_profile() -> tuple[str, int, int]:
+    """依目前可用記憶體回傳運行檔位（normal/low/critical）與降階參數。"""
+    available_mb = int(psutil.virtual_memory().available / (1024 * 1024))
+    if available_mb < 180:
+        return "critical", 4, 450
+    if available_mb < 320:
+        return "low", 6, 800
+    return "normal", 10, 2000
+
 def _is_admin(user_id: int) -> bool:
     """僅允許 .env ADMIN_ID 使用後台隱藏功能。"""
     if not ADMIN_ID:
@@ -1298,6 +1332,9 @@ def cmd_op(text: str, user_id: int) -> str:
     if sub == "user":
         return cmd_user(text, user_id)
 
+    if sub == "perf":
+        return _build_perf_snapshot_text()
+
     if sub == "fontcheck":
         try:
             info = utils.debug_cjk_font_loading()
@@ -2085,8 +2122,9 @@ def cmd_backtest(message_text: str, user_id: int) -> str | list[str] | tuple[lis
         return f"❌ 錯誤的代號格式：`{ticker}`。請輸入正確的美股代號。"
 
     try:
+        profile, years_for_bt, _ = _get_runtime_profile()
         # 4. 抓取資料 (10年復權數據)
-        df = data_loader.get_long_term_data(ticker, years=10)
+        df = data_loader.get_long_term_data(ticker, years=years_for_bt)
         if df.empty:
             return f"❌ 找不到 `{ticker}` 的歷史資料。可能原因：代號錯誤、數據源暫時異常或標的已下市。"
 
@@ -2116,6 +2154,7 @@ def cmd_backtest(message_text: str, user_id: int) -> str | list[str] | tuple[lis
             f"📊 **{ticker}｜10年量化回測總覽 (1/2)**\n"
             f"策略：`{strategy_name}`\n"
             f"⚙️ 目前後台模型：`{model_str}`\n"
+            f"🧠 資源檔位：`{profile}`（資料年數：{years_for_bt}）\n"
             "━━━━━━━━━━━━━━\n"
             f"• **策略總報酬**：`{metrics['total_return_pct']:.1f}%`\n"
             f"• 基準總報酬：`{metrics['benchmark_return_pct']:.1f}%`\n"
@@ -2179,13 +2218,14 @@ def cmd_simulator(message_text: str, user_id: int) -> str | list[str] | tuple[li
         return f"❌ 錯誤的代號格式：`{ticker}`。請輸入正確的美股代號。"
 
     try:
+        profile, _, sim_count = _get_runtime_profile()
         # 抓取基礎資料
         df = data_loader.get_long_term_data(ticker, years=1)
         if df.empty:
             return f"❌ 找不到 `{ticker}` 的歷史資料。無法建立模擬基礎。"
 
-        # 執行 2000 次路徑模擬
-        sim_results = monte_carlo.run_monte_carlo(df, days=252, simulations=2000)
+        # 依記憶體檔位自動降階模擬次數
+        sim_results = monte_carlo.run_monte_carlo(df, days=252, simulations=sim_count)
         if not sim_results:
             return f"❌ `{ticker}` 模擬數據計算異常。"
 
@@ -2209,6 +2249,7 @@ def cmd_simulator(message_text: str, user_id: int) -> str | list[str] | tuple[li
             + f"• CVaR：`{res['cvar_95_pct']:.1f}%`（極端壞情況的平均虧損）\n"
             + f"• 年化波動率：`{res.get('annualized_vol_pct', 0):.1f}%`\n"
             + f"• 年化漂移：`{res.get('annualized_drift_pct', 0):.1f}%`\n"
+            + f"• 資源檔位/模擬次數：`{profile}` / `{sim_count}`\n"
             + "━━━━━━━━━━━━━━\n"
             + "💡 模型含 **肥尾 + 跳躍 + 動態波動**，比純常態模型更貼近真實市場。"
         )
