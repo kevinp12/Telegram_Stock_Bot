@@ -9,6 +9,8 @@ import math
 import random
 import re
 import io
+import subprocess
+from pathlib import Path
 import calendar as pycalendar
 from datetime import datetime, timedelta
 from typing import Any
@@ -31,6 +33,34 @@ STOCK_RE = re.compile(r"\b[A-Z0-9\.\-]{1,6}\b")
 FIN_COMPARE_STATE: dict[int, list[str]] = {}
 DATA_CLEAR_CONFIRM_STATE: dict[int, datetime] = {}
 OP_DELETE_CONFIRM_STATE: dict[int, tuple[str, datetime]] = {}
+STRESS_TEST_LOG_PATH = Path("logs/stress_test.log")
+
+
+def _assess_stress_result(output: str) -> tuple[str, str]:
+    """依壓測輸出給出 1GB RAM 安全等級。"""
+    rss_peak = None
+    err_count = None
+    m1 = re.search(r"rss_peak_mb=([0-9]+(?:\.[0-9]+)?)", output)
+    m2 = re.search(r"err=([0-9]+)", output)
+    if m1:
+        rss_peak = float(m1.group(1))
+    if m2:
+        err_count = int(m2.group(1))
+
+    if rss_peak is None or err_count is None:
+        return "⚠️ 無法評分", "未能完整解析壓測輸出。"
+
+    if err_count == 0 and rss_peak <= 700:
+        return "✅ 安全", f"RSS 峰值 {rss_peak:.2f}MB，錯誤 0，對 1GB RAM 屬安全區。"
+    if err_count <= 2 and rss_peak <= 850:
+        return "🟡 可接受", f"RSS 峰值 {rss_peak:.2f}MB，錯誤 {err_count}，接近警戒，建議觀察。"
+    return "🔴 風險", f"RSS 峰值 {rss_peak:.2f}MB 或錯誤 {err_count} 偏高，建議降 workers/seconds。"
+
+
+def _append_stress_log(text: str) -> None:
+    STRESS_TEST_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(STRESS_TEST_LOG_PATH, "a", encoding="utf-8") as f:
+        f.write(text.rstrip() + "\n")
 
 
 def _build_perf_snapshot_text() -> str:
@@ -1233,20 +1263,28 @@ def cmd_fin(text: str, user_id: int) -> str:
     symbol = parts[1].strip().upper()
     fundamentals = market_api.get_stock_fundamentals(symbol)
     if not fundamentals:
-        return f"❌ 無法取得 {symbol} 的財務資料，請確認代號是否正確。"
+        return (
+            f"❌ 目前無法取得 `{symbol}` 的財務資料。\n"
+            "可能原因：SEC/行情來源暫時異常、代號錯誤、或資料尚未更新。\n"
+            "請稍後重試，或改用 `/fin chart [代號]` 直接測試圖表資料源。"
+        )
     base_report = frame.fin_report(fundamentals)
     user_name = database.get_user_display_name(user_id)
     model_pref = database.get_user_model_preference(user_id)
     fin_news = market_api.fetch_news_multi(symbol, limit=2)
-    ai_fin = ai_core.analyze_financial_snapshot(
-        symbol,
-        fundamentals,
-        fin_news,
-        user_name,
-        user_id=user_id,
-        model=model_pref,
-    )
-    return f"{base_report}\n\n🧠 **AI 財報重點解讀**\n━━━━━━━━━━━━━━\n{ai_fin}"
+    try:
+        ai_fin = ai_core.analyze_financial_snapshot(
+            symbol,
+            fundamentals,
+            fin_news,
+            user_name,
+            user_id=user_id,
+            model=model_pref,
+        )
+        return f"{base_report}\n\n🧠 **AI 財報重點解讀**\n━━━━━━━━━━━━━━\n{ai_fin}"
+    except Exception as exc:
+        logging.warning("analyze_financial_snapshot failed for %s: %s", symbol, exc)
+        return f"{base_report}\n\n⚠️ AI 財報解讀暫時失敗，已先提供基本財報資料。"
 
 
 def cmd_status(user_id: int) -> list[str]:
@@ -1313,6 +1351,112 @@ def cmd_op(text: str, user_id: int) -> str:
             return "❌ 錯誤：模型僅支援 `flash` 或 `pro`。範例：`/op model pro`"
         database.set_user_model_preference(user_id, choice)
         return f"✅ 核心模型已更新為：`{choice}`\n即刻起所有 AI 分析將採用新模型。"
+
+    if sub == "tokenprofile":
+        return (
+            "🧠 對話 Token 分級設定\n"
+            "━━━━━━━━━━━━━━\n"
+            f"• 輕度 (Light)：`{brain.TOKEN_BUDGET_LIGHT}`\n"
+            f"• 中度 (Medium)：`{brain.TOKEN_BUDGET_MEDIUM}`\n"
+            f"• 重度 (Heavy)：`{brain.TOKEN_BUDGET_HEAVY}`（Pro 可考慮上調至 8000）\n\n"
+            "📌 指令分配建議\n"
+            "• 系統與狀態（輕度 1000）：`/now` `/status` `/quota` `/list` `/watch` `/risk`\n"
+            "• 市場與技術面（中度 2500）：`/news` `/tech` `/marco` `/calendar` `/whale`\n"
+            "• 深度研究與策略（重度 5000+）：`/ask` `/fin` `/fin compare` `/bt` `/backtest` `/sim`\n\n"
+            "判斷依據：問題長度 + 關鍵字 + 近期上下文長度。\n"
+            "提示：若某次任務要強制覆蓋，可在程式呼叫 generate_text 時直接指定 max_output_tokens。"
+        )
+
+    if sub == "token":
+        return (
+            "ℹ️ `/op token` 動態改值功能已移除。\n"
+            "原因：此功能僅在目前程序有效，重啟後不會保留。\n\n"
+            "請改用固定設定：\n"
+            "• 在 `brain.py` 直接調整 `TOKEN_BUDGET_LIGHT/MEDIUM/HEAVY`\n"
+            "• 調整後再重啟 bot，確保所有使用者一致套用。"
+        )
+
+    if sub == "stresstest":
+        if len(parts) >= 3 and parts[2].lower() == "run":
+            workers = 5
+            seconds = 20
+            mode = "dry"
+
+            if len(parts) >= 4:
+                try:
+                    workers = max(1, min(20, int(parts[3])))
+                except Exception:
+                    return "❌ workers 格式錯誤。用法：`/op stresstest run [workers] [seconds] [dry|real]`"
+            if len(parts) >= 5:
+                try:
+                    seconds = max(5, min(180, int(parts[4])))
+                except Exception:
+                    return "❌ seconds 格式錯誤。用法：`/op stresstest run [workers] [seconds] [dry|real]`"
+            if len(parts) >= 6:
+                m = parts[5].lower().strip()
+                if m not in {"dry", "real"}:
+                    return "❌ mode 只支援 `dry` 或 `real`。"
+                mode = m
+
+            cmd = [
+                "python3",
+                "tools/stress_test_bot.py",
+                "--workers",
+                str(workers),
+                "--seconds",
+                str(seconds),
+                "--mode",
+                mode,
+            ]
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=seconds + 30)
+                output = (result.stdout or "").strip()
+                err = (result.stderr or "").strip()
+                if result.returncode != 0:
+                    return (
+                    _append_stress_log(
+                        f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] FAIL workers={workers} seconds={seconds} mode={mode} rc={result.returncode} err={err[:300]}"
+                    )
+                    or
+                        "❌ 壓測執行失敗\n"
+                        "━━━━━━━━━━━━━━\n"
+                        f"Command: `{' '.join(cmd)}`\n"
+                        f"Return code: `{result.returncode}`\n"
+                        f"stderr: `{err[:1200] or 'N/A'}`"
+                    )
+
+                grade, note = _assess_stress_result(output)
+                _append_stress_log(
+                    f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] OK workers={workers} seconds={seconds} mode={mode} grade={grade} note={note}"
+                )
+
+                return (
+                    "✅ 壓測執行完成\n"
+                    "━━━━━━━━━━━━━━\n"
+                    f"參數：workers=`{workers}` seconds=`{seconds}` mode=`{mode}`\n\n"
+                    f"1GB RAM 評級：{grade}\n"
+                    f"判讀：{note}\n"
+                    f"紀錄檔：`{STRESS_TEST_LOG_PATH}`\n\n"
+                    f"```\n{output[:3000]}\n```"
+                )
+            except subprocess.TimeoutExpired:
+                return "⏱️ 壓測逾時，請降低 seconds 或 workers 後重試。"
+
+        return (
+            "🧪 壓力測試腳本說明（5~10 併發）\n"
+            "━━━━━━━━━━━━━━\n"
+            "已內建腳本：`tools/stress_test_bot.py`\n\n"
+            "一鍵執行（Tele 端）：\n"
+            "`/op stresstest run 5 20 dry`\n"
+            "`/op stresstest run 10 20 dry`\n"
+            "`/op stresstest run 5 15 real`\n\n"
+            "建議先跑乾測（不打 API）：\n"
+            "`python3 tools/stress_test_bot.py --workers 5 --seconds 30 --mode dry`\n"
+            "`python3 tools/stress_test_bot.py --workers 10 --seconds 30 --mode dry`\n\n"
+            "若要真實測試（會呼叫市場資料流程）：\n"
+            "`python3 tools/stress_test_bot.py --workers 5 --seconds 20 --mode real`\n\n"
+            "觀察重點：RSS 峰值、平均延遲、錯誤數是否穩定。"
+        )
 
     if sub == "log":
         if len(parts) > 2 and parts[2].lower() == "clear":
@@ -2146,6 +2290,13 @@ def cmd_backtest(message_text: str, user_id: int) -> str | list[str] | tuple[lis
 
         metrics, df_trades = result
 
+        # 相容舊鍵名/格式，避免 'totalreturnpct' 這類 KeyError
+        def _metric(*keys, default=0.0):
+            for k in keys:
+                if k in metrics and metrics.get(k) is not None:
+                    return metrics.get(k)
+            return default
+
         # 6. 組合回覆文字，加入目前模型資訊
         bt_model = database.get_user_bt_model(user_id)
         model_names = {1: "保守", 2: "普通", 3: "激進"}
@@ -2156,16 +2307,16 @@ def cmd_backtest(message_text: str, user_id: int) -> str | list[str] | tuple[lis
             f"⚙️ 目前後台模型：`{model_str}`\n"
             f"🧠 資源檔位：`{profile}`（資料年數：{years_for_bt}）\n"
             "━━━━━━━━━━━━━━\n"
-            f"• **策略總報酬**：`{metrics['total_return_pct']:.1f}%`\n"
-            f"• 基準總報酬：`{metrics['benchmark_return_pct']:.1f}%`\n"
-            f"• 年化報酬率：`{metrics['annual_return_pct']:.1f}%`\n"
-            f"• 最大回撤 (MDD)：`{metrics['max_drawdown_pct']:.1f}%`\n"
-            f"• 夏普 / 索提諾 / 卡瑪：`{metrics['sharpe_ratio']:.2f}` / `{metrics['sortino_ratio']:.2f}` / `{metrics['calmar_ratio']:.2f}`\n\n"
+            f"• **策略總報酬**：`{float(_metric('total_return_pct', 'totalreturnpct')):.1f}%`\n"
+            f"• 基準總報酬：`{float(_metric('benchmark_return_pct', 'benchmarkreturnpct')):.1f}%`\n"
+            f"• 年化報酬率：`{float(_metric('annual_return_pct', 'annualreturnpct')):.1f}%`\n"
+            f"• 最大回撤 (MDD)：`{float(_metric('max_drawdown_pct', 'maxdrawdownpct')):.1f}%`\n"
+            f"• 夏普 / 索提諾 / 卡瑪：`{float(_metric('sharpe_ratio', 'sharperatio')):.2f}` / `{float(_metric('sortino_ratio', 'sortinoratio')):.2f}` / `{float(_metric('calmar_ratio', 'calmarratio')):.2f}`\n\n"
             f"📈 **交易統計**\n"
-            f"• 勝率：`{metrics['win_rate']*100:.1f}%`\n"
-            f"• 盈虧比：`{metrics['payoff_ratio']:.2f}`\n"
-            f"• 平均持倉：`{metrics['avg_hold_days']:.0f}` 天\n"
-            f"• 總交易次數：`{metrics['total_trades']}` 次"
+            f"• 勝率：`{float(_metric('win_rate', 'winrate'))*100:.1f}%`\n"
+            f"• 盈虧比：`{float(_metric('payoff_ratio', 'payoffratio')):.2f}`\n"
+            f"• 平均持倉：`{float(_metric('avg_hold_days', 'avgholddays')):.0f}` 天\n"
+            f"• 總交易次數：`{int(_metric('total_trades', 'totaltrades', default=0))}` 次"
         )
         page2 = (
             f"📘 **{ticker}｜指標解讀 (2/2)**\n"
@@ -2175,8 +2326,8 @@ def cmd_backtest(message_text: str, user_id: int) -> str | list[str] | tuple[lis
             f"• **Sortino**：只看下行波動的報酬效率\n"
             f"• **Calmar**：年化報酬 ÷ 最大回撤\n"
             f"• **Ulcer Index**：持倉壓力（回撤深且久會變大）\n"
-            f"• 回撤修復期：`{metrics['drawdown_duration_days']}` 個交易日\n"
-            f"• 潰瘍指數：`{metrics['ulcer_index']:.2f}`\n"
+            f"• 回撤修復期：`{int(_metric('drawdown_duration_days', 'drawdowndurationdays', default=0))}` 個交易日\n"
+            f"• 潰瘍指數：`{float(_metric('ulcer_index', 'ulcerindex')):.2f}`\n"
             "━━━━━━━━━━━━━━\n"
             "⚠️ *回測已含手續費與滑價；歷史績效不代表未來結果。*"
         )

@@ -74,6 +74,14 @@ SYSTEM_PROMPT_TEMPLATE = """
 4. 若 VIX 高於 25，必須在最後加註風險警語。]
 """.strip()
 
+RESPONSE_STYLE_RULES = """
+【輸出風格規範（強制）】
+1. 視覺層次：使用 Emoji 作為段落開頭（如 📊 數據、💡 分析、🚀 結論）。
+2. 數據呈現：關鍵數據與指標以 `code` 標註，提升可讀性。
+3. 重點標註：關鍵趨勢與建議使用 **粗體** 標示（如 **Bullish** / **Bearish**）。
+4. 長文分段：若為重度分析（長內容），務必使用「摘要 + 詳細分析 + 行動建議」三段結構。
+""".strip()
+
 
 def get_current_time_str() -> str:
     """獲取精確到秒的當前時間與星期。"""
@@ -95,14 +103,14 @@ def ask_flash(
     *,
     user_id: int | None = None,
     temperature: float = 0.45,
-    max_output_tokens: int = 1200,
+    max_output_tokens: int = 0,
     urls: list[str] | None = None,
 ) -> str:
     current_time = get_current_time_str()
     return sanitize_for_telegram(
         brain.generate_text(
             prompt,
-            system_instruction=SYSTEM_PROMPT_TEMPLATE.format(user_name=user_name, current_time=current_time),
+            system_instruction=f"{SYSTEM_PROMPT_TEMPLATE.format(user_name=user_name, current_time=current_time)}\n\n{RESPONSE_STYLE_RULES}",
             mode="flash",
             temperature=temperature,
             max_output_tokens=max_output_tokens,
@@ -118,14 +126,14 @@ def ask_pro(
     *,
     user_id: int | None = None,
     temperature: float = 0.35,
-    max_output_tokens: int = 1600,
+    max_output_tokens: int = 0,
     urls: list[str] | None = None,
 ) -> str:
     current_time = get_current_time_str()
     return sanitize_for_telegram(
         brain.generate_text(
             prompt,
-            system_instruction=SYSTEM_PROMPT_TEMPLATE.format(user_name=user_name, current_time=current_time),
+            system_instruction=f"{SYSTEM_PROMPT_TEMPLATE.format(user_name=user_name, current_time=current_time)}\n\n{RESPONSE_STYLE_RULES}",
             mode="pro",
             temperature=temperature,
             max_output_tokens=max_output_tokens,
@@ -142,7 +150,7 @@ def ask_model(
     *,
     user_id: int | None = None,
     temperature: float = 0.35,
-    max_output_tokens: int = 1600,
+    max_output_tokens: int = 0,
     urls: list[str] | None = None,
 ) -> str:
     model_name = (model or "flash").strip().lower()
@@ -334,6 +342,7 @@ def ask_ai_investment_advice(
 本任務屬於「個股深度回答模式（/ask）」，請以深度與可執行性為最高優先。
 請嚴格套用【標準輸出模板】進行深度分析，並特別注意 VIX 濾網規則。
 請確保【多時區量化與 SMC 儀表板】中的數值與上述提供的一致。
+另外請遵守輸出風格：Emoji 分段、關鍵數據用 `code`、關鍵趨勢用 **粗體**，並採「摘要 + 詳細分析 + 行動建議」。
 """.strip()
     return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=1400, urls=urls)
 
@@ -392,6 +401,7 @@ def analyze_financial_snapshot(
 2. 固定段落：A財報關鍵數字、B獲利品質、C估值判斷、D後續觀察。
 3. 若資料缺失要明確標註「資料不足」。
 4. 技術面最多 1 段作輔助觀察。
+5. 請用「摘要 + 詳細分析 + 行動建議」三段格式，並使用 Emoji 分段。
 """.strip()
     return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.3, max_output_tokens=1200, urls=urls)
 
@@ -452,7 +462,8 @@ def compare_financials(
         "1. 哪支股票整體財務健康與技術護城河較佳，並說明具體理由。\n"
         "2. 依據成長性、供應鏈穩定性與估值合理性做出詳細解釋。\n"
         "3. 根據最新新聞與未來催化劑，給出戰略排序。\n"
-        "4. 回應必須詳盡且專業，展現強大的數據洞察力。"
+        "4. 回應必須詳盡且專業，展現強大的數據洞察力。\n"
+        "5. 請使用「摘要 + 詳細分析 + 行動建議」結構，並以 Emoji 分段、關鍵數據用 `code`、關鍵趨勢用 **粗體**。"
     )
     return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.35, max_output_tokens=1400, urls=all_urls)
 

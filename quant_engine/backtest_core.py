@@ -33,7 +33,19 @@ def calculate_metrics(df: pd.DataFrame):
 
     trades = []
     current_trade = {}
-    
+
+    # 相容舊/新策略欄位，避免 KeyError: 'Position'
+    if 'Position' not in df.columns:
+        if 'Position_Size' in df.columns:
+            df['Position'] = (pd.to_numeric(df['Position_Size'], errors='coerce').fillna(0) > 0).astype(int)
+        else:
+            df['Position'] = 0
+    if 'Strategy_Return' not in df.columns:
+        if 'Position_Size' in df.columns:
+            df['Strategy_Return'] = pd.to_numeric(df['Position_Size'], errors='coerce').fillna(0).shift(1).fillna(0) * df['Close'].pct_change().fillna(0)
+        else:
+            df['Strategy_Return'] = 0.0
+
     pos_series = df['Position']
     prev_pos_series = pos_series.shift(1).fillna(0)
     

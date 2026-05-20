@@ -452,6 +452,8 @@ def hidden_op_text(current_model: str) -> str:
         "📌 **指令清單**\n"
         "• `/op help` - 顯示此隱藏指令教學\n"
         "• `/op model [flash|pro]` - 切換 AI 模型\n"
+        "• `/op tokenprofile` - 顯示輕/中/重對話 token 分級\n"
+        "• `/op stresstest` - 顯示壓力測試腳本用法（5~10 併發）\n"
         "• `/op fontcheck` - 檢查 CJK/Emoji 字型載入、目錄掃描與路徑命中\n"
         "• `/op user list` - 查看使用者清單 (Admin)\n"
         "• `/op user log [頁數] [ID/名稱/@username]` - 查指定使用者互動紀錄 (Admin)\n"
