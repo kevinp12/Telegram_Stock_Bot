@@ -137,6 +137,9 @@ gemini_stock_bot_full/
 - `/news [symbol/topic]`：新聞摘要 + AI 分析
 - `/risk`：風險雷達（VIX、恐貪、期權、社群熱度）
 - `/marco`：宏觀雷達（數據頁 + 教學頁）
+- `/calendar`：宏觀與事件日曆（未來一週重點 + 當月行事曆圖）
+  - 整合：CPI / PPI / PCE / NFP / FOMC（官方日程自動抓取）/ 聯準會主席談話 / 持股與 Watchlist 財報日
+  - 圖片左上角顯示生成時間（Generated at）
 
 ## B. Deep Analysis
 - `/tech [symbol]`：技術結構與訊號
@@ -174,7 +177,7 @@ gemini_stock_bot_full/
 
 | Domain | Commands |
 |---|---|
-| Market | `/now`, `/risk`, `/marco`, `/news` |
+| Market | `/now`, `/risk`, `/marco`, `/calendar`, `/news` |
 | Analysis | `/tech`, `/chart`, `/chart theme`, `/tech compare`, `/fin`, `/fin chart`, `/fin compare`, `/whale`, `/ask`, `/bt`, `/sim` |
 | Portfolio | `/buy`, `/sell`, `/list`, `/watch ...`, `/sweep ...` |
 | System | `/status`, `/quota`, `/bc ...`, `/help`, `/op ...`, `/ulog ...` |

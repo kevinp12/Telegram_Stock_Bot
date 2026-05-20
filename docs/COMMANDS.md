@@ -14,6 +14,7 @@
 | `/now` | 市場總覽與 AI 短評 | `main_bot.on_now` → `command.cmd_now` |
 | `/risk` | 風險儀表板 | `main_bot.on_risk` → `command.cmd_risk` |
 | `/marco` | 宏觀雷達（CPI/PCE/PPI/NFP...） | `main_bot.on_marco` → `command.cmd_marco` |
+| `/calendar` | 宏觀與事件日曆（週重點 + 當月圖） | `main_bot.on_calendar` → `command.cmd_calendar` |
 | `/tech` | 技術與 SMC | `main_bot.on_tech` → `command.cmd_tech` |
 | `/chart [代號]` | 輸出戰術圖 | `main_bot.on_chart` → `main_bot.maybe_send_tech_chart` |
 | `/fin` | 財務分析（含自動財報圖） | `main_bot.on_fin` → `command.cmd_fin` + `main_bot.maybe_send_fin_chart` |
@@ -82,9 +83,14 @@
 - 極端風險標籤：當 `VaR95 <= -50%` 或 `年化波動率 >= 80%`，回覆最上方加上妖股警告。
 
 ### 操作體驗提升
-- `/bt`、`/sim`、`/fin compare`：新增「讀取中」訊息，完成後自動刪除（保留錯誤訊息）。
+- `/bt`、`/sim`、`/fin compare`、`/calendar`：新增「讀取中」訊息，完成後自動刪除（保留錯誤訊息）。
 - Telegram Menu 指令描述全面美化。
 - `/help` 整理：「深度分析模組」新增 `/bt model`、/sim 含肥尾/跳躍說明。
+
+### /calendar 事件日曆
+- 新增 `/calendar` 指令：整合未來一週美股關鍵事件 + 當月行事曆圖。
+- FOMC 會議日程改為優先由聯準會官方頁面自動抓取（失敗時 fallback 內建日期）。
+- 行事曆圖左上角顯示生成時間（Generated at）。
 
 ### /tech /fin 圖表持續優化
 - `/fin [代號]`：文字分析後自動嘗試送出財報圖

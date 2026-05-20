@@ -9,6 +9,7 @@ import math
 import random
 import re
 import io
+import calendar as pycalendar
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -1546,6 +1547,366 @@ def cmd_tech(text: str, user_id: int) -> str:
 
 def cmd_help() -> list[str]:
     return frame.help_text()
+
+
+THEORY_KB: dict[str, dict[str, str]] = {
+    "ema": {
+        "title": "EMA 均線（21/60/200）",
+        "what": "指數移動平均，越近期的價格權重越高，用來判斷趨勢方向與多空排列。",
+        "how": "本系統用 21/60/200 EMA：21 代表短線節奏、60 代表波段結構、200 代表長週期牛熊分界。",
+        "judge": "21>60>200 常見為多頭趨勢；21<60<200 常見為空頭趨勢。若均線糾結，偏盤整等待突破。",
+        "pitfall": "均線是落後指標，震盪盤容易來回打臉，需搭配量能、VWAP、支撐壓力判斷。",
+    },
+    "macd": {
+        "title": "MACD 動能",
+        "what": "以快慢 EMA 差值衡量動能，常用來觀察趨勢延續與轉折。",
+        "how": "觀察 DIF/DEA 黃金交叉、死叉與柱狀體變化，搭配價量確認真假訊號。",
+        "judge": "零軸上黃金交叉偏強；零軸下死叉偏弱。柱體擴大代表動能增強。",
+        "pitfall": "單看交叉容易過度交易，應先確認趨勢方向與關鍵位再執行。",
+    },
+    "rsi": {
+        "title": "RSI 相對強弱",
+        "what": "衡量漲跌速度的動能指標，用於辨識過熱/過冷與背離。",
+        "how": "常用 14 期，搭配趨勢看待：強勢股可長時間維持高 RSI。",
+        "judge": ">70 偏熱、<30 偏冷；若價格創高但 RSI 未創高，可能出現頂背離。",
+        "pitfall": "在強趨勢中 RSI 超買/超賣可能持續很久，不代表立即反轉。",
+    },
+    "vwap": {
+        "title": "VWAP 機構平均成本",
+        "what": "成交量加權平均價，常視為日內機構成本線。",
+        "how": "價格站上 VWAP 且回踩不破，常視為偏多；跌破且反彈不過，常視為偏空。",
+        "judge": "VWAP 上方偏強、下方偏弱；靠近 VWAP 常是進退場評估區。",
+        "pitfall": "單一 VWAP 不足以判斷方向，需搭配趨勢與成交量。",
+    },
+    "atr": {
+        "title": "ATR 波動率",
+        "what": "平均真實波幅，用來衡量近期波動大小，不分多空。",
+        "how": "本系統用 ATR 設停損/目標（如 1.5x ATR 防守、2x ATR 短線目標）。",
+        "judge": "ATR 上升代表波動擴大（風險上升）；ATR 下降代表波動收斂。",
+        "pitfall": "ATR 只告訴你波動，不告訴方向，需搭配趨勢指標。",
+    },
+    "fvg": {
+        "title": "FVG 公允價值缺口（SMC）",
+        "what": "價格快速推進後留下的失衡區，常成為回補或再啟動區。",
+        "how": "本系統在 /tech、/sweep 追蹤 FVG 區間，結合掃蕩與均線濾網尋找共振點。",
+        "judge": "回補 FVG 後若出現量價承接，可能延續原趨勢；若失守，結構可能轉弱。",
+        "pitfall": "不是每個缺口都會回補，需配合市場結構與流動性位置。",
+    },
+    "td9": {
+        "title": "TD9 衰竭序列",
+        "what": "用連續計數觀察趨勢是否接近衰竭，偏向時機輔助。",
+        "how": "當計數接近 9，搭配關鍵壓力/支撐區可作為減碼或反手的警示。",
+        "judge": "不是反轉保證，需看是否同步出現背離、量縮或結構破壞。",
+        "pitfall": "單獨使用命中率有限，建議與 MACD/RSI/結構共振。",
+    },
+    "smc": {
+        "title": "SMC 核心邏輯",
+        "what": "Smart Money Concepts，重點在流動性、失衡、結構斷裂與資金行為。",
+        "how": "本系統整合 FVG、Sweep、TDST、MA 濾網與共振訊號，產生 STRONG_LONG/STRONG_SHORT。",
+        "judge": "優先找「流動性掃蕩 → 回到失衡區 → 結構確認」的連續劇本。",
+        "pitfall": "只看單一訊號容易誤判，SMC 重點是「流程與上下文」不是單點。",
+    },
+    "sharpe": {
+        "title": "Sharpe Ratio（夏普值）",
+        "what": "單位總波動風險下的報酬效率，常用回測績效品質評估。",
+        "how": "同報酬下，Sharpe 越高通常代表風險調整後效率越好。",
+        "judge": "常見經驗：>1 可接受、>1.5 不錯、>2 優秀（視策略類型而定）。",
+        "pitfall": "對肥尾風險不敏感，需搭配 Sortino、MDD、Calmar。",
+    },
+    "sortino": {
+        "title": "Sortino Ratio",
+        "what": "只懲罰下行波動的風險調整報酬，比 Sharpe 更重視虧損風險。",
+        "how": "適合評估不對稱策略（上漲慢、下跌快）是否真的穩健。",
+        "judge": "數值越高通常越好，代表同樣下行風險下能創造更高報酬。",
+        "pitfall": "樣本太短或行情單邊時可能失真。",
+    },
+    "calmar": {
+        "title": "Calmar Ratio",
+        "what": "年化報酬 / 最大回撤，用來衡量「賺報酬是否值得承擔回撤」。",
+        "how": "在策略比較時，Calmar 可快速看誰的資金曲線更友善。",
+        "judge": "同報酬下回撤越小，Calmar 越高，通常越可長抱。",
+        "pitfall": "極端事件期間，最大回撤可能一次拉低整體評價。",
+    },
+    "mdd": {
+        "title": "MDD 最大回撤",
+        "what": "資產曲線從高點到低點的最大跌幅，反映最痛苦時刻。",
+        "how": "本系統 /bt 會列 MDD，作為倉位與心理承受度校準依據。",
+        "judge": "先問自己可承受幾%的回撤，再選策略，不要只看總報酬。",
+        "pitfall": "高報酬策略若 MDD 過大，實盤常因心理壓力提前出場。",
+    },
+    "var": {
+        "title": "VaR / CVaR（蒙地卡羅）",
+        "what": "VaR95：95% 信心水準下可能不會超過的單期虧損；CVaR：超過 VaR 後的平均更壞損失。",
+        "how": "本系統 /sim 會輸出 VaR95/CVaR95，並搭配肥尾/跳躍模型避免過度樂觀。",
+        "judge": "若 VaR95 很深、CVaR 更深，代表尾部風險高，倉位需保守。",
+        "pitfall": "VaR 不是最壞情境，只是分位數；黑天鵝仍可能超出估計。",
+    }
+}
+
+
+def cmd_theory(text: str) -> list[str]:
+    parts = (text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        indicator_list = [
+            "EMA", "MACD", "RSI", "VWAP", "ATR", "FVG", "TD9", "SMC",
+            "Sharpe", "Sortino", "Calmar", "MDD", "VaR/CVaR",
+        ]
+        keys_preview = "、".join(indicator_list)
+        return [
+            "📘 **交易百科 /theory 使用說明**\n"
+            "━━━━━━━━━━━━━━━━━\n"
+            "用法：`/theory [名詞]`\n"
+            "範例：`/theory smc`、`/theory vwap`、`/theory sharpe`\n\n"
+            "📚 **目前系統支援的指標/模型清單**\n"
+            f"{keys_preview}\n\n"
+            "💡 內容包含：定義 / 如何使用 / 判斷方式 / 常見誤區\n"
+            "💡 你也可輸入：`/theory list` 查看完整清單"
+        ]
+
+    if parts[1].strip().lower() in {"list", "all"}:
+        return [
+            "📚 **/theory 完整主題清單**\n"
+            "━━━━━━━━━━━━━━━━━\n"
+            "• `ema`\n"
+            "• `macd`\n"
+            "• `rsi`\n"
+            "• `vwap`\n"
+            "• `atr`\n"
+            "• `fvg`\n"
+            "• `td9`\n"
+            "• `smc`\n"
+            "• `sharpe`\n"
+            "• `sortino`\n"
+            "• `calmar`\n"
+            "• `mdd`\n"
+            "• `var`（含 CVaR）\n\n"
+            "範例：`/theory vwap`、`/theory mdd`"
+        ]
+
+    query = parts[1].strip().lower()
+    query = query.replace("_", " ")
+    alias = {
+        "夏普": "sharpe", "sortino ratio": "sortino", "calmar ratio": "calmar",
+        "最大回撤": "mdd", "fvg": "fvg", "td": "td9", "var95": "var", "cvar": "var",
+    }
+    key = alias.get(query, query)
+    item = THEORY_KB.get(key)
+    if not item:
+        close = [k for k in THEORY_KB.keys() if query in k][:8]
+        hint = "、".join(close) if close else "ema、macd、rsi、vwap、smc、sharpe、var"
+        return [f"❌ 找不到主題：`{parts[1]}`\n可試試：{hint}"]
+
+    page1 = (
+        f"📘 **交易百科：{item['title']}** (1/2)\n"
+        "━━━━━━━━━━━━━━━━━\n"
+        f"【定義】\n{item['what']}\n\n"
+        f"【系統內怎麼用】\n{item['how']}\n\n"
+        "💡 下一頁：判斷方式與常見誤區"
+    )
+    page2 = (
+        f"🧭 **交易百科：{item['title']}** (2/2)\n"
+        "━━━━━━━━━━━━━━━━━\n"
+        f"【判斷方式】\n{item['judge']}\n\n"
+        f"【常見誤區】\n{item['pitfall']}\n\n"
+        "📌 建議：搭配 `/tech`、`/bt`、`/sim` 實際觀察同一指標在不同市場狀態的表現。"
+    )
+    return [page1, page2]
+
+
+def _estimate_next_monthly_event(last_date_str: str, fallback_day: int) -> datetime:
+    """用上一期公布日期估算下一次月度事件日期。"""
+    try:
+        base = datetime.strptime(str(last_date_str)[:10], "%Y-%m-%d")
+    except Exception:
+        base = datetime.now()
+    year = base.year + (1 if base.month == 12 else 0)
+    month = 1 if base.month == 12 else base.month + 1
+    day = min(max(1, base.day), 28)
+    return datetime(year, month, day)
+
+
+def _build_us_market_events(today: datetime) -> list[dict[str, str]]:
+    """建立美股相關重大事件（宏觀 + 聯準會）清單。"""
+    snap = market_api.get_macro_core_snapshot()
+    events: list[dict[str, str]] = []
+
+    # CPI / NFP：官方 BLS 日程優先，失敗才估算
+    bls_official = market_api.get_bls_release_calendar_official(today.year)
+    cpi_events = bls_official.get("cpi", []) if isinstance(bls_official, dict) else []
+    ppi_events = bls_official.get("ppi", []) if isinstance(bls_official, dict) else []
+    nfp_events = bls_official.get("nfp", []) if isinstance(bls_official, dict) else []
+    if cpi_events:
+        events.extend(cpi_events)
+    else:
+        cpi_next = _estimate_next_monthly_event((snap.get("cpi", {}) or {}).get("date", ""), 12)
+        events.append({"date": cpi_next.strftime("%Y-%m-%d"), "title": "CPI 公布", "tag": "CPI"})
+
+    if nfp_events:
+        events.extend(nfp_events)
+    else:
+        nfp_next = _estimate_next_monthly_event((snap.get("nfp", {}) or {}).get("date", ""), 7)
+        events.append({"date": nfp_next.strftime("%Y-%m-%d"), "title": "非農就業 (NFP)", "tag": "NFP"})
+
+    # PCE：官方 BEA 日程優先，失敗才估算
+    pce_official = market_api.get_bea_release_calendar_official(today.year)
+    if pce_official:
+        events.extend(pce_official)
+    else:
+        pce_next = _estimate_next_monthly_event((snap.get("pce", {}) or {}).get("date", ""), 28)
+        events.append({"date": pce_next.strftime("%Y-%m-%d"), "title": "PCE 公布", "tag": "PCE"})
+
+    # PPI：官方 BLS 日程優先，失敗才估算
+    if ppi_events:
+        events.extend(ppi_events)
+    else:
+        ppi_next = _estimate_next_monthly_event((snap.get("ppi", {}) or {}).get("date", ""), 14)
+        events.append({"date": ppi_next.strftime("%Y-%m-%d"), "title": "PPI 公布", "tag": "PPI"})
+
+    # FOMC：優先抓官方頁面，失敗才 fallback 內建日期
+    official_fomc = market_api.get_fomc_calendar_official(today.year)
+    if official_fomc:
+        events.extend(official_fomc)
+    else:
+        fomc_by_year = {
+            2026: ["2026-01-28", "2026-03-18", "2026-04-29", "2026-06-17", "2026-07-29", "2026-09-16", "2026-11-04", "2026-12-16"],
+        }
+        for d in fomc_by_year.get(today.year, []):
+            events.append({"date": d, "title": "FOMC 利率決議", "tag": "FOMC"})
+
+    # 聯準會主席相關公開講話（事件提醒用途，日期可每月調整）
+    chair_events_by_year = {
+        2026: ["2026-02-10", "2026-05-12", "2026-08-25", "2026-11-17"],
+    }
+    for d in chair_events_by_year.get(today.year, []):
+        events.append({"date": d, "title": "聯準會主席談話", "tag": "FED CHAIR"})
+
+    events.sort(key=lambda x: x["date"])
+    return events
+
+
+def _generate_month_calendar_image(events: list[dict[str, str]], generated_at: str, year: int, month: int) -> io.BytesIO | None:
+    try:
+        import matplotlib as mpl
+        mpl.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception:
+        return None
+
+    utils.setup_matplotlib_cjk_font(mpl)
+
+    cal = pycalendar.Calendar(firstweekday=0)
+    weeks = cal.monthdayscalendar(year, month)
+    while len(weeks) < 6:
+        weeks.append([0] * 7)
+
+    event_map: dict[int, list[str]] = {}
+    for e in events:
+        try:
+            dt = datetime.strptime(e["date"], "%Y-%m-%d")
+            if dt.year == year and dt.month == month:
+                event_map.setdefault(dt.day, []).append(e.get("tag", "EVT"))
+        except Exception:
+            continue
+
+    headers = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    table_data: list[list[str]] = []
+    for w in weeks:
+        row = []
+        for d in w:
+            if d == 0:
+                row.append("")
+            else:
+                tags = "/".join(event_map.get(d, [])[:2])
+                row.append(f"{d}\n{tags}" if tags else str(d))
+        table_data.append(row)
+
+    fig, ax = plt.subplots(figsize=(14, 9), facecolor="#0B1020")
+    ax.axis("off")
+    title = f"US Market Calendar {year}-{month:02d}"
+    fig.text(0.01, 0.98, f"Generated at: {generated_at}", color="#E2E8F0", fontsize=10, va="top", ha="left")
+    fig.text(0.5, 0.95, title, color="#F8FAFC", fontsize=18, va="top", ha="center", weight="bold")
+
+    tbl = ax.table(cellText=table_data, colLabels=headers, loc="center", cellLoc="left", colLoc="center")
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(10)
+    tbl.scale(1.1, 2.2)
+
+    for (r, c), cell in tbl.get_celld().items():
+        cell.set_edgecolor("#334155")
+        if r == 0:
+            cell.set_facecolor("#1E293B")
+            cell.set_text_props(color="#F8FAFC", weight="bold")
+        else:
+            text = cell.get_text().get_text()
+            if "CPI" in text or "FOMC" in text or "NFP" in text:
+                cell.set_facecolor("#3F1D2E")
+                cell.set_text_props(color="#FDE68A")
+            elif "FED CHAIR" in text or "PPI" in text or "PCE" in text:
+                cell.set_facecolor("#1F2937")
+                cell.set_text_props(color="#BFDBFE")
+            else:
+                cell.set_facecolor("#0F172A")
+                cell.set_text_props(color="#CBD5E1")
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", dpi=220, bbox_inches="tight", facecolor="#0B1020")
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
+
+def cmd_calendar(user_id: int, user_name: str) -> tuple[list[str], io.BytesIO | None]:
+    now = datetime.now()
+    generated_at = ai_core.get_current_time_str()
+
+    holdings = database.get_aggregated_portfolio(user_id)
+    watchlist = database.get_watchlist(user_id)
+    symbols = list(dict.fromkeys(list(holdings.keys()) + list(watchlist)))[:20]
+
+    macro_events = _build_us_market_events(now)
+    earnings = market_api.get_earnings_calendar(symbols if symbols else None, limit=20)
+    earning_events = [{"date": str(r.get("date", "")), "title": f"{r.get('symbol', 'N/A')} 財報", "tag": "ER"} for r in earnings if r.get("date")]
+
+    all_events = macro_events + earning_events
+    all_events.sort(key=lambda x: x["date"])
+
+    one_week_later = now + timedelta(days=7)
+    upcoming = []
+    for e in all_events:
+        try:
+            dt = datetime.strptime(e["date"], "%Y-%m-%d")
+            if now.date() <= dt.date() <= one_week_later.date():
+                upcoming.append(e)
+        except Exception:
+            continue
+
+    if not upcoming:
+        week_text = "• 未來一週暫無抓到重大事件（可用 /calendar 重試）。"
+    else:
+        week_text = "\n".join([f"• {e['date']}｜{e['title']}" for e in upcoming[:25]])
+
+    page1 = (
+        "🗓️ **美股宏觀與事件日曆 /calendar** (1/2)\n"
+        "━━━━━━━━━━━━━━━━━\n"
+        f"🕒 生成時間：{generated_at}\n"
+        f"👤 使用者：{user_name}\n\n"
+        "【未來一週重點事件】\n"
+        f"{week_text}\n\n"
+        "💡 已整合：CPI / PPI / PCE / NFP / FOMC / 聯準會主席談話 / 持股與 Watchlist 財報"
+    )
+
+    page2 = (
+        "📌 **當月事件重點說明** (2/2)\n"
+        "━━━━━━━━━━━━━━━━━\n"
+        "• 行事曆圖片會標註當月重大日期。\n"
+        "• 黃色：高衝擊事件（CPI/FOMC/NFP）\n"
+        "• 藍色：中度事件（PPI/PCE/Fed Chair）\n"
+        "• `ER`：持股或 Watchlist 的財報日\n"
+        "• 若日期變動，請以官方公告為準。"
+    )
+
+    cal_img = _generate_month_calendar_image(all_events, generated_at, now.year, now.month)
+    return [page1, page2], cal_img
 
 
 def cmd_proactive_news(user_name: str = "User", user_id: int | None = None) -> str:

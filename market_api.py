@@ -421,6 +421,164 @@ def get_earnings_calendar(symbols: list[str] | None = None, limit: int = 5) -> l
     return rows[:limit]
 
 
+def get_fomc_calendar_official(year: int | None = None) -> list[dict[str, str]]:
+    """自動抓取聯準會 FOMC 日程（官方頁面）。
+
+    回傳格式：[{"date": "YYYY-MM-DD", "title": "FOMC 利率決議", "tag": "FOMC"}, ...]
+    """
+    target_year = int(year or datetime.now().year)
+    url = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+    }
+    try:
+        r = requests.get(url, headers=headers, timeout=12)
+        if not r.ok:
+            return []
+        html = r.text
+    except Exception as exc:
+        logging.warning("get_fomc_calendar_official request failed: %s", exc)
+        return []
+
+    # 抓像 "January 27-28" / "March 17-18" 這類會議日期
+    month_map = {
+        "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+        "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+    }
+    pattern = re.compile(
+        rf"(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{{1,2}}(?:\s*[–\-]\s*\d{{1,2}})?(?:,\s*{target_year})?",
+        re.IGNORECASE,
+    )
+
+    events: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for m in pattern.finditer(html):
+        token = m.group(0)
+        parts = re.split(r"\s+", token.strip(), maxsplit=1)
+        if len(parts) < 2:
+            continue
+        mon = month_map.get(parts[0].lower())
+        if not mon:
+            continue
+        day_match = re.search(r"(\d{1,2})", parts[1])
+        if not day_match:
+            continue
+        day = int(day_match.group(1))
+        try:
+            d = datetime(target_year, mon, day).strftime("%Y-%m-%d")
+        except Exception:
+            continue
+        if d in seen:
+            continue
+        seen.add(d)
+        events.append({"date": d, "title": "FOMC 利率決議", "tag": "FOMC"})
+
+    events.sort(key=lambda x: x["date"])
+    return events
+
+
+def _extract_official_dates_from_html(html: str, year: int, keywords: list[str], tag: str, title: str) -> list[dict[str, str]]:
+    """從官方頁面 HTML 以關鍵字 + 月份日期格式抽取事件日期。"""
+    month_map = {
+        "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+        "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+    }
+    # 擷取含目標關鍵字附近片段，降低雜訊
+    spans: list[str] = []
+    lower_html = html.lower()
+    for kw in keywords:
+        pos = lower_html.find(kw.lower())
+        while pos != -1:
+            left = max(0, pos - 300)
+            right = min(len(html), pos + 300)
+            spans.append(html[left:right])
+            pos = lower_html.find(kw.lower(), pos + 1)
+    if not spans:
+        spans = [html]
+
+    date_re = re.compile(
+        rf"(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{{1,2}})(?:\s*[–\-]\s*\d{{1,2}})?(?:,\s*{year})?",
+        re.IGNORECASE,
+    )
+    events: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for s in spans:
+        for m in date_re.finditer(s):
+            mon = month_map.get(m.group(1).lower())
+            day = int(m.group(2))
+            if not mon:
+                continue
+            try:
+                d = datetime(year, mon, day).strftime("%Y-%m-%d")
+            except Exception:
+                continue
+            if d in seen:
+                continue
+            seen.add(d)
+            events.append({"date": d, "title": title, "tag": tag})
+    events.sort(key=lambda x: x["date"])
+    return events
+
+
+def get_bls_release_calendar_official(year: int | None = None) -> dict[str, list[dict[str, str]]]:
+    """官方來源抓取 BLS 發佈日：CPI / PPI / NFP（Employment Situation）。"""
+    target_year = int(year or datetime.now().year)
+    url = f"https://www.bls.gov/schedule/{target_year}/home.htm"
+    try:
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
+        if not r.ok:
+            return {"cpi": [], "ppi": [], "nfp": []}
+        html = r.text
+    except Exception as exc:
+        logging.warning("get_bls_release_calendar_official failed: %s", exc)
+        return {"cpi": [], "ppi": [], "nfp": []}
+
+    cpi_events = _extract_official_dates_from_html(
+        html,
+        target_year,
+        keywords=["Consumer Price Index", "CPI"],
+        tag="CPI",
+        title="CPI 公布",
+    )
+    nfp_events = _extract_official_dates_from_html(
+        html,
+        target_year,
+        keywords=["Employment Situation", "Nonfarm Payrolls", "Payroll"],
+        tag="NFP",
+        title="非農就業 (NFP)",
+    )
+    ppi_events = _extract_official_dates_from_html(
+        html,
+        target_year,
+        keywords=["Producer Price Index", "PPI"],
+        tag="PPI",
+        title="PPI 公布",
+    )
+    return {"cpi": cpi_events, "ppi": ppi_events, "nfp": nfp_events}
+
+
+def get_bea_release_calendar_official(year: int | None = None) -> list[dict[str, str]]:
+    """官方來源抓取 BEA PCE 發佈日。"""
+    target_year = int(year or datetime.now().year)
+    url = "https://www.bea.gov/news/schedule"
+    try:
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
+        if not r.ok:
+            return []
+        html = r.text
+    except Exception as exc:
+        logging.warning("get_bea_release_calendar_official failed: %s", exc)
+        return []
+
+    return _extract_official_dates_from_html(
+        html,
+        target_year,
+        keywords=["Personal Income and Outlays", "PCE", "personal consumption expenditures"],
+        tag="PCE",
+        title="PCE 公布",
+    )
+
+
 FRED_SERIES_MAP = {
     "CPI": "CPIAUCSL",
     "CORE_CPI": "CPILFESL",
@@ -1484,7 +1642,45 @@ def fetch_news_filtered(query: str, limit: int = 5) -> list[dict[str, str]]:
 
     # 如果 Domain 限制找不到，或者 NEWS_API_KEY 不存在，走全網/Yahoo 降級搜尋
     if not news_list:
-        return fetch_news_multi(query, limit=limit)
+        fallback = fetch_news_multi(query, limit=limit)
+        if fallback:
+            return fallback
+
+        # 最終兜底：RSS 關鍵字搜尋（避免 /news 完全無資料）
+        rss_feeds = [
+            ("Reuters", "https://www.reutersagency.com/feed/?best-topics=business-finance&post_type=best"),
+            ("MarketWatch", "https://feeds.content.dowjones.io/public/rss/mw_topstories"),
+            ("CNBC", "https://www.cnbc.com/id/100003114/device/rss/rss.html"),
+        ]
+        q = str(query or "").strip().lower()
+        rss_items: list[dict[str, str]] = []
+        for source_name, feed_url in rss_feeds:
+            try:
+                feed = feedparser.parse(feed_url)
+                for entry in (feed.entries or [])[:20]:
+                    title = str(getattr(entry, "title", "") or "")
+                    summary = str(getattr(entry, "summary", "") or "")
+                    link = str(getattr(entry, "link", "") or "")
+                    pub = str(getattr(entry, "published", "") or "")
+                    corpus = f"{title} {summary}".lower()
+                    if q and q not in corpus:
+                        continue
+                    rss_items.append(
+                        {
+                            "title": title,
+                            "description": summary,
+                            "source": source_name,
+                            "url": link,
+                            "publishedAt": pub,
+                        }
+                    )
+                    if len(rss_items) >= limit:
+                        break
+                if len(rss_items) >= limit:
+                    break
+            except Exception as exc:
+                logging.debug("RSS fallback failed for %s: %s", source_name, exc)
+        return rss_items[:limit]
 
     news_list.sort(key=lambda x: x.get("publishedAt") or "", reverse=True)
     return news_list[:limit]

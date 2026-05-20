@@ -476,6 +476,8 @@ def delete_loading_safe(message, msg):
 def setup_bot_commands() -> None:
     commands = [
         telebot.types.BotCommand("now", "⚡ 即時全景 + 總損益"),
+        telebot.types.BotCommand("calendar", "🗓️ 宏觀與事件日曆"),
+        telebot.types.BotCommand("theory", "📘 交易百科教學"),
         telebot.types.BotCommand("list", "📋 持股詳細明細"),
         telebot.types.BotCommand("news", "📰 即時新聞與市場報告"),
         telebot.types.BotCommand("fin", "📊 個股財報 / compare / chart"),
@@ -1083,6 +1085,38 @@ def on_ask(m):
         check_and_send_auto_chart(m.chat.id, query_text, symbol, user_id, user_name, username)
 
 
+@bot.message_handler(commands=["theory"])
+def on_theory(m):
+    user_id, user_name = register_user(m)
+    record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/theory")
+    pages = command.cmd_theory(m.text or "")
+    if isinstance(pages, (list, tuple)):
+        send_paged_message(m.chat.id, pages)
+    else:
+        reply(m, pages)
+
+
+@bot.message_handler(commands=["calendar"])
+def on_calendar(m):
+    user_id, user_name = register_user(m)
+    record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/calendar")
+    status_msg = bot.reply_to(m, "🗓️ 正在彙整宏觀事件與財報日曆...")
+    try:
+        pages, cal_img = command.cmd_calendar(user_id, user_name)
+        if isinstance(pages, (list, tuple)):
+            send_paged_message(m.chat.id, pages)
+        else:
+            reply(m, pages)
+        if cal_img is not None:
+            safe_send(m.chat.id, "🖼️ 以下為當月美股事件行事曆（含生成時間）")
+            bot.send_photo(m.chat.id, photo=cal_img, caption="US Market Calendar")
+    except Exception as exc:
+        logging.error("Calendar command failed: %s", exc)
+        safe_send(m.chat.id, f"❌ /calendar 執行失敗：{exc}")
+    finally:
+        delete_loading_safe(m, status_msg)
+
+
 @bot.message_handler(commands=["status"])
 def on_status(m):
     user_id, _ = register_user(m)
@@ -1223,8 +1257,15 @@ def on_text(m):
             return
         if lowered.startswith("/news"):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/news")
-            for msg in command.cmd_news(text, user_name, user_id):
-                safe_send(m.chat.id, msg)
+            status_msg = bot.reply_to(m, "📰 正在搜尋最新新聞與 AI 分析...")
+            try:
+                for msg in command.cmd_news(text, user_name, user_id):
+                    safe_send(m.chat.id, msg)
+            except Exception as exc:
+                logging.error("News command failed: %s", exc)
+                safe_send(m.chat.id, f"❌ 新聞查詢異常：{exc}")
+            finally:
+                delete_loading_safe(m, status_msg)
             return
         if lowered.startswith("/risk"):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/risk")
@@ -1233,6 +1274,24 @@ def on_text(m):
         if lowered.startswith("/marco"):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/marco")
             send_paged_message(m.chat.id, command.cmd_marco(user_id=user_id, user_name=user_name))
+            return
+        if lowered.startswith("/calendar"):
+            record_user_log_safely(user_id, user_name, get_username(m), text, source="/calendar")
+            status_msg = bot.reply_to(m, "🗓️ 正在彙整宏觀事件與財報日曆...")
+            try:
+                pages, cal_img = command.cmd_calendar(user_id, user_name)
+                if isinstance(pages, (list, tuple)):
+                    send_paged_message(m.chat.id, pages)
+                else:
+                    reply(m, pages)
+                if cal_img is not None:
+                    safe_send(m.chat.id, "🖼️ 以下為當月美股事件行事曆（含生成時間）")
+                    bot.send_photo(m.chat.id, photo=cal_img, caption="US Market Calendar")
+            except Exception as exc:
+                logging.error("Calendar command failed: %s", exc)
+                safe_send(m.chat.id, f"❌ /calendar 執行失敗：{exc}")
+            finally:
+                delete_loading_safe(m, status_msg)
             return
         if lowered.startswith("/fin"):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/fin")
@@ -1265,6 +1324,14 @@ def on_text(m):
         if lowered.startswith("/help"):
             send_paged_message(m.chat.id, command.frame.help_text())
             return
+        if lowered.startswith("/theory"):
+            record_user_log_safely(user_id, user_name, get_username(m), text, source="/theory")
+            result = command.cmd_theory(text)
+            if isinstance(result, (list, tuple)):
+                send_paged_message(m.chat.id, result)
+            else:
+                reply(m, result)
+            return
         if lowered.startswith("/ulog"):
             record_user_log_safely(user_id, user_name, get_username(m), text, source="/ulog")
             reply(m, command.cmd_ulog(text, user_id))
@@ -1277,16 +1344,23 @@ def on_text(m):
     if " ".join(text.strip().split()).lower() == "data clear":
         reply(m, command.cmd_data_clear(text, user_id))
         return
-    result = command.handle_natural_language(text, user_name, user_id=user_id)
-    reply(m, result)
-    record_qa_safely(user_id, text, result)
-    username = get_username(m)
-    record_user_log_safely(user_id, user_name, username, text, result, source="natural")
+    status_msg = bot.reply_to(m, "🤖 AI 思考中，正在整理回覆...")
+    try:
+        result = command.handle_natural_language(text, user_name, user_id=user_id)
+        reply(m, result)
+        record_qa_safely(user_id, text, result)
+        username = get_username(m)
+        record_user_log_safely(user_id, user_name, username, text, result, source="natural")
 
-    # 自然對話自動圖表觸發
-    syms = command.STOCK_RE.findall(text)
-    if syms:
-        check_and_send_auto_chart(m.chat.id, text, syms[0].upper(), user_id, user_name, username)
+        # 自然對話自動圖表觸發
+        syms = command.STOCK_RE.findall(text)
+        if syms:
+            check_and_send_auto_chart(m.chat.id, text, syms[0].upper(), user_id, user_name, username)
+    except Exception as exc:
+        logging.error("Natural language handler failed: %s", exc)
+        safe_send(m.chat.id, f"❌ AI 回覆失敗：{exc}")
+    finally:
+        delete_loading_safe(m, status_msg)
 
 
 if __name__ == "__main__":
