@@ -135,13 +135,7 @@ def _allow_user_heavy_task(user_id: int, task_name: str, cooldown_seconds: int =
 
 
 def try_acquire_heavy_task(message, user_id: int, task_name: str, *, cooldown_seconds: int = HEAVY_TASK_USER_COOLDOWN_SECONDS) -> bool:
-    """全域併發 + 使用者節流保護，避免 CPU/RAM 突刺。"""
-    allowed, remaining = _allow_user_heavy_task(user_id, task_name, cooldown_seconds=cooldown_seconds)
-    if not allowed:
-        reply(message, f"⏳ 系統保護中：`{task_name}` 請在 {remaining} 秒後再試。")
-        return False
-
-    # 改為排隊等待，不直接拒絕，避免高峰期一次擠爆與重試風暴
+    """全域併發保護：改為排隊等待，不顯示冷卻/等待拒絕訊息。"""
     _HEAVY_TASK_SEMAPHORE.acquire(blocking=True)
     return True
 
@@ -1088,9 +1082,13 @@ def on_watch(m):
 @bot.message_handler(commands=["sweep"])
 def on_sweep(m):
     user_id, _ = register_user(m)
-    result = run_with_loading(m, "🎯 正在更新狙擊監控...", lambda: command.cmd_sweep(m.text or "", user_id), "狙擊指令失敗")
-    if result is not None:
-        reply(m, result)
+    try:
+        result = command.cmd_sweep(m.text or "", user_id)
+        if result is not None:
+            reply(m, result)
+    except Exception as exc:
+        logging.exception("狙擊指令失敗: %s", exc)
+        reply(m, f"⚠️ 狙擊指令失敗：{exc}")
 
 
 @bot.message_handler(commands=["news"])
@@ -1270,9 +1268,13 @@ def on_calendar(m):
 @bot.message_handler(commands=["status"])
 def on_status(m):
     user_id, _ = register_user(m)
-    result = run_with_loading(m, "🔍 正在檢查系統狀態...", lambda: command.cmd_status(user_id), "狀態檢查失敗")
-    if result is not None:
-        reply(m, result)
+    try:
+        result = command.cmd_status(user_id)
+        if result is not None:
+            reply(m, result)
+    except Exception as exc:
+        logging.exception("狀態檢查失敗: %s", exc)
+        reply(m, f"⚠️ 狀態檢查失敗：{exc}")
 
 
 def reply_multi_modal(message, result):
@@ -1301,13 +1303,17 @@ def reply_multi_modal(message, result):
 @bot.message_handler(commands=["op"])
 def on_op(m):
     user_id = get_user_id(m)
-    res = run_with_loading(m, "⚙️ 正在處理後台指令...", lambda: command.cmd_op(m.text or "", user_id), "後台指令失敗")
-    if res is None:
-        return
-    if res == "__TRIGGER_LOG__":
-        on_log(m)
-    else:
-        reply_multi_modal(m, res)
+    try:
+        res = command.cmd_op(m.text or "", user_id)
+        if res is None:
+            return
+        if res == "__TRIGGER_LOG__":
+            on_log(m)
+        else:
+            reply_multi_modal(m, res)
+    except Exception as exc:
+        logging.exception("後台指令失敗: %s", exc)
+        reply(m, f"⚠️ 後台指令失敗：{exc}")
 
 
 @bot.message_handler(commands=["log"])
