@@ -87,16 +87,23 @@ if not TELEGRAM_TOKEN or len(TELEGRAM_TOKEN) < 10:
     sys.exit(1)
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=True, num_threads=2)
-PAGED_MESSAGE_CACHE: OrderedDict[str, list[str]] = OrderedDict()
+PAGED_CACHE_MAX_ITEMS = 12
+PAGED_CACHE_TTL_SECONDS = 15 * 60
+PAGED_MESSAGE_CACHE: OrderedDict[str, tuple[list[str], float]] = OrderedDict()
 _HEAVY_TASK_SEMAPHORE = threading.BoundedSemaphore(value=1)
 _USER_HEAVY_TASK_TS: OrderedDict[tuple[int, str], float] = OrderedDict()
 
 
 def add_to_paged_cache(token: str, pages: list[str]) -> None:
     """限制分頁快取上限，避免長時間運作造成記憶體累積。"""
-    while len(PAGED_MESSAGE_CACHE) >= 20:
+    now_ts = time.time()
+    expired = [k for k, v in PAGED_MESSAGE_CACHE.items() if now_ts - float(v[1]) > PAGED_CACHE_TTL_SECONDS]
+    for k in expired:
+        PAGED_MESSAGE_CACHE.pop(k, None)
+
+    while len(PAGED_MESSAGE_CACHE) >= PAGED_CACHE_MAX_ITEMS:
         PAGED_MESSAGE_CACHE.popitem(last=False)
-    PAGED_MESSAGE_CACHE[token] = pages
+    PAGED_MESSAGE_CACHE[token] = (pages, now_ts)
 TECH_CHART_COOLDOWN_SECONDS = 45
 HEAVY_TASK_USER_COOLDOWN_SECONDS = 12
 _TECH_CHART_LAST_TS: dict[tuple[int, str], float] = {}
@@ -1340,7 +1347,8 @@ def on_cached_page_callback(call):
         parts = call.data.split("_")
         page = int(parts[-1])
         token = parts[1]
-        pages = PAGED_MESSAGE_CACHE.get(token, [])
+        entry = PAGED_MESSAGE_CACHE.get(token)
+        pages = entry[0] if isinstance(entry, tuple) else (entry or [])
         if not pages:
             bot.answer_callback_query(call.id, "⚠️ 這份分頁內容已過期，請重新輸入指令。")
             return
