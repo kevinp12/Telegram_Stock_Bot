@@ -2,8 +2,12 @@
 量化指標計算核心，提供 EMA, ATR, RSI, MACD, OBV, TD9, Fibonacci, POC 等分析功能。
 """
 
+import matplotlib
+matplotlib.use('Agg')
+
 import logging
 import io
+import gc
 from datetime import datetime
 from typing import Any
 
@@ -75,14 +79,13 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
     try:
         import mplfinance as mpf
         import matplotlib as mpl
-        import matplotlib as mpl
+        import matplotlib.pyplot as plt
     except Exception as exc:
         raise RuntimeError("缺少 mplfinance 套件，請先安裝 requirements.txt") from exc
 
     # 統一中文字型策略（跨圖一致）
     setup_matplotlib_cjk_font(mpl)
 
-    mpl.use('Agg') # 確保使用非互動式後端
     symbol = symbol.upper().strip()
     cached_df = _TECH_DF_CACHE.get(symbol)
     if cached_df is not None and not cached_df.empty:
@@ -394,15 +397,16 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
     except Exception:
         pass
 
-    fig.savefig(buf, format="png", dpi=safe_dpi, bbox_inches="tight")
     try:
-        import matplotlib.pyplot as plt
-
-        plt.close(fig)
-    except Exception:
-        pass
-    buf.seek(0)
-    return buf
+        fig.savefig(buf, format="png", dpi=safe_dpi, bbox_inches="tight")
+        buf.seek(0)
+        return buf
+    finally:
+        try:
+            plt.close(fig)
+        except Exception:
+            pass
+        gc.collect()
 
 
 def _format_price_zone(low: float, high: float) -> str:

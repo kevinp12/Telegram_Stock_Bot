@@ -37,10 +37,10 @@ def _get_runtime_profile() -> tuple[str, int, int]:
     """依目前可用記憶體回傳運行檔位（normal/low/critical）與降階參數。"""
     available_mb = int(psutil.virtual_memory().available / (1024 * 1024))
     if available_mb < 180:
-        return "critical", 4, 450
+        return "critical", 3, 320
     if available_mb < 320:
-        return "low", 6, 800
-    return "normal", 10, 2000
+        return "low", 5, 520
+    return "normal", 8, 900
 
 def _is_admin(user_id: int) -> bool:
     """僅允許 .env ADMIN_ID 使用後台隱藏功能。"""
@@ -2119,6 +2119,9 @@ def cmd_backtest(message_text: str, user_id: int) -> str | list[str] | tuple[lis
             df_signals = strategy_long_term.generate_signals(df)
             strategy_name = "長線趨勢跟蹤策略"
 
+        if df_signals is None or not hasattr(df_signals, "empty") or df_signals.empty:
+            return f"❌ `{ticker}` 策略輸出為空，暫時無法回測。請稍後重試。"
+
         # 5. 計算績效 (機構級精密計算)
         result = backtest_core.calculate_metrics(df_signals)
         if isinstance(result, dict) and "error" in result:
@@ -2204,6 +2207,7 @@ def cmd_simulator(message_text: str, user_id: int) -> str | list[str] | tuple[li
     if ticker.startswith('/') or not re.fullmatch(r"[A-Z0-9\.\-]{1,6}", ticker):
         return f"❌ 錯誤的代號格式：`{ticker}`。請輸入正確的美股代號。"
 
+    price_paths = None
     try:
         profile, _, sim_count = _get_runtime_profile()
         # 抓取基礎資料
@@ -2217,6 +2221,8 @@ def cmd_simulator(message_text: str, user_id: int) -> str | list[str] | tuple[li
             return f"❌ `{ticker}` 模擬數據計算異常。"
 
         res, price_paths = sim_results
+        if price_paths is None or getattr(price_paths, "size", 0) == 0:
+            return f"❌ `{ticker}` 模擬路徑為空，暫時無法生成圖表。"
 
         risk_warning = ""
         if float(res.get('var_95_pct', 0)) <= -50 or float(res.get('annualized_vol_pct', 0)) >= 80:
@@ -2260,3 +2266,5 @@ def cmd_simulator(message_text: str, user_id: int) -> str | list[str] | tuple[li
     except Exception as e:
         logging.error(f"Simulator error for {ticker}: {e}")
         return f"❌ 模擬系統執行異常：{str(e)}"
+    finally:
+        monte_carlo.release_simulation_memory(price_paths)

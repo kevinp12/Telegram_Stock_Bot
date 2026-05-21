@@ -1,3 +1,6 @@
+import matplotlib
+matplotlib.use('Agg')
+
 import pandas as pd
 import numpy as np
 import io
@@ -131,7 +134,6 @@ def generate_backtest_chart(df: pd.DataFrame, ticker: str, theme: str = "dark") 
     """生成美觀的回測圖表 (淨值曲線 + 回向回撤)。"""
     try:
         import matplotlib as mpl
-        mpl.use('Agg')
         import matplotlib.pyplot as plt
         from matplotlib.gridspec import GridSpec
         from utils import setup_matplotlib_cjk_font
@@ -148,53 +150,57 @@ def generate_backtest_chart(df: pd.DataFrame, ticker: str, theme: str = "dark") 
     bench_color = "#94A3B8"   # 灰藍
     dd_color = "#EF4444"      # 紅色
     
-    fig = plt.figure(figsize=(14, 9), facecolor=bg_color)
-    gs = GridSpec(2, 1, height_ratios=[3, 1], hspace=0.15)
-    
-    # 1. 權益曲線
-    ax1 = fig.add_subplot(gs[0])
-    ax1.set_facecolor(bg_color)
-    
-    strategy_cum = df['Strategy_CumReturn'] * 100
-    benchmark_cum = df['Benchmark_CumReturn'] * 100
-    
-    ax1.plot(strategy_cum.index, strategy_cum, color=accent_color, linewidth=2.5, label="策略績效 (Strategy)")
-    ax1.plot(benchmark_cum.index, benchmark_cum, color=bench_color, linewidth=1.5, linestyle="--", alpha=0.6, label="基準績效 (Buy & Hold)")
-    
-    # 填滿區域
-    ax1.fill_between(strategy_cum.index, strategy_cum, 100, where=(strategy_cum >= 100), color=accent_color, alpha=0.1)
-    
-    # 標註買點
-    buy_dates = df[(df['Position'] == 1) & (df['Position'].shift(1) == 0)].index
-    if not buy_dates.empty:
-        ax1.scatter(buy_dates, strategy_cum.loc[buy_dates], color="#4ADE80", marker="^", s=50, label="進場點", zorder=5)
+    fig = None
+    try:
+        fig = plt.figure(figsize=(14, 9), facecolor=bg_color)
+        gs = GridSpec(2, 1, height_ratios=[3, 1], hspace=0.15)
 
-    ax1.set_title(f"{ticker} 長線量化策略回測結果", fontsize=20, fontweight='bold', color=fg_color, pad=25)
-    ax1.set_ylabel("資產價值 (起始=100)", fontsize=14, color=fg_color)
-    ax1.legend(loc="upper left", fontsize=12, facecolor=bg_color, edgecolor=grid_color, labelcolor=fg_color)
-    ax1.grid(True, linestyle=":", alpha=0.3, color=grid_color)
-    ax1.tick_params(colors=fg_color, labelsize=11)
-    
-    # 2. Drawdown
-    ax2 = fig.add_subplot(gs[1], sharex=ax1)
-    ax2.set_facecolor(bg_color)
-    
-    dd_series = df['Drawdown'] * 100
-    ax2.fill_between(dd_series.index, dd_series, 0, color=dd_color, alpha=0.3, label="最大回撤 (Drawdown)")
-    ax2.plot(dd_series.index, dd_series, color=dd_color, linewidth=1, alpha=0.7)
-    
-    ax2.set_ylabel("回撤 (%)", fontsize=14, color=fg_color)
-    ax2.set_ylim(dd_series.min() * 1.2, 5)
-    ax2.grid(True, linestyle=":", alpha=0.3, color=grid_color)
-    ax2.tick_params(colors=fg_color, labelsize=11)
-    
-    for ax in [ax1, ax2]:
-        for spine in ax.spines.values():
-            spine.set_color(grid_color)
-            
-    plt.tight_layout()
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=150, facecolor=bg_color)
-    buf.seek(0)
-    plt.close(fig)
-    return buf
+        # 1. 權益曲線
+        ax1 = fig.add_subplot(gs[0])
+        ax1.set_facecolor(bg_color)
+
+        strategy_cum = df['Strategy_CumReturn'] * 100
+        benchmark_cum = df['Benchmark_CumReturn'] * 100
+
+        ax1.plot(strategy_cum.index, strategy_cum, color=accent_color, linewidth=2.5, label="策略績效 (Strategy)")
+        ax1.plot(benchmark_cum.index, benchmark_cum, color=bench_color, linewidth=1.5, linestyle="--", alpha=0.6, label="基準績效 (Buy & Hold)")
+
+        # 填滿區域
+        ax1.fill_between(strategy_cum.index, strategy_cum, 100, where=(strategy_cum >= 100), color=accent_color, alpha=0.1)
+
+        # 標註買點
+        buy_dates = df[(df['Position'] == 1) & (df['Position'].shift(1) == 0)].index
+        if not buy_dates.empty:
+            ax1.scatter(buy_dates, strategy_cum.loc[buy_dates], color="#4ADE80", marker="^", s=50, label="進場點", zorder=5)
+
+        ax1.set_title(f"{ticker} 長線量化策略回測結果", fontsize=20, fontweight='bold', color=fg_color, pad=25)
+        ax1.set_ylabel("資產價值 (起始=100)", fontsize=14, color=fg_color)
+        ax1.legend(loc="upper left", fontsize=12, facecolor=bg_color, edgecolor=grid_color, labelcolor=fg_color)
+        ax1.grid(True, linestyle=":", alpha=0.3, color=grid_color)
+        ax1.tick_params(colors=fg_color, labelsize=11)
+
+        # 2. Drawdown
+        ax2 = fig.add_subplot(gs[1], sharex=ax1)
+        ax2.set_facecolor(bg_color)
+
+        dd_series = df['Drawdown'] * 100
+        ax2.fill_between(dd_series.index, dd_series, 0, color=dd_color, alpha=0.3, label="最大回撤 (Drawdown)")
+        ax2.plot(dd_series.index, dd_series, color=dd_color, linewidth=1, alpha=0.7)
+
+        ax2.set_ylabel("回撤 (%)", fontsize=14, color=fg_color)
+        ax2.set_ylim(dd_series.min() * 1.2, 5)
+        ax2.grid(True, linestyle=":", alpha=0.3, color=grid_color)
+        ax2.tick_params(colors=fg_color, labelsize=11)
+
+        for ax in [ax1, ax2]:
+            for spine in ax.spines.values():
+                spine.set_color(grid_color)
+
+        fig.tight_layout()
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=130, facecolor=bg_color)
+        buf.seek(0)
+        return buf
+    finally:
+        if fig is not None:
+            plt.close(fig)

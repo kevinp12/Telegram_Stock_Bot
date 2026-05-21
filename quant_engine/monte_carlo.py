@@ -1,7 +1,11 @@
+import matplotlib
+matplotlib.use('Agg')
+
 import numpy as np
 import pandas as pd
 import io
 import logging
+import gc
 
 
 TRADING_DAYS = 252
@@ -157,7 +161,6 @@ def generate_simulation_chart(price_paths: np.ndarray, current_price: float, tic
     """生成具有漸變置信區間的蒙地卡羅模擬路徑圖。"""
     try:
         import matplotlib as mpl
-        mpl.use('Agg')
         import matplotlib.pyplot as plt
         from utils import setup_matplotlib_cjk_font
     except ImportError:
@@ -171,40 +174,55 @@ def generate_simulation_chart(price_paths: np.ndarray, current_price: float, tic
     grid_color = "#334155"
     accent_color = "#38BDF8"
     
-    fig, ax = plt.subplots(figsize=(12, 8), facecolor=bg_color)
-    ax.set_facecolor(bg_color)
-    
-    days = price_paths.shape[0]
-    x = np.arange(1, days + 1)
-    
-    # 計算百分位數路徑
-    p5 = np.percentile(price_paths, 5, axis=1)
-    p25 = np.percentile(price_paths, 25, axis=1)
-    p50 = np.percentile(price_paths, 50, axis=1)
-    p75 = np.percentile(price_paths, 75, axis=1)
-    p95 = np.percentile(price_paths, 95, axis=1)
-    
-    # 畫出區間
-    ax.fill_between(x, p5, p95, color=accent_color, alpha=0.1, label="90% 信心區間 (肥尾/跳躍修正)")
-    ax.fill_between(x, p25, p75, color=accent_color, alpha=0.2, label="50% 核心預測範圍")
-    ax.plot(x, p50, color=accent_color, linewidth=3, label="預期中位數走勢 (動態波動)")
-    
-    ax.axhline(current_price, color="#94A3B8", linestyle="--", alpha=0.6, label=f"目前價格 (${current_price:.2f})")
-    
-    ax.set_title(f"{ticker} 1年價格模擬 (Student-t + GARCH + Jump)", fontsize=20, fontweight='bold', color=fg_color, pad=20)
-    ax.set_xlabel("未來交易日 (Days)", fontsize=14, color=fg_color)
-    ax.set_ylabel("價格 (USD)", fontsize=14, color=fg_color)
-    
-    ax.grid(True, linestyle=":", alpha=0.3, color=grid_color)
-    ax.tick_params(colors=fg_color, labelsize=11)
-    ax.legend(loc="upper left", fontsize=12, facecolor=bg_color, edgecolor=grid_color, labelcolor=fg_color)
-    
-    for spine in ax.spines.values():
-        spine.set_color(grid_color)
-        
-    plt.tight_layout()
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=150, facecolor=bg_color)
-    buf.seek(0)
-    plt.close(fig)
-    return buf
+    fig = None
+    try:
+        fig, ax = plt.subplots(figsize=(12, 8), facecolor=bg_color)
+        ax.set_facecolor(bg_color)
+
+        days = price_paths.shape[0]
+        x = np.arange(1, days + 1)
+
+        # 計算百分位數路徑
+        p5 = np.percentile(price_paths, 5, axis=1)
+        p25 = np.percentile(price_paths, 25, axis=1)
+        p50 = np.percentile(price_paths, 50, axis=1)
+        p75 = np.percentile(price_paths, 75, axis=1)
+        p95 = np.percentile(price_paths, 95, axis=1)
+
+        # 畫出區間
+        ax.fill_between(x, p5, p95, color=accent_color, alpha=0.1, label="90% 信心區間 (肥尾/跳躍修正)")
+        ax.fill_between(x, p25, p75, color=accent_color, alpha=0.2, label="50% 核心預測範圍")
+        ax.plot(x, p50, color=accent_color, linewidth=3, label="預期中位數走勢 (動態波動)")
+
+        ax.axhline(current_price, color="#94A3B8", linestyle="--", alpha=0.6, label=f"目前價格 (${current_price:.2f})")
+
+        ax.set_title(f"{ticker} 1年價格模擬 (Student-t + GARCH + Jump)", fontsize=20, fontweight='bold', color=fg_color, pad=20)
+        ax.set_xlabel("未來交易日 (Days)", fontsize=14, color=fg_color)
+        ax.set_ylabel("價格 (USD)", fontsize=14, color=fg_color)
+
+        ax.grid(True, linestyle=":", alpha=0.3, color=grid_color)
+        ax.tick_params(colors=fg_color, labelsize=11)
+        ax.legend(loc="upper left", fontsize=12, facecolor=bg_color, edgecolor=grid_color, labelcolor=fg_color)
+
+        for spine in ax.spines.values():
+            spine.set_color(grid_color)
+
+        fig.tight_layout()
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=130, facecolor=bg_color)
+        buf.seek(0)
+        return buf
+    finally:
+        if fig is not None:
+            plt.close(fig)
+
+
+def release_simulation_memory(price_paths: np.ndarray | None) -> None:
+    """模擬完成後主動釋放大型路徑陣列，避免 VPS RAM 持續墊高。"""
+    if price_paths is None:
+        return
+    try:
+        del price_paths
+    except Exception:
+        pass
+    gc.collect()

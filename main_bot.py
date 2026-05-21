@@ -101,6 +101,14 @@ TECH_CHART_COOLDOWN_SECONDS = 45
 HEAVY_TASK_USER_COOLDOWN_SECONDS = 12
 _TECH_CHART_LAST_TS: dict[tuple[int, str], float] = {}
 _USER_CHART_THEME: dict[int, str] = {}
+MAX_AI_CORPUS_LEN = 3000
+
+
+def _truncate_ai_text(text: str, limit: int = MAX_AI_CORPUS_LEN) -> str:
+    raw = (text or "").strip()
+    if len(raw) <= limit:
+        return raw
+    return raw[:limit]
 
 
 def _allow_user_heavy_task(user_id: int, task_name: str, cooldown_seconds: int = HEAVY_TASK_USER_COOLDOWN_SECONDS) -> tuple[bool, int]:
@@ -126,9 +134,8 @@ def try_acquire_heavy_task(message, user_id: int, task_name: str, *, cooldown_se
         reply(message, f"⏳ 系統保護中：`{task_name}` 請在 {remaining} 秒後再試。")
         return False
 
-    if not _HEAVY_TASK_SEMAPHORE.acquire(blocking=False):
-        reply(message, "🛡️ 目前高負載任務較多，請稍後 10-20 秒再試一次。")
-        return False
+    # 改為排隊等待，不直接拒絕，避免高峰期一次擠爆與重試風暴
+    _HEAVY_TASK_SEMAPHORE.acquire(blocking=True)
     return True
 
 
@@ -647,7 +654,6 @@ signal.signal(signal.SIGTERM, handle_shutdown)
 
 def auto_news_job() -> None:
     while True:
-        time.sleep(30)
         try:
             now_ts = time.time()
             for row in database.get_all_active_bc_users():
@@ -661,16 +667,19 @@ def auto_news_job() -> None:
                 if last_ts > 0 and now_ts - last_ts < interval_min * 60:
                     continue
                 user_name = database.get_user_display_name(user_id)
-                safe_send(user_id, command.cmd_proactive_news(user_name, user_id=user_id))
+                msg = _truncate_ai_text(command.cmd_proactive_news(user_name, user_id=user_id))
+                safe_send(user_id, msg)
                 database.update_bc_settings(user_id, last_ts=now_ts)
         except Exception as exc:
             logging.warning("auto_news_job failed: %s", exc)
+        finally:
+            gc.collect()
+            time.sleep(30)
 
 
 def major_news_alert_job() -> None:
     seen_news_urls: set[str] = set()
     while True:
-        time.sleep(ALERT_NEWS_INTERVAL_SECONDS)
         try:
             for user_id in database.get_all_user_ids():
                 watchlist = database.get_watchlist(user_id)
@@ -685,10 +694,13 @@ def major_news_alert_job() -> None:
                             continue
                         seen_news_urls.add(url)
                         summary = command.process_news_item_smart(symbol, item, user_name, user_id)
-                        message = f"🔔 重大新聞快訊：{symbol}\n━━━━━━━━━━━━━━\n{summary}"
+                        message = _truncate_ai_text(f"🔔 重大新聞快訊：{symbol}\n━━━━━━━━━━━━━━\n{summary}")
                         safe_send(user_id, message)
         except Exception as exc:
             logging.warning("major_news_alert_job failed: %s", exc)
+        finally:
+            gc.collect()
+            time.sleep(ALERT_NEWS_INTERVAL_SECONDS)
 
 
 def market_report_job() -> None:
@@ -704,16 +716,18 @@ def market_report_job() -> None:
                 if time_str == "09:00" and last_pre_report_day != day_str:
                     for user_id in database.get_all_user_ids():
                         user_name = database.get_user_display_name(user_id)
-                        safe_send(user_id, command.cmd_pre_market_report(user_name, user_id=user_id))
+                        safe_send(user_id, _truncate_ai_text(command.cmd_pre_market_report(user_name, user_id=user_id)))
                     last_pre_report_day = day_str
                 if time_str == "16:30" and last_post_report_day != day_str:
                     for user_id in database.get_all_user_ids():
                         user_name = database.get_user_display_name(user_id)
-                        safe_send(user_id, command.cmd_post_market_report(user_name, user_id=user_id))
+                        safe_send(user_id, _truncate_ai_text(command.cmd_post_market_report(user_name, user_id=user_id)))
                     last_post_report_day = day_str
         except Exception as exc:
             logging.warning("market_report_job error: %s", exc)
-        time.sleep(30)
+        finally:
+            gc.collect()
+            time.sleep(30)
 
 
 SNIPER_WATCH_ZONES: dict[str, dict[str, Any]] = {}
@@ -782,16 +796,21 @@ def sniper_alert_job() -> None:
                         logging.info(f"🎯 [SNIPER] 命中！{symbol} 觸發 {hit_type}")
                         user_name = database.get_user_display_name(user_id)
                         model_pref = database.get_user_model_preference(user_id)
-                        prompt = f"🚨 狙擊警報：{symbol} 已命中 {hit_type}！現價：{price}\n技術快照：\n{zone_info['snapshot']}\n請產出正式狙擊報表。"
+                        prompt = _truncate_ai_text(
+                            f"🚨 狙擊警報：{symbol} 已命中 {hit_type}！現價：{price}\n"
+                            f"技術快照：\n{zone_info['snapshot']}\n請產出正式狙擊報表。"
+                        )
                         ai_message = ai_core.ask_model(prompt, user_name, model=model_pref, user_id=user_id)
                         header = f"🚨 **【狙擊手警報：{symbol}】**\n結構共振：{hit_type}"
-                        safe_send(user_id, [header, ai_message])
+                        safe_send(user_id, [header, _truncate_ai_text(ai_message)])
                         sent_alerts.add(alert_key)
 
             if datetime.now().hour == 0 and datetime.now().minute < 20:
                 sent_alerts.clear()
         except Exception as exc:
             logging.warning("sniper_alert_job error: %s", exc)
+        finally:
+            gc.collect()
 
 
 def log_cleanup_job() -> None:

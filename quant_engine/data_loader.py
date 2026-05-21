@@ -5,6 +5,7 @@ import logging
 
 def get_long_term_data(ticker: str, years: int = 10) -> pd.DataFrame:
     """獲取長達 10 年的歷史資料，並計算長線指標。"""
+    years = max(1, min(int(years or 1), 8))
     try:
         # 使用 auto_adjust=True 自動處理股息與拆股，這是回測準確的關鍵
         df = yf.download(ticker, period=f"{years}y", interval="1d", progress=False, auto_adjust=True)
@@ -18,9 +19,12 @@ def get_long_term_data(ticker: str, years: int = 10) -> pd.DataFrame:
     if df.empty or 'Close' not in df.columns or len(df) < 50:
         return pd.DataFrame()
         
-    # 確保數據類型正確
+    # 確保數據類型正確並降低記憶體占用
     for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
         df[col] = pd.to_numeric(df[col], errors='coerce')
+    for col in ['Open', 'High', 'Low', 'Close']:
+        df[col] = df[col].astype('float32', copy=False)
+    df['Volume'] = df['Volume'].fillna(0).astype('float32', copy=False)
         
     df.dropna(subset=['Close', 'Volume'], inplace=True)
     
@@ -67,10 +71,14 @@ def get_long_term_data(ticker: str, years: int = 10) -> pd.DataFrame:
 
 def get_market_benchmark(years: int = 10) -> pd.DataFrame:
     """獲取大盤標竿 (SPY) 數據用於濾網。"""
+    years = max(1, min(int(years or 1), 8))
     try:
         df = yf.download("SPY", period=f"{years}y", interval="1d", progress=False, auto_adjust=True)
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.droplevel(1)
+        for col in ["Open", "High", "Low", "Close", "Volume"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").astype("float32", copy=False)
         df['SMA_200'] = df['Close'].rolling(200).mean()
         return df
     except Exception:

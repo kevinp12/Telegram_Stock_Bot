@@ -413,8 +413,10 @@ def generate_text(
     gc.collect()
     client = get_client()
 
-    # 若未來切換到 stateful chats.create()，請使用隨機 session_id 避免 collision
-    _session_id_hint = f"session_{uuid.uuid4().hex[:8]}"
+    # 會話唯一識別：避免雲端短時間重啟造成 session collision
+    _session_id_hint = f"session_{uuid.uuid4().hex[:12]}"
+    session_instruction = (system_instruction or "").strip()
+    session_instruction = f"{session_instruction}\n\n[internal_session_id={_session_id_hint}]" if session_instruction else f"[internal_session_id={_session_id_hint}]"
 
     # Module A: 歷史紀錄管理 (3-Day TTL + 輕量上限)
     now = time.time()
@@ -469,7 +471,7 @@ def generate_text(
                         model=clean_model,
                         contents=contents,
                         config=types.GenerateContentConfig(
-                            system_instruction=system_instruction or None,
+                            system_instruction=session_instruction,
                             temperature=temperature,
                             max_output_tokens=effective_max_tokens,
                         ),
