@@ -8,6 +8,7 @@ matplotlib.use('Agg')
 import logging
 import io
 import gc
+from collections import OrderedDict
 from datetime import datetime
 from typing import Any
 
@@ -19,7 +20,8 @@ from utils import get_matplotlib_cjk_rc, safe_round, setup_matplotlib_cjk_font
 
 
 # /tech 文字分析後的原始日K暫存，供同次請求繪圖復用，避免重抓資料
-_TECH_DF_CACHE: dict[str, pd.DataFrame] = {}
+_TECH_DF_CACHE_MAX_ITEMS = 24
+_TECH_DF_CACHE: OrderedDict[str, pd.DataFrame] = OrderedDict()
 
 
 def clear_tech_df_cache(symbol: str | None = None) -> None:
@@ -89,6 +91,7 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
     symbol = symbol.upper().strip()
     cached_df = _TECH_DF_CACHE.get(symbol)
     if cached_df is not None and not cached_df.empty:
+        _TECH_DF_CACHE.move_to_end(symbol)
         df = cached_df.copy()
     else:
         ticker = yf.Ticker(symbol)
@@ -722,12 +725,20 @@ def calculate_indicators(symbol: str) -> dict[str, Any]:
         # 抓取 1 年數據以確保有足夠樣本計算 EMA 200
         ticker = yf.Ticker(symbol)
         df = ticker.history(period="1y", interval="1d")
+        if not df.empty:
+            # 降低 cache 體積：只保留核心欄位
+            keep_cols = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
+            if keep_cols:
+                df = df[keep_cols].copy()
 
         if df.empty or len(df) < 20:
             return {"error": "數據不足，無法進行分析"}
 
         # 給圖表模組重用（同一個 /tech 請求就不必再抓一次）
         _TECH_DF_CACHE[symbol] = df.copy()
+        _TECH_DF_CACHE.move_to_end(symbol)
+        while len(_TECH_DF_CACHE) > _TECH_DF_CACHE_MAX_ITEMS:
+            _TECH_DF_CACHE.popitem(last=False)
 
         # 1. EMA 系統
         df["EMA21"] = df["Close"].ewm(span=21, adjust=False).mean()

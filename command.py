@@ -14,18 +14,15 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import psutil
-import yfinance as yf
 
 import ai_core
 import brain
 import database
 import frame
 import market_api
-import tech_indicators
 import utils
 from config import ADMIN_ID, BOT_START_TIME, VERSION
 from utils import safe_round
-from quant_engine import data_loader, strategy_long_term, backtest_core, monte_carlo, strategy_tech_combined
 
 STOCK_RE = re.compile(r"\b[A-Z0-9\.\-]{1,6}\b")
 FIN_COMPARE_STATE: dict[int, list[str]] = {}
@@ -929,6 +926,8 @@ def cmd_sweep(text: str, user_id: int) -> str:
 
 
 def cmd_ask(text: str, user_name: str, user_id: int) -> list[str] | str:
+    import tech_indicators
+
     parts = text.split(maxsplit=2)
     if len(parts) < 3:
         return "🤖 用法：/ask [代號] [問題]\n例如：/ask NVDA 現在是否過熱？"
@@ -1504,6 +1503,8 @@ def cmd_test(user_name: str = "User", user_id: int | None = None) -> str:
 
 def cmd_tech(text: str, user_id: int) -> str:
     """處理 /tech 指令，產出專業量化指標儀表板或對比報告。"""
+    import tech_indicators
+
     parts = text.split()
     if len(parts) < 2:
         return frame.tech_help_text()
@@ -1996,6 +1997,8 @@ def cmd_post_market_report(user_name: str = "User", user_id: int | None = None) 
 
 
 def handle_natural_language(text: str, user_name: str, user_id: int | None = None) -> str:
+    import tech_indicators
+
     syms = STOCK_RE.findall(text or "")
     symbol = syms[0].upper() if syms else None
 
@@ -2035,6 +2038,9 @@ def handle_natural_language(text: str, user_name: str, user_id: int | None = Non
 
 def cmd_backtest(message_text: str, user_id: int) -> str | list[str] | tuple[list[str], io.BytesIO | None]:
     """處理 /backtest 或 /bt 指令：支援多種策略模式。"""
+    # Lazy import：避免 bot 啟動時就載入重型量化模組，降低 idle RAM
+    from quant_engine import data_loader, strategy_long_term, backtest_core, strategy_tech_combined
+
     parts = message_text.split()
     
     # 1. 顯示教學 (如果沒輸入代號)
@@ -2182,6 +2188,9 @@ def cmd_backtest(message_text: str, user_id: int) -> str | list[str] | tuple[lis
 
 def cmd_simulator(message_text: str, user_id: int) -> str | list[str] | tuple[list[str], io.BytesIO | None]:
     """處理 /simulator 或 /sim 指令：蒙地卡羅價格預測。"""
+    # Lazy import：避免 bot 啟動時就載入重型量化模組，降低 idle RAM
+    from quant_engine import data_loader, monte_carlo
+
     parts = message_text.split()
     if len(parts) < 2:
         return [
