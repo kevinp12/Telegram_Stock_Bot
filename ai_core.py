@@ -544,33 +544,86 @@ def chat_with_user(
     user_id: int | None = None,
     model: str | None = None,
 ) -> str:
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    circuit_breaker_reply = "❌ 抱歉，目前無法取得該個股的最新實時市場數據，量化引擎已安全降級，請稍後重試。"
+
+    def _is_snapshot_broken(data: dict[str, Any] | None) -> bool:
+        if not isinstance(data, dict) or not data:
+            return True
+        if str(data.get("status", "")).strip().upper() == "DATA_FETCH_FAILED":
+            return True
+        if "DATA_FETCH_FAILED" in str(data):
+            return True
+        price = data.get("last_price", data.get("price", 0))
+        try:
+            if float(price or 0) == 0:
+                return True
+        except Exception:
+            return True
+        return False
+
+    # 後端數據斷路器：一旦判定失敗，直接回固定字串，完全不進 LLM。
+    if context_symbol and _is_snapshot_broken(snapshot):
+        return circuit_breaker_reply
+
+    # 1. 建立具有最高權威性的 System 指引，直接封死 AI 的主觀盲猜本能
+    system_instruction = f"""
+# 角色：機構級 AI 投資副官
+你是 {user_name} 的私人量化顧問，具備頂尖算力、冷靜、精準，語氣冷靜且極具特色。
+
+【當前時間死線】現在是西元 {current_time}。所有時間基準以此為準。
+
+=========================================
+⚠️ 【絕對數據死線（Hallucination Line）】
+=========================================
+1. 實時數據鐵律：你必須嚴格且唯一基於下方提供的「市場快照與量化指標」進行分析。
+2. 斷路器機制：如果下方市場快照資料為空、為 None、顯示 "DATA_FETCH_FAILED" 或者是無效字典，代表後端 Python 數據管道超時。
+3. 嚴禁編造：在管道超時或無數據的狀況下，你【被絕對禁止】利用自身常識盲猜、預測、或虛構任何即時價格、FVG 區間、POC 控制點或任何數字！你也【絕對不允許】向使用者道歉或演戲說正在刷新數據源。
+4. 唯一回覆限制：一旦判定管道斷裂，你必須【唯一且僅能】回覆以下字串，若多吐出任何一個字將被判定安全違規：
+   「{circuit_breaker_reply}」
+"""
+
+    # 2. 構造 Prompt 上下文
     if context_symbol:
+        symbol_upper = context_symbol.upper().strip()
+        # 防禦性硬攔截檢查
+        if _is_snapshot_broken(snapshot):
+            snapshot_str = "【⚠️ 系統通知：DATA_FETCH_FAILED - 實時數據抓取超時或個股代號無效】"
+        else:
+            snapshot_str = str(snapshot)
+
         prompt = f"""
-{user_name} 的自然語言問題：{query}
-偵測到股票代號：{context_symbol}
-市場快照：{snapshot or {}}
+{system_instruction}
 
-請轉為個股「簡述模式」。
-【要求】
-1. 使用條列式簡述。
-2. 包含 SMC 核心位、POC 參考。
-3. 內容精確，不需要過度展開，但要將話講完，絕對不要斷句。
+=========================================
+【當前對話環境 Context】
+=========================================
+• 使用者名稱：{user_name}
+• 偵測到股票代號：{symbol_upper}
+• 當前市場快照與量化指標：{snapshot_str}
+
+=========================================
+【使用者對話內容】
+=========================================
+{user_name} 說："{query}"
+
+=========================================
+【回覆規範（真人顧問級行為）】
+=========================================
+1. 延續前文話題：如果使用者說「那剛剛那個呢 / 繼續 / 然後呢」，請務必結合上下文記憶進行無縫承接。
+2. 答題架構：先冷靜、直接回答核心問題，隨後條列式補上 2-4 點精準的量化或戰術重點（必要時使用符號與縮排排版），最後給出【下一步追問方向】引導深度思考。
+3. 絕對完整性：嚴禁斷句、嚴禁吐出未完成的代碼塊或草草結束。保持簡練且完整。
 """.strip()
-        return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.38, max_output_tokens=1200)
+    else:
+        # 無偵測到個股代號的一般常規問題
+        prompt = f"""
+{system_instruction}
 
-    market_context = build_us_market_context() if _is_us_market_question(query) else ""
-    market_section = f"\n\n{market_context}\n" if market_context else ""
+【使用者通用問題】
+{user_name} 說："{query}"
 
-    prompt = f"""
-{user_name} 說：{query}
-{market_section}
-請以「機構級 AI 副官」身份回答。如果這是一般問題，請直接以最適合的角度給出清晰、專業且務實的回覆。
-回答要有特色，語氣冷靜且精準。
-【要求】
-1. 可自然延續前文話題；若使用者說「那剛剛那個呢 / 繼續 / 然後呢」，請根據 3 天內對話記憶承接。
-2. 若問題涉及美股大漲/大跌，只能依上方大盤快照解釋；資料不足時明確說「目前只能判斷方向，不能硬編新聞」。
-3. 基本應答要像真人顧問：先直接回答，再補 2-4 點重點，最後可給下一步追問方向。
-4. 絕對完整性：嚴禁斷句或草草結束。
-5. 保持簡練且完整，必要時可用符號與縮排排版。
+【回覆規範】
+請直接以最適合、最專業且務實的機構角度給出清晰、精準的回覆。先直接回答，再補 2-4 點重點，最後給出下一步追問方向。嚴禁斷句，保持冷靜而有特色的語氣。
 """.strip()
-    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.45, max_output_tokens=1200)
+
+    return ask_model(prompt, user_name, model=model, user_id=user_id, temperature=0.4, max_output_tokens=1200)

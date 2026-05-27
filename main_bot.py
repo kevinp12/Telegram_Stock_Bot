@@ -11,7 +11,7 @@ import sys
 import threading
 import time
 import gc
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -188,9 +188,13 @@ def normalize_loose_command_text(text: str) -> str:
 
 def read_hidden_log_lines(line_count: int = 40) -> list[str]:
     try:
+        buffer: deque[str] = deque(maxlen=max(1, int(line_count)))
         with open(GEMINI_AUDIT_LOG_PATH, "r", encoding="utf-8") as handle:
-            lines = [line.rstrip() for handle_line in handle.readlines() if (line := handle_line.strip())]
-        return lines[-line_count:]
+            for raw in handle:
+                line = raw.strip()
+                if line:
+                    buffer.append(line)
+        return list(buffer)
     except FileNotFoundError:
         return []
     except Exception as exc:

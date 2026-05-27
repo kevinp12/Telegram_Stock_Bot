@@ -20,7 +20,7 @@ from utils import get_matplotlib_cjk_rc, safe_round, setup_matplotlib_cjk_font
 
 
 # /tech 文字分析後的原始日K暫存，供同次請求繪圖復用，避免重抓資料
-_TECH_DF_CACHE_MAX_ITEMS = 24
+_TECH_DF_CACHE_MAX_ITEMS = 5
 _TECH_DF_CACHE: OrderedDict[str, pd.DataFrame] = OrderedDict()
 
 
@@ -81,7 +81,6 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
     try:
         import mplfinance as mpf
         import matplotlib as mpl
-        import matplotlib.pyplot as plt
     except Exception as exc:
         raise RuntimeError("缺少 mplfinance 套件，請先安裝 requirements.txt") from exc
 
@@ -243,7 +242,7 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
         ylabel="價格",
         ylabel_lower="成交量",
         returnfig=True,
-        closefig=True,
+        closefig=False,
     )
     fig.set_dpi(safe_dpi)
 
@@ -406,9 +405,10 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
         return buf
     finally:
         try:
-            plt.close(fig)
+            fig.clf()
         except Exception:
             pass
+        del fig
         gc.collect()
 
 

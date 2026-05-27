@@ -995,14 +995,14 @@ def generate_professional_chart(df: pd.DataFrame, symbol: str, theme: str = "dar
     try:
         import matplotlib as mpl
         mpl.use('Agg')
-        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        from matplotlib.figure import Figure
         from matplotlib.ticker import FuncFormatter
     except Exception:
         return None
 
     setup_matplotlib_cjk_font(mpl)
     is_light = str(theme).lower() == "light"
-    plt.style.use('default' if is_light else 'dark_background')
 
     # 高級配色池 (鮮豔版)
     COLOR_REV = '#26C6DA'     # 深松石綠
@@ -1016,15 +1016,13 @@ def generate_professional_chart(df: pd.DataFrame, symbol: str, theme: str = "dar
     badge_bg = '#FFFFFF' if is_light else 'black'
     badge_alpha = 0.78 if is_light else 0.5
 
-    # 建立 3x1 垂直佈局
-    fig, (ax0, ax1, ax2) = plt.subplots(3, 1, figsize=(12, 18), facecolor=bg_color, gridspec_kw={'height_ratios': [1, 1, 1]})
-    mpl.rcParams.update({
-        'axes.titlesize': 22,
-        'axes.labelsize': 17,
-        'xtick.labelsize': 15,
-        'ytick.labelsize': 15,
-        'legend.fontsize': 14,
-    })
+    # 建立 3x1 垂直佈局（Pure OOP Figure）
+    fig = Figure(figsize=(12, 18), facecolor=bg_color)
+    FigureCanvasAgg(fig)
+    gs = fig.add_gridspec(3, 1, height_ratios=[1, 1, 1])
+    ax0 = fig.add_subplot(gs[0])
+    ax1 = fig.add_subplot(gs[1])
+    ax2 = fig.add_subplot(gs[2])
     
     def format_money(y, pos):
         """自適應金額格式化，移除科學記號"""
@@ -1125,11 +1123,11 @@ def generate_professional_chart(df: pd.DataFrame, symbol: str, theme: str = "dar
     for ax in (ax0, ax1, ax2, ax1_r):
         ax.set_facecolor(bg_color)
 
-    plt.tight_layout(pad=4.0)
+    fig.tight_layout(pad=4.0)
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=300, facecolor=bg_color)
+    fig.savefig(buf, format='png', dpi=300, facecolor=bg_color)
     buf.seek(0)
-    plt.close(fig)
+    fig.clf()
     return buf
 
 
@@ -1157,7 +1155,8 @@ def generate_fin_compare_chart_buffer(symbols: list[str]) -> io.BytesIO | None:
     try:
         import matplotlib as mpl
         mpl.use('Agg') # 確保使用非互動式後端
-        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        from matplotlib.figure import Figure
         import numpy as np
     except Exception as exc:
         logging.warning("matplotlib unavailable for fin compare chart: %s", exc)
@@ -1180,7 +1179,9 @@ def generate_fin_compare_chart_buffer(symbols: list[str]) -> io.BytesIO | None:
         ni_vals.append(_avg([float(r.get("net_income") or 0) for r in rows]))
         margin_vals.append(_avg([float(r.get("net_margin") or 0) for r in rows]))
 
-    fig, axes = plt.subplots(1, 3, figsize=(14, 5), constrained_layout=True)
+    fig = Figure(figsize=(14, 5), constrained_layout=True)
+    FigureCanvasAgg(fig)
+    axes = fig.subplots(1, 3)
     fig.patch.set_facecolor("#0B1020")
     for ax in axes:
         ax.set_facecolor("#0F172A")
@@ -1212,7 +1213,7 @@ def generate_fin_compare_chart_buffer(symbols: list[str]) -> io.BytesIO | None:
     fig.suptitle("/fin compare Merged Financial Comparison", color="#F8FAFC", fontsize=13)
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=150)
-    plt.close(fig)
+    fig.clf()
     buf.seek(0)
     return buf
 

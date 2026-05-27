@@ -161,7 +161,8 @@ def generate_simulation_chart(price_paths: np.ndarray, current_price: float, tic
     """生成具有漸變置信區間的蒙地卡羅模擬路徑圖。"""
     try:
         import matplotlib as mpl
-        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        from matplotlib.figure import Figure
         from utils import setup_matplotlib_cjk_font
     except ImportError:
         return None
@@ -176,7 +177,9 @@ def generate_simulation_chart(price_paths: np.ndarray, current_price: float, tic
     
     fig = None
     try:
-        fig, ax = plt.subplots(figsize=(12, 8), facecolor=bg_color)
+        fig = Figure(figsize=(12, 8), facecolor=bg_color)
+        FigureCanvasAgg(fig)
+        ax = fig.add_subplot(111)
         ax.set_facecolor(bg_color)
 
         days = price_paths.shape[0]
@@ -214,7 +217,10 @@ def generate_simulation_chart(price_paths: np.ndarray, current_price: float, tic
         return buf
     finally:
         if fig is not None:
-            plt.close(fig)
+            try:
+                fig.clf()
+            except Exception:
+                pass
 
 
 def release_simulation_memory(price_paths: np.ndarray | None) -> None:

@@ -134,8 +134,9 @@ def generate_backtest_chart(df: pd.DataFrame, ticker: str, theme: str = "dark") 
     """生成美觀的回測圖表 (淨值曲線 + 回向回撤)。"""
     try:
         import matplotlib as mpl
-        import matplotlib.pyplot as plt
         from matplotlib.gridspec import GridSpec
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        from matplotlib.figure import Figure
         from utils import setup_matplotlib_cjk_font
     except ImportError:
         return None
@@ -152,7 +153,8 @@ def generate_backtest_chart(df: pd.DataFrame, ticker: str, theme: str = "dark") 
     
     fig = None
     try:
-        fig = plt.figure(figsize=(14, 9), facecolor=bg_color)
+        fig = Figure(figsize=(14, 9), facecolor=bg_color)
+        FigureCanvasAgg(fig)
         gs = GridSpec(2, 1, height_ratios=[3, 1], hspace=0.15)
 
         # 1. 權益曲線
@@ -203,4 +205,7 @@ def generate_backtest_chart(df: pd.DataFrame, ticker: str, theme: str = "dark") 
         return buf
     finally:
         if fig is not None:
-            plt.close(fig)
+            try:
+                fig.clf()
+            except Exception:
+                pass

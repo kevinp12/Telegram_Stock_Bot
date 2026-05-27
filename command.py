@@ -21,7 +21,7 @@ import database
 import frame
 import market_api
 import utils
-from config import ADMIN_ID, BOT_START_TIME, VERSION
+from config import ADMIN_ID, BOT_START_TIME, MAX_TELEGRAM_MESSAGE_LENGTH, VERSION
 from utils import safe_round
 
 STOCK_RE = re.compile(r"\b[A-Z0-9\.\-]{1,6}\b")
@@ -91,19 +91,31 @@ def _render_user_logs_content(target: dict, logs: list[dict], page: int, total_p
     if not logs:
         return ["\n".join(header + ["\n目前沒有 7 天內的暫存紀錄。", "\n💡 user.log 為 7 天暫存，重啟不會清空。"])]
 
-    # 批量發送：將 20 筆紀錄合併為一段或少數幾段文字，減少洗版
-    text_entries = ["\n".join(header)]
+    # 批量發送：避免單段超長，硬限制在 Telegram 上限內
+    chunk_limit = min(int(MAX_TELEGRAM_MESSAGE_LENGTH), 3800)
+    text_blocks: list[str] = []
+    current_block = "\n".join(header)
     photo_items = []
 
     for idx, row in enumerate(logs, start=1):
         answer = str(row.get("answer", "") or "").strip()
-        answer_block = f"\nA：{_clip_text(answer, 900)}" if answer else ""
+        answer_block = f"\nA：{_clip_text(answer, 700)}" if answer else ""
         log_entry = (
             f"\n#{idx}｜{row.get('created_at', '')}｜{row.get('source', 'text')}\n"
-            f"Q：{_clip_text(str(row.get('question', '')), 500)}"
+            f"Q：{_clip_text(str(row.get('question', '')), 360)}"
             f"{answer_block}"
         )
-        text_entries.append(log_entry)
+        if len(current_block) + len(log_entry) + 1 > chunk_limit:
+            text_blocks.append(current_block)
+            current_block = "\n".join(
+                [
+                    "🔐 使用者問答紀錄（續）",
+                    "━━━━━━━━━━━━━━",
+                    _format_admin_user(target),
+                    f"📄 第 {page}/{total_pages} 頁",
+                ]
+            )
+        current_block += log_entry
 
         # 若有 file_id 則加入 photo 項目供 Bot 轉發
         file_id = row.get("file_id")
@@ -114,10 +126,11 @@ def _render_user_logs_content(target: dict, logs: list[dict], page: int, total_p
                 "caption": f"#{idx} 歷史圖表: {row.get('question', '')[:50]}"
             })
 
-    # 合併文字部分
-    combined_text = "\n".join(text_entries)
-    # 返回 [文字區塊, 圖片1, 圖片2, ...]
-    return [combined_text] + photo_items
+    if current_block.strip():
+        text_blocks.append(current_block)
+
+    # 返回 [文字區塊1, 文字區塊2, 圖片1, 圖片2, ...]
+    return text_blocks + photo_items
 
 
 def cmd_ulog(text: str, user_id: int) -> str | list[str | dict]:
@@ -1805,7 +1818,8 @@ def _generate_month_calendar_image(events: list[dict[str, str]], generated_at: s
     try:
         import matplotlib as mpl
         mpl.use("Agg")
-        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        from matplotlib.figure import Figure
     except Exception:
         return None
 
@@ -1837,8 +1851,10 @@ def _generate_month_calendar_image(events: list[dict[str, str]], generated_at: s
                 row.append(f"{d}\n{tags}" if tags else str(d))
         table_data.append(row)
 
-    # 放大輸出，貼近 Telegram 大圖展示
-    fig, ax = plt.subplots(figsize=(18, 13), facecolor="#0B1020")
+    # 放大輸出，貼近 Telegram 大圖展示（純 Figure OOP）
+    fig = Figure(figsize=(18, 13), facecolor="#0B1020")
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111)
     ax.axis("off")
     title = f"美股重大事件月曆 {year}年{month:02d}月"
     fig.text(0.01, 0.98, f"生成時間：{generated_at}", color="#E2E8F0", fontsize=12, va="top", ha="left")
@@ -1867,8 +1883,8 @@ def _generate_month_calendar_image(events: list[dict[str, str]], generated_at: s
                 cell.set_text_props(color="#CBD5E1")
 
     buf = io.BytesIO()
-    plt.savefig(buf, format="png", dpi=260, bbox_inches="tight", facecolor="#0B1020")
-    plt.close(fig)
+    fig.savefig(buf, format="png", dpi=260, bbox_inches="tight", facecolor="#0B1020")
+    fig.clf()
     buf.seek(0)
     return buf
 
