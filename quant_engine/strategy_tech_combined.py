@@ -5,15 +5,15 @@ from . import data_loader
 
 
 BT_MODEL_TEMPLATES = {
-    1: {"name": "保守", "min_pos": 0.2, "mid_pos": 0.4, "max_pos": 0.6, "hard_stop": 0.88},
-    2: {"name": "普通", "min_pos": 0.2, "mid_pos": 0.5, "max_pos": 0.8, "hard_stop": 0.85},
-    3: {"name": "激進", "min_pos": 0.2, "mid_pos": 0.6, "max_pos": 0.8, "hard_stop": 0.82},
+    1: {"name": "保守", "min_pos": 0.2, "mid_pos": 0.45, "max_pos": 0.65, "hard_stop": 0.86, "min_hold": 75},
+    2: {"name": "普通", "min_pos": 0.25, "mid_pos": 0.55, "max_pos": 0.85, "hard_stop": 0.83, "min_hold": 90},
+    3: {"name": "激進", "min_pos": 0.3, "mid_pos": 0.65, "max_pos": 0.9, "hard_stop": 0.80, "min_hold": 105},
 }
 
 def calculate_tech_signals(df: pd.DataFrame, model_id: int = 2) -> pd.DataFrame:
     """
     將 /tech 指標升級為「波段趨勢策略」：
-    保留精確進場，但出場改為長均線 + MACD 確認，並加入 60 天鎖倉與極端停損。
+    放寬進場條件以增加交易次數，出場改為長均線 + MACD 確認，並拉長鎖倉期。
     """
     if len(df) < 150:
         return pd.DataFrame()
@@ -42,20 +42,27 @@ def calculate_tech_signals(df: pd.DataFrame, model_id: int = 2) -> pd.DataFrame:
     df['RSI'] = 100 - (100 / (1 + rs))
     
     df['FVG_Bull'] = df['Low'] > df['High'].shift(2)
+    df['Breakout_20'] = df['Close'] >= df['High'].rolling(20).max().shift(1) * 0.995
+    df['Momentum_Recover'] = (df['EMA10'] > df['EMA20']) & (df['MACD'] > df['MACD'].shift(3))
     
     # 大盤濾網
     spy_df = data_loader.get_market_benchmark(years=12)
     df['Market_Filter'] = True
     if not spy_df.empty:
-        spy_filter = spy_df['Close'] > spy_df['SMA_200']
+        # 大盤濾網放寬：SPY 站上 SMA200，或跌破但短期動能正在修復，也允許個股訊號觸發。
+        spy_filter = (spy_df['Close'] > spy_df['SMA_200']) | (spy_df['Close'] > spy_df['Close'].rolling(20).mean())
         df['Market_Filter'] = spy_filter.reindex(df.index, method='ffill').fillna(True)
 
     # --- 進場邏輯 ---
-    cond_ema_trend = (df['EMA20'] > df['EMA50']) & (df['Close'] > df['EMA20'])
-    cond_fvg = df['FVG_Bull'].rolling(5).max() > 0
-    cond_rsi_safe = df['RSI'] < 70
+    cond_ema_trend = (
+        ((df['EMA20'] > df['EMA50']) & (df['Close'] > df['EMA20'] * 0.985))
+        | ((df['EMA10'] > df['EMA20']) & (df['Close'] > df['EMA50'] * 0.97))
+    )
+    cond_fvg = df['FVG_Bull'].rolling(10).max() > 0
+    cond_breakout_or_momentum = df['Breakout_20'] | df['Momentum_Recover']
+    cond_rsi_safe = df['RSI'] < 78
     
-    df['Raw_Buy_Signal'] = cond_ema_trend & cond_fvg & cond_rsi_safe & df['Market_Filter']
+    df['Raw_Buy_Signal'] = cond_ema_trend & (cond_fvg | cond_breakout_or_momentum) & cond_rsi_safe & df['Market_Filter']
     
     # --- 執行模擬 (自動市況切換：20%~80%，大熊市才接近空手) ---
     df['Position_Size'] = 0.0
@@ -69,6 +76,7 @@ def calculate_tech_signals(df: pd.DataFrame, model_id: int = 2) -> pd.DataFrame:
     max_pos = float(model["max_pos"])
     bear_pos = 0.0
     hard_stop_ratio = float(model["hard_stop"])
+    min_hold_days = int(model.get("min_hold", 90))
     
     for i in range(150, len(df) - 1):
         market_ok = df.iat[i, df.columns.get_loc('Market_Filter')]
@@ -133,13 +141,13 @@ def calculate_tech_signals(df: pd.DataFrame, model_id: int = 2) -> pd.DataFrame:
             # 2) 偏多/趨勢在：50%
             # 3) 中性：20%
             # 4) 大熊市且滿足條件：0%
-            # 買入後至少持有 60 個交易日，除非跌破 -15% 極端停損。
+            # 買入後至少持有 75~105 個交易日，除非觸發極端停損。
             if hard_stop:
                 in_position = False
                 df.iat[i+1, df.columns.get_loc('Position_Size')] = 0
             elif df.iat[i, df.columns.get_loc('Raw_Buy_Signal')] and (trend_ok or bull_market):
                 df.iat[i+1, df.columns.get_loc('Position_Size')] = max_pos
-            elif bear_market and holding_days >= 60 and long_exit:
+            elif bear_market and holding_days >= min_hold_days and long_exit:
                 in_position = False
                 df.iat[i+1, df.columns.get_loc('Position_Size')] = 0
             elif bull_market or trend_ok:

@@ -1395,148 +1395,48 @@ def on_text(m):
     if not text:
         return
 
-    # 補強：讓 ./bc、/ bc、./sweep 等輸入也可正常觸發
+    # 補強：讓 ./bc、/ bc、./sweep、/ status、./op 等寬鬆輸入
+    # 全部回到既有 handler，確保 loading 顯示與自動刪除行為一致。
     if text.startswith("/"):
-        user_id, user_name = register_user(m)
-        lowered = text.lower()
-
-        if lowered.startswith("/now"):
-            record_user_log_safely(user_id, user_name, get_username(m), text, source="/now")
-            result = command.cmd_now(user_id, user_name)
-            if isinstance(result, (list, tuple)):
-                send_paged_message(m.chat.id, result)
-            else:
-                reply(m, result)
-            return
-        if lowered.startswith("/tech"):
-            if not try_acquire_heavy_task(m, user_id, "tech_text"):
+        cmd_name = text[1:].split(maxsplit=1)[0].lower() if len(text) > 1 else ""
+        if cmd_name:
+            m.text = text
+            handler_map = {
+                "help": on_help,
+                "now": on_now,
+                "list": on_list,
+                "buy": on_buy,
+                "sell": on_sell,
+                "watch": on_watch,
+                "sweep": on_sweep,
+                "news": on_news,
+                "fin": on_fin,
+                "whale": on_whale,
+                "quota": on_quota,
+                "bc": on_bc,
+                "data": on_data,
+                "ask": on_ask,
+                "theory": on_theory,
+                "calendar": on_calendar,
+                "status": on_status,
+                "op": on_op,
+                "log": on_log,
+                "ulog": on_ulog,
+                "tech": on_tech,
+                "chart": on_chart,
+                "risk": on_risk,
+                "marco": on_marco,
+                "bt": on_backtest,
+                "backtest": on_backtest,
+                "sim": on_simulator,
+                "simulator": on_simulator,
+            }
+            handler = handler_map.get(cmd_name)
+            if handler:
+                handler(m)
                 return
-            record_user_log_safely(user_id, user_name, get_username(m), text, source="/tech")
-            try:
-                result = command.cmd_tech(text, user_id)
-                if isinstance(result, (list, tuple)):
-                    send_paged_message(m.chat.id, result)
-                else:
-                    reply(m, result)
-                maybe_send_tech_chart(m.chat.id, text, user_id=user_id, user_name=user_name, username=get_username(m))
-            finally:
-                release_heavy_task()
-            return
-        if lowered.startswith("/chart"):
-            record_user_log_safely(user_id, user_name, get_username(m), text, source="/chart")
-            parts = text.split()
-            if len(parts) >= 2 and parts[1].strip().lower() == "theme":
-                if len(parts) == 3 and parts[2].strip().lower() in {"dark", "light"}:
-                    selected = parts[2].strip().lower()
-                    _USER_CHART_THEME[user_id] = selected
-                    reply(m, f"✅ 圖表主題已切換為：`{selected}`\n之後 `/chart [代號]` 會自動套用。")
-                else:
-                    reply(m, "❌ 用法：`/chart theme [dark|light]`\n例如：`/chart theme dark`")
-                return
 
-            theme = _USER_CHART_THEME.get(user_id, "dark")
-            if len(parts) == 3 and parts[2].strip().lower() in {"dark", "light"}:
-                theme = parts[2].strip().lower()
-            maybe_send_tech_chart(m.chat.id, text, cmd_prefix="/chart", user_id=user_id, user_name=user_name, username=get_username(m), theme=theme)
-            return
-        if lowered.startswith("/news"):
-            record_user_log_safely(user_id, user_name, get_username(m), text, source="/news")
-            status_msg = bot.reply_to(m, "📰 正在搜尋最新新聞與 AI 分析...")
-            try:
-                msgs = command.cmd_news(text, user_name, user_id)
-                if msgs:
-                    send_paged_message(m.chat.id, msgs)
-            except Exception as exc:
-                logging.error("News command failed: %s", exc)
-                safe_send(m.chat.id, f"❌ 新聞查詢異常：{exc}")
-            finally:
-                delete_loading_safe(m, status_msg)
-            return
-        if lowered.startswith("/risk"):
-            record_user_log_safely(user_id, user_name, get_username(m), text, source="/risk")
-            reply(m, command.cmd_risk(user_id=user_id, user_name=user_name))
-            return
-        if lowered.startswith("/marco"):
-            record_user_log_safely(user_id, user_name, get_username(m), text, source="/marco")
-            send_paged_message(m.chat.id, command.cmd_marco(user_id=user_id, user_name=user_name))
-            return
-        if lowered.startswith("/calendar"):
-            record_user_log_safely(user_id, user_name, get_username(m), text, source="/calendar")
-            status_msg = bot.reply_to(m, "🗓️ 正在彙整宏觀事件與財報日曆...")
-            try:
-                pages, cal_img = command.cmd_calendar(user_id, user_name)
-                if isinstance(pages, (list, tuple)):
-                    send_paged_message(m.chat.id, pages)
-                else:
-                    reply(m, pages)
-                if cal_img is not None:
-                    safe_send(m.chat.id, "🖼️ 以下為當月美股事件行事曆（含生成時間）")
-                    bot.send_photo(m.chat.id, photo=cal_img, caption="US Market Calendar")
-            except Exception as exc:
-                logging.error("Calendar command failed: %s", exc)
-                safe_send(m.chat.id, f"❌ /calendar 執行失敗：{exc}")
-            finally:
-                delete_loading_safe(m, status_msg)
-            return
-        if lowered.startswith("/fin"):
-            if not try_acquire_heavy_task(m, user_id, "fin_text"):
-                return
-            record_user_log_safely(user_id, user_name, get_username(m), text, source="/fin")
-            try:
-                result = command.cmd_fin(text, user_id)
-                if isinstance(result, (list, tuple)):
-                    send_paged_message(m.chat.id, result)
-                else:
-                    reply(m, result)
-                parts = text.split()
-                if len(parts) >= 2 and parts[1].lower() == "compare":
-                    maybe_send_fin_compare_chart(m.chat.id, text, user_id=user_id, user_name=user_name, username=get_username(m))
-                else:
-                    theme = _USER_CHART_THEME.get(user_id, "dark")
-                    maybe_send_fin_chart(m.chat.id, text, theme=theme, user_id=user_id, user_name=user_name, username=get_username(m))
-            finally:
-                release_heavy_task()
-            return
-        if lowered.startswith("/whale"):
-            record_user_log_safely(user_id, user_name, get_username(m), text, source="/whale")
-            status_msg = bot.reply_to(m, "🐋 正在抓取內部人與機構持倉資料...")
-            try:
-                result = command.cmd_whale(text, user_id)
-                if result is not None:
-                    reply(m, result)
-            except Exception as exc:
-                logging.error("Whale command failed: %s", exc)
-                safe_send(m.chat.id, f"⚠️ 鯨魚情報查詢失敗：{exc}")
-            finally:
-                delete_loading_safe(m, status_msg)
-            return
-
-        if lowered.startswith("/bc"):
-            reply(m, command.cmd_bc(text, user_id))
-            return
-        if lowered.startswith("/sweep"):
-            reply(m, command.cmd_sweep(text, user_id))
-            return
-        if lowered.startswith("/data") or lowered == "/data clear":
-            reply(m, command.cmd_data_clear(text, user_id))
-            return
-        if lowered.startswith("/help"):
-            send_paged_message(m.chat.id, command.frame.help_text())
-            return
-        if lowered.startswith("/theory"):
-            record_user_log_safely(user_id, user_name, get_username(m), text, source="/theory")
-            result = command.cmd_theory(text)
-            if isinstance(result, (list, tuple)):
-                send_paged_message(m.chat.id, result)
-            else:
-                reply(m, result)
-            return
-        if lowered.startswith("/ulog"):
-            record_user_log_safely(user_id, user_name, get_username(m), text, source="/ulog")
-            reply(m, command.cmd_ulog(text, user_id))
-            return
-
-        # 其他斜線指令交由既有 command handler，這裡直接略過
+        # 其他斜線指令：保留原行為，避免被當成自然語言
         return
 
     user_id, user_name = register_user(m)

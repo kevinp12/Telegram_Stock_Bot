@@ -149,6 +149,7 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
 
     # 最近一組「尚未完全填補」FVG 區
     fvg_zone = None
+    fvg_zone_dir = ""
     fvg_candidates = detect_recent_fvgs(df, lookback=min(60, len(df) - 2))
     for fvg in fvg_candidates:
         low_b = float(fvg.get("low_b", 0) or 0)
@@ -161,6 +162,7 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
             filled = bool((after["High"] >= high_b).any()) if not after.empty else False
         if not filled:
             fvg_zone = (low_b, high_b)
+            fvg_zone_dir = str(fvg.get("direction") or "")
             break
 
     fill_between = None
@@ -291,15 +293,21 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
     price_ax.text(0.01, 0.92, "均線 MA20", transform=price_ax.transAxes, ha="left", va="top", fontsize=9.5, color="#FFD166", weight="bold", bbox=dict(facecolor="#1F2937", alpha=0.42, edgecolor="none", boxstyle="round,pad=0.18"))
     price_ax.text(0.01, 0.87, "均線 EMA50", transform=price_ax.transAxes, ha="left", va="top", fontsize=9.5, color="#FF4D9D", weight="bold", bbox=dict(facecolor="#1F2937", alpha=0.42, edgecolor="none", boxstyle="round,pad=0.18"))
     price_ax.text(0.01, 0.82, "錨定 VWAP", transform=price_ax.transAxes, ha="left", va="top", fontsize=9.5, color="#C7CED6", weight="bold", bbox=dict(facecolor="#1F2937", alpha=0.42, edgecolor="none", boxstyle="round,pad=0.18"))
-
-    # 在 FVG 藍色區間中間加上 FVG 字樣
+    # 在 FVG 藍色區間中間加上看漲/看跌 FVG 字樣
     if fvg_zone:
+        fvg_label = "看漲 FVG" if fvg_zone_dir == "BULLISH" else "看跌 FVG" if fvg_zone_dir == "BEARISH" else "FVG"
         zl, zh = fvg_zone
         # 移至圖表水平正中央
         price_ax.text(
-            len(df_plot) // 2, (zl + zh) / 2, "FVG",
-            color="#2D6CDF", fontsize=9, weight="bold",
-            ha="center", va="center", alpha=0.7
+            len(df_plot) // 2,
+            (zl + zh) / 2,
+            fvg_label,
+            color="#2D6CDF",
+            fontsize=9,
+            weight="bold",
+            ha="center",
+            va="center",
+            bbox=dict(facecolor="white", alpha=0.65, edgecolor="#2D6CDF", boxstyle="round,pad=0.18"),
         )
 
     # 成交量座標改成 K/M/B 單位
@@ -586,14 +594,19 @@ def build_confluence_signal(
     tdst: dict[str, Any],
     atr: float,
     last_price: float,
+    macd_status: str,
+    td_status: str,
+    sweep_status: str,
+    volume_price_judgement: str,
 ) -> dict[str, Any]:
-    """建立 TDST × FVG × MA 趨勢濾網的共振交易訊號。"""
+    """建立右側交易共振：TDST × FVG × MA + MACD/TD + 量價 + Sweep。"""
     tolerance = max(float(atr or 0) * 0.15, float(last_price or 0) * 0.002)
 
     def _empty_payload(reason: str) -> dict[str, Any]:
         return {
             "signal_type": "NONE",
             "direction": "NONE",
+            "score": 0,
             "entry_zone": None,
             "entry_zone_text": "N/A",
             "stop_loss": None,
@@ -606,6 +619,7 @@ def build_confluence_signal(
     empty_signal = {
         "signal_type": "NONE",
         "direction": "NONE",
+        "score": 0,
         "entry_zone": None,
         "entry_zone_text": "N/A",
         "stop_loss": None,
@@ -621,15 +635,26 @@ def build_confluence_signal(
     zone_low = float(current_fvg["low_b"])
     zone_high = float(current_fvg["high_b"])
 
+    macd_bull = "黃金交叉" in str(macd_status) or "多頭" in str(macd_status)
+    macd_bear = "死亡交叉" in str(macd_status) or "空頭" in str(macd_status)
+    td_bull = ("下跌TD9" in str(td_status)) or ("TD 序列中立" in str(td_status))
+    td_bear = ("上漲TD9" in str(td_status)) or ("TD 序列中立" in str(td_status))
+    vol_bull = any(k in str(volume_price_judgement) for k in ["放量上漲", "價漲量平", "量縮價漲"])
+    vol_bear = any(k in str(volume_price_judgement) for k in ["放量下跌", "價跌量平", "量縮價跌"])
+    sweep_bull = "看漲流動性掃蕩" in str(sweep_status)
+    sweep_bear = "看跌流動性掃蕩" in str(sweep_status)
+
     if ma_filter.get("bullish") and current_fvg.get("direction") == "BULLISH":
         support = tdst.get("support")
         if support and support.get("valid"):
             support_price = float(support["price"])
             near, distance = _level_near_zone(support_price, zone_low, zone_high, tolerance)
-            if near:
+            long_score = sum([1, 1, 1 if near else 0, 1 if macd_bull else 0, 1 if td_bull else 0, 1 if vol_bull else 0, 1 if sweep_bull else 0])
+            if near and macd_bull and td_bull and vol_bull and sweep_bull:
                 return {
                     "signal_type": "STRONG_LONG",
                     "direction": "LONG",
+                    "score": int(long_score),
                     "entry_zone": {
                         "low": safe_round(zone_low, 2),
                         "high": safe_round(zone_high, 2),
@@ -641,10 +666,33 @@ def build_confluence_signal(
                     "tolerance": safe_round(tolerance, 2),
                     "confluence_ok": True,
                     "reasons": [
-                        "MA20/50/200 多頭排列，僅尋找做多訊號。",
+                        "MA20/50/200 多頭排列，右側只做多。",
                         f"當前 K 棒形成看漲 FVG：{current_fvg.get('range')}",
+                        f"MACD 多頭 + TD 反轉支援 + 量價偏多（{volume_price_judgement}）。",
+                        f"出現看漲掃蕩確認：{sweep_status}。",
                         f"有效 TDST 支撐 {safe_round(support_price, 2)} 落在或貼近 FVG（距離 {safe_round(distance, 2)}）。",
-                        "進場規劃：可於 FVG 區間內分批掛單做多。",
+                        "進場規劃：右側等待回踩 FVG 區間不破，再分批做多。",
+                    ],
+                }
+            if long_score >= 4:
+                return {
+                    "signal_type": "WATCH_LONG",
+                    "direction": "LONG",
+                    "score": int(long_score),
+                    "entry_zone": {
+                        "low": safe_round(zone_low, 2),
+                        "high": safe_round(zone_high, 2),
+                        "text": _format_price_zone(zone_low, zone_high),
+                    },
+                    "entry_zone_text": _format_price_zone(zone_low, zone_high),
+                    "stop_loss": safe_round(zone_low - max(float(atr or 0) * 0.5, tolerance), 2),
+                    "tdst_level": safe_round(support_price, 2),
+                    "tolerance": safe_round(tolerance, 2),
+                    "confluence_ok": False,
+                    "reasons": [
+                        f"目前屬 WATCH_LONG（積分 {int(long_score)}/7），尚未達 STRONG_LONG。",
+                        f"FVG 區間：{current_fvg.get('range')}；建議等待掃蕩/MACD/量價再共振。",
+                        "倉位建議：偏向 B/C 區分批，不追 A 區。",
                     ],
                 }
 
@@ -653,10 +701,12 @@ def build_confluence_signal(
         if resistance and resistance.get("valid"):
             resistance_price = float(resistance["price"])
             near, distance = _level_near_zone(resistance_price, zone_low, zone_high, tolerance)
-            if near:
+            short_score = sum([1, 1, 1 if near else 0, 1 if macd_bear else 0, 1 if td_bear else 0, 1 if vol_bear else 0, 1 if sweep_bear else 0])
+            if near and macd_bear and td_bear and vol_bear and sweep_bear:
                 return {
                     "signal_type": "STRONG_SHORT",
                     "direction": "SHORT",
+                    "score": int(short_score),
                     "entry_zone": {
                         "low": safe_round(zone_low, 2),
                         "high": safe_round(zone_high, 2),
@@ -668,10 +718,33 @@ def build_confluence_signal(
                     "tolerance": safe_round(tolerance, 2),
                     "confluence_ok": True,
                     "reasons": [
-                        "MA20/50/200 空頭排列，僅尋找做空訊號。",
+                        "MA20/50/200 空頭排列，右側只做空。",
                         f"當前 K 棒形成看跌 FVG：{current_fvg.get('range')}",
+                        f"MACD 空頭 + TD 反轉支援 + 量價偏空（{volume_price_judgement}）。",
+                        f"出現看跌掃蕩確認：{sweep_status}。",
                         f"有效 TDST 壓力 {safe_round(resistance_price, 2)} 落在或貼近 FVG（距離 {safe_round(distance, 2)}）。",
-                        "進場規劃：可於 FVG 區間內分批掛單做空。",
+                        "進場規劃：右側等待反抽 FVG 區間不過，再分批做空。",
+                    ],
+                }
+            if short_score >= 4:
+                return {
+                    "signal_type": "WATCH_SHORT",
+                    "direction": "SHORT",
+                    "score": int(short_score),
+                    "entry_zone": {
+                        "low": safe_round(zone_low, 2),
+                        "high": safe_round(zone_high, 2),
+                        "text": _format_price_zone(zone_low, zone_high),
+                    },
+                    "entry_zone_text": _format_price_zone(zone_low, zone_high),
+                    "stop_loss": safe_round(zone_high + max(float(atr or 0) * 0.5, tolerance), 2),
+                    "tdst_level": safe_round(resistance_price, 2),
+                    "tolerance": safe_round(tolerance, 2),
+                    "confluence_ok": False,
+                    "reasons": [
+                        f"目前屬 WATCH_SHORT（積分 {int(short_score)}/7），尚未達 STRONG_SHORT。",
+                        f"FVG 區間：{current_fvg.get('range')}；建議等待掃蕩/MACD/量價再共振。",
+                        "倉位建議：偏向 B/C 區分批，不追 A 區。",
                     ],
                 }
 
@@ -930,6 +1003,10 @@ def calculate_indicators(symbol: str) -> dict[str, Any]:
             tdst=tdst_levels,
             atr=float(atr) if not pd.isna(atr) else 0.0,
             last_price=float(last_price),
+            macd_status=str(macd_status),
+            td_status=str(td_status),
+            sweep_status=str(sweep_status),
+            volume_price_judgement=str(volume_price_judgement),
         )
 
         # 供 bot / API 直接使用的標準化輸出格式

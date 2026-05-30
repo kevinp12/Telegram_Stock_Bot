@@ -686,17 +686,76 @@ def cmd_risk(user_id: int | None = None, user_name: str = "User") -> str:
     )
 
 
-def _macro_trend_text(item: dict[str, Any], unit: str = "") -> str:
+def _macro_float(value: Any, default: float | None = None) -> float | None:
+    try:
+        if value in {None, "", "N/A", "."}:
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+
+def _macro_change_pct(item: dict[str, Any]) -> float | None:
+    value = _macro_float(item.get("value"))
+    prev = _macro_float(item.get("prev"))
+    if value is None or prev in {None, 0}:
+        return None
+    return (value - float(prev)) / abs(float(prev)) * 100
+
+
+def _macro_light(item: dict[str, Any], *, higher_is_bad: bool = True, threshold_pct: float = 0.02) -> str:
+    pct = _macro_change_pct(item)
+    if pct is None:
+        return "⚪"
+    if abs(pct) < threshold_pct:
+        return "🟡"
+    rising = pct > 0
+    if higher_is_bad:
+        return "🔴" if rising else "🟢"
+    return "🟢" if rising else "🔴"
+
+
+def _macro_row(label: str, item: dict[str, Any], unit: str = "", *, higher_is_bad: bool = True) -> str:
     value = item.get("value", "N/A")
     prev = item.get("prev", "N/A")
     trend = item.get("trend", "N/A")
     date = item.get("date", "N/A")
+    source = item.get("note", "")
+    pct = _macro_change_pct(item)
+    pct_text = "N/A" if pct is None else f"{pct:+.2f}%"
+    arrow = "↗" if (pct or 0) > 0 else "↘" if (pct or 0) < 0 else "→"
+    light = _macro_light(item, higher_is_bad=higher_is_bad)
     suffix = unit if isinstance(value, (int, float)) else ""
-    return f"{value}{suffix}｜前值 {prev}{suffix}｜{trend}｜{date}"
+    return f"{light} **{label}** `{value}{suffix}`｜前值 `{prev}{suffix}`｜{arrow} `{pct_text}`｜{trend}｜{date} {source}".strip()
+
+
+def _quote_row(label: str, quote: dict[str, Any], *, higher_is_bad: bool = True) -> str:
+    price = quote.get("price", "N/A")
+    diff = _macro_float(quote.get("diff"), 0.0) or 0.0
+    pct = _macro_float(quote.get("pct"), 0.0) or 0.0
+    if abs(pct) < 0.05:
+        light = "🟡"
+    elif higher_is_bad:
+        light = "🔴" if pct > 0 else "🟢"
+    else:
+        light = "🟢" if pct > 0 else "🔴"
+    arrow = "↗" if pct > 0 else "↘" if pct < 0 else "→"
+    return f"{light} **{label}** `{price}`｜{arrow} `{diff:+.2f}` / `{pct:+.2f}%`"
+
+
+def _macro_score(items: list[tuple[dict[str, Any], bool]]) -> int:
+    score = 0
+    for item, higher_is_bad in items:
+        pct = _macro_change_pct(item)
+        if pct is None or abs(pct) < 0.02:
+            continue
+        bad = pct > 0 if higher_is_bad else pct < 0
+        score += 1 if bad else -1
+    return score
 
 
 def cmd_marco(user_id: int | None = None, user_name: str = "User") -> list[str]:
-    """宏觀指令：第1頁即時數據，第2頁指標教學與高低影響。"""
+    """宏觀指令：多頁視覺化儀表板 + 當頁判讀 + 最後教學。"""
     snap = market_api.get_macro_core_snapshot()
     cpi = snap.get("cpi", {})
     core_cpi = snap.get("core_cpi", {})
@@ -714,66 +773,141 @@ def cmd_marco(user_id: int | None = None, user_name: str = "User") -> list[str]:
     fear_greed = snap.get("fear_greed", {})
     earnings_calendar = snap.get("earnings_calendar", [])
 
-    dxy_text = market_api.format_quote(dxy) if isinstance(dxy, dict) else "N/A"
-    vix_text = market_api.format_quote(vix) if isinstance(vix, dict) else "N/A"
+    inflation_score = _macro_score([(cpi, True), (core_cpi, True), (pce, True), (ppi, True), (us10y, True)])
+    dxy_pct = _macro_float((dxy or {}).get("pct"), 0.0) or 0.0
+    if dxy_pct > 0.05:
+        inflation_score += 1
+    elif dxy_pct < -0.05:
+        inflation_score -= 1
+    inflation_bias = "🔴 Bearish / 壓估值" if inflation_score >= 3 else "🟢 Bullish / 利多估值" if inflation_score <= -2 else "🟡 Neutral / 等待確認"
+
+    growth_score = _macro_score([(retail_sales, False), (nfp, False), (avg_hourly_earnings, True), (unrate, True)])
+    growth_bias = "🟢 Soft Landing / 需求仍穩" if growth_score <= -1 else "🔴 衰退或薪資通膨壓力" if growth_score >= 2 else "🟡 Mixed / 景氣分歧"
+
     pcr_value = put_call_ratio.get("value", "N/A") if isinstance(put_call_ratio, dict) else "N/A"
     fg_value = fear_greed.get("value", "N/A") if isinstance(fear_greed, dict) else "N/A"
     fg_rating = fear_greed.get("rating", "N/A") if isinstance(fear_greed, dict) else "N/A"
-    earnings_text = "\n".join(f"  - {row.get('symbol', 'N/A')}: {row.get('date', 'N/A')}" for row in earnings_calendar[:5]) or "  - N/A"
+    vix_pct = _macro_float((vix or {}).get("pct"), 0.0) or 0.0
+    try:
+        pcr_f = float(pcr_value)
+    except Exception:
+        pcr_f = 0.0
+    try:
+        fg_f = float(fg_value)
+    except Exception:
+        fg_f = 50.0
+    risk_score = 0
+    if vix_pct > 0:
+        risk_score += 1
+    if pcr_f >= 1.1:
+        risk_score += 1
+    if fg_f >= 75 or fg_f <= 25:
+        risk_score += 1
+    sentiment_bias = "🔴 Risk-Off / 避險升溫" if risk_score >= 2 else "🟢 Risk-On / 情緒可控" if risk_score == 0 else "🟡 中性偏警戒"
+
+    # 全局總體結論條（你要求的 Risk-On / Neutral / Risk-Off）
+    total_score = inflation_score + growth_score + risk_score
+    if total_score >= 4:
+        regime_icon = "🔴"
+        regime_arrow = "↘"
+        regime_text = "Risk-Off"
+        regime_note = "偏空防守：降低追價、提高現金比重"
+    elif total_score <= -2:
+        regime_icon = "🟢"
+        regime_arrow = "↗"
+        regime_text = "Risk-On"
+        regime_note = "偏多進攻：可分批佈局強勢股"
+    else:
+        regime_icon = "🟡"
+        regime_arrow = "→"
+        regime_text = "Neutral"
+        regime_note = "中性觀察：等待方向確認"
+    regime_bar = f"{regime_icon} {regime_arrow} **總體市場結論：{regime_text}**｜{regime_note}"
+
+    # 風險溫度計（0~10）
+    risk_temp = max(0, min(10, int(round((total_score + 6) / 12 * 10))))
+    temp_fill = "█" * risk_temp + "░" * (10 - risk_temp)
+    if risk_temp <= 3:
+        temp_face = "🟢 低溫"
+        temp_arrow = "↗"
+    elif risk_temp <= 6:
+        temp_face = "🟡 中溫"
+        temp_arrow = "→"
+    else:
+        temp_face = "🔴 高溫"
+        temp_arrow = "↘"
+    risk_thermometer = f"🌡️ **風險溫度計** `{risk_temp}/10` {temp_arrow}｜`[{temp_fill}]`｜{temp_face}"
+
+    earnings_text = "\n".join(f"  • {row.get('symbol', 'N/A')}｜{row.get('date', 'N/A')}" for row in earnings_calendar[:5]) or "  • N/A"
+
     page1 = (
-        "📊 宏觀雷達 /marco (1/2)\n"
+        "📊 **宏觀雷達 /marco｜通膨 + 利率 + 美元 (1/4)**\n"
         "━━━━━━━━━━━━━━━━━\n"
-        "【A】通膨 (Inflation)\n"
-        f"• CPI (CPIAUCSL)：{_macro_trend_text(cpi)}\n"
-        f"• Core CPI (CPILFESL)：{_macro_trend_text(core_cpi)}\n"
-        f"• PCE (PCEPI)：{_macro_trend_text(pce)}\n"
-        f"• PPI (PPIACO)：{_macro_trend_text(ppi)}\n\n"
-        "【B】就業 (Employment)\n"
-        f"• 失業率 (UNRATE)：{_macro_trend_text(unrate, '%')}\n"
-        f"• NFP 非農就業 (BLS CES0000000001)：{_macro_trend_text(nfp)}\n"
-        f"• 平均時薪 (BLS CES0500000003)：{_macro_trend_text(avg_hourly_earnings)}\n\n"
-        "【C】消費與景氣 (Demand)\n"
-        f"• 零售銷售 (RSAFS)：{_macro_trend_text(retail_sales)}\n\n"
-        "【D】利率與美元 (Rates & Dollar)\n"
-        f"• US10Y (GS10)：{_macro_trend_text(us10y, '%')}\n"
-        f"• DXY (DX-Y.NYB)：{dxy_text}\n"
-        f"• VIX：{vix_text}｜風險分數：{vix_score}/10\n\n"
-        "【E】衍生品與情緒 (Derivatives & Sentiment)\n"
-        f"• Put/Call Ratio（SPY+QQQ OI）：{pcr_value}\n"
-        f"• Fear & Greed：{fg_value} / 100（{fg_rating}）\n\n"
-        "【F】近期財報日曆 (Earnings Calendar)\n"
-        f"{earnings_text}\n\n"
-        "💡 趨勢說明：上升/下降為相較前一期（通常前月）變化。"
+        f"{regime_bar}\n"
+        f"{risk_thermometer}\n"
+        "━━━━━━━━━━━━━━━━━\n"
+        f"🧭 **本頁結論：{inflation_bias}**\n\n"
+        "【通膨壓力】\n"
+        f"{_macro_row('CPI', cpi, higher_is_bad=True)}\n"
+        f"{_macro_row('Core CPI', core_cpi, higher_is_bad=True)}\n"
+        f"{_macro_row('PCE', pce, higher_is_bad=True)}\n"
+        f"{_macro_row('PPI', ppi, higher_is_bad=True)}\n\n"
+        "【利率與美元】\n"
+        f"{_macro_row('US10Y', us10y, '%', higher_is_bad=True)}\n"
+        f"{_quote_row('DXY 美元指數', dxy, higher_is_bad=True)}\n\n"
+        "📌 **怎麼判斷**\n"
+        "• CPI/PCE/PPI 高 + US10Y 升 + DXY 升：偏 Bearish。\n"
+        "• 通膨回落 + US10Y/DXY 回落：偏 Bullish。\n"
+        "• 日期欄位是官方資料最新釋出日；FRED/BLS 可能比新聞軟體晚，系統已取 API 可取得的最新值。"
     )
 
     page2 = (
-        "📘 宏觀指標教學 /marco (2/2)\n"
+        "🏭 **宏觀雷達 /marco｜就業 + 消費 + 景氣 (2/4)**\n"
         "━━━━━━━━━━━━━━━━━\n"
-        "【A. 通膨類】\n"
-        "• CPI / Core CPI / PCE：越高代表通膨壓力大，市場會擔心降息延後。\n"
-        "• PPI：上游成本壓力指標，若持續上升常會傳導到終端通膨。\n"
-        "• 一般來說：通膨高於預期 → 美債殖利率與美元易走強 → 成長股壓力增加。\n\n"
-        "【B. 就業類】\n"
-        "• NFP、失業率、平均時薪是景氣與薪資通膨風向球。\n"
-        "• 就業過熱且時薪過快上升，通膨較難降，風險資產估值容易被壓縮。\n\n"
-        "【C. 消費與景氣】\n"
-        "• Retail Sales 可觀察消費者支出動能，是美國內需是否轉弱的重要領先訊號。\n\n"
-        "【D. 利率與美元】\n"
-        "• FOMC 利率：偏鷹通常壓估值；偏鴿通常支撐風險資產。\n"
-        "• DXY：美元太強常壓抑股市表現。\n"
-        "• US10Y：殖利率急升時，科技成長股（如 NVDA）通常壓力較大。\n"
-        "• VIX 1~10：分數越高代表波動風險越高。\n\n"
-        "【E. 衍生品與事件】\n"
-        "• Put/Call Ratio 異常升高，常代表機構避險需求上升，需提防假突破。\n"
-        "• 財報日前後，技術面訊號（如 FVG/TD）可能短暫失真，需降低槓桿。\n"
-        "• Fear & Greed 可快速判斷市場處於過度恐懼或過度貪婪。\n\n"
-        "⚠️ 常用判讀\n"
-        "• CPI/PCE/PPI 高 + US10Y 升 + DXY 升：偏 Bearish\n"
-        "• PCR 飆高 + VIX 分數上行：優先風控，降低追價。\n"
-        "• CPI/PCE 回落 + Retail Sales 穩健 + US10Y 穩/降：偏 Soft Landing\n"
-        "• CPI/PCE 降 + US10Y 穩/降 + DXY 回落：偏 Bullish"
+        f"🧭 **本頁結論：{growth_bias}**\n\n"
+        "【就業與薪資】\n"
+        f"{_macro_row('失業率', unrate, '%', higher_is_bad=True)}\n"
+        f"{_macro_row('NFP 非農就業', nfp, higher_is_bad=False)}\n"
+        f"{_macro_row('平均時薪', avg_hourly_earnings, higher_is_bad=True)}\n\n"
+        "【需求端】\n"
+        f"{_macro_row('Retail Sales', retail_sales, higher_is_bad=False)}\n\n"
+        "📌 **怎麼判斷**\n"
+        "• 就業穩 + 零售穩 + 通膨降：Soft Landing，偏多。\n"
+        "• 平均時薪升太快：薪資通膨壓力，偏空。\n"
+        "• 失業率升 + 零售下滑：衰退風險升高，降低追價。"
     )
-    return [page1, page2]
+
+    page3 = (
+        "🧭 **宏觀雷達 /marco｜風險情緒 + 衍生品 (3/4)**\n"
+        "━━━━━━━━━━━━━━━━━\n"
+        f"🧭 **本頁結論：{sentiment_bias}**\n\n"
+        "【波動與避險】\n"
+        f"{_quote_row('VIX 恐慌指數', vix, higher_is_bad=True)}｜風險分數 `{vix_score}/10`\n"
+        f"{'🔴' if pcr_f >= 1.1 else '🟢' if pcr_f < 0.8 else '🟡'} **Put/Call Ratio** `{pcr_value}`\n"
+        f"{'🔴' if fg_f >= 75 else '🟢' if fg_f <= 25 else '🟡'} **Fear & Greed** `{fg_value}/100`（{fg_rating}）\n\n"
+        "【近期財報】\n"
+        f"{earnings_text}\n\n"
+        "📌 **怎麼判斷**\n"
+        "• VIX 升 + PCR 升：機構避險需求升，提防假突破。\n"
+        "• 恐貪過熱：容易追高；極度恐懼：可能接近情緒低點但要等技術確認。\n"
+        "• 財報日前後，FVG/TD/MACD 容易短暫失真，需降低槓桿。"
+    )
+
+    page4 = (
+        "📘 **宏觀雷達 /marco｜快速教學 (4/4)**\n"
+        "━━━━━━━━━━━━━━━━━\n"
+        "【Bearish 常見組合】\n"
+        "• CPI/PCE/PPI 高 + US10Y 升 + DXY 升：成長股估值承壓。\n"
+        "• PCR 飆高 + VIX 上行：風控優先，降低追價。\n\n"
+        "【Bullish 常見組合】\n"
+        "• CPI/PCE 降 + US10Y/DXY 回落：估值壓力下降。\n"
+        "• Retail Sales 穩 + NFP 穩：需求未崩，偏 Soft Landing。\n\n"
+        "【使用流程】\n"
+        "1. 先看第 1 頁判斷利率/通膨壓力。\n"
+        "2. 再看第 2 頁確認景氣是否衰退。\n"
+        "3. 最後看第 3 頁判斷市場情緒是否支持進場。"
+    )
+    return [page1, page2, page3, page4]
 
 
 def build_now_dashboard(user_name: str, user_id: int, with_ai: bool = True) -> list[str]:
@@ -1814,7 +1948,13 @@ def _build_us_market_events(today: datetime) -> list[dict[str, str]]:
     return events
 
 
-def _generate_month_calendar_image(events: list[dict[str, str]], generated_at: str, year: int, month: int) -> io.BytesIO | None:
+def _generate_rolling_calendar_image(
+    events: list[dict[str, str]],
+    generated_at: str,
+    start_date,
+    days: int = 30,
+) -> io.BytesIO | None:
+    """生成滾動 30 天行事曆圖片：今天往前 7 天，並往後補滿 30 格。"""
     try:
         import matplotlib as mpl
         mpl.use("Agg")
@@ -1825,65 +1965,79 @@ def _generate_month_calendar_image(events: list[dict[str, str]], generated_at: s
 
     utils.setup_matplotlib_cjk_font(mpl)
 
-    cal = pycalendar.Calendar(firstweekday=0)
-    weeks = cal.monthdayscalendar(year, month)
-    while len(weeks) < 6:
-        weeks.append([0] * 7)
+    days = max(1, int(days))
+    date_cells = [start_date + timedelta(days=i) for i in range(days)]
+    end_date = date_cells[-1]
 
-    event_map: dict[int, list[str]] = {}
+    event_map: dict[str, list[dict[str, str]]] = {}
     for e in events:
         try:
-            dt = datetime.strptime(e["date"], "%Y-%m-%d")
-            if dt.year == year and dt.month == month:
-                event_map.setdefault(dt.day, []).append(e.get("tag", "EVT"))
+            dt = datetime.strptime(str(e.get("date", ""))[:10], "%Y-%m-%d").date()
+            event_map.setdefault(dt.strftime("%Y-%m-%d"), []).append(e)
         except Exception:
             continue
 
-    headers = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
+    # 固定 30 格：5 列 x 6 欄。月底時會自然跨月，不再卡在當月月曆。
+    cols = 6
+    rows = (days + cols - 1) // cols
+    weekday_names = ["一", "二", "三", "四", "五", "六", "日"]
     table_data: list[list[str]] = []
-    for w in weeks:
-        row = []
-        for d in w:
-            if d == 0:
+    for r in range(rows):
+        row: list[str] = []
+        for c in range(cols):
+            idx = r * cols + c
+            if idx >= len(date_cells):
                 row.append("")
-            else:
-                tags = "/".join(event_map.get(d, [])[:2])
-                row.append(f"{d}\n{tags}" if tags else str(d))
+                continue
+            d = date_cells[idx]
+            key = d.strftime("%Y-%m-%d")
+            tags = "/".join((item.get("tag") or "EVT") for item in event_map.get(key, [])[:3])
+            label = f"{d.month}/{d.day} 週{weekday_names[d.weekday()]}"
+            row.append(f"{label}\n{tags}" if tags else label)
         table_data.append(row)
 
-    # 放大輸出，貼近 Telegram 大圖展示（純 Figure OOP）
-    fig = Figure(figsize=(18, 13), facecolor="#0B1020")
+    fig = Figure(figsize=(18, 11.5), facecolor="#0B1020")
     FigureCanvasAgg(fig)
     ax = fig.add_subplot(111)
     ax.axis("off")
-    title = f"美股重大事件月曆 {year}年{month:02d}月"
-    fig.text(0.01, 0.98, f"生成時間：{generated_at}", color="#E2E8F0", fontsize=12, va="top", ha="left")
-    fig.text(0.5, 0.95, title, color="#F8FAFC", fontsize=24, va="top", ha="center", weight="bold")
+    title = f"美股重大事件滾動行事曆｜{start_date.strftime('%m/%d')} - {end_date.strftime('%m/%d')}（30天）"
+    fig.text(0.01, 0.985, f"生成時間：{generated_at}", color="#E2E8F0", fontsize=12, va="top", ha="left")
+    fig.text(0.5, 0.955, title, color="#F8FAFC", fontsize=23, va="top", ha="center", weight="bold")
+    fig.text(0.5, 0.918, "規則：今天往前 7 天 + 往後補滿至 30 天；跨月會自動延伸。", color="#CBD5E1", fontsize=12, va="top", ha="center")
 
+    headers = ["30天視窗"] * cols
     tbl = ax.table(cellText=table_data, colLabels=headers, loc="center", cellLoc="left", colLoc="center")
     tbl.auto_set_font_size(False)
     tbl.set_fontsize(13)
-    tbl.scale(1.25, 2.9)
+    tbl.scale(1.2, 3.05)
 
+    today_key = datetime.now().date().strftime("%Y-%m-%d")
     for (r, c), cell in tbl.get_celld().items():
         cell.set_edgecolor("#334155")
         if r == 0:
             cell.set_facecolor("#1E293B")
-            cell.set_text_props(color="#F8FAFC", weight="bold")
+            cell.set_text_props(color="#CBD5E1", weight="bold")
+            continue
+
+        text_val = cell.get_text().get_text()
+        idx = (r - 1) * cols + c
+        d = date_cells[idx] if 0 <= idx < len(date_cells) else None
+        is_today = bool(d and d.strftime("%Y-%m-%d") == today_key)
+        if is_today:
+            cell.set_facecolor("#164E63")
+            cell.set_text_props(color="#FFFFFF", weight="bold")
+        elif "CPI" in text_val or "FOMC" in text_val or "NFP" in text_val:
+            cell.set_facecolor("#3F1D2E")
+            cell.set_text_props(color="#FDE68A", weight="bold")
+        elif "FED CHAIR" in text_val or "PPI" in text_val or "PCE" in text_val or "ER" in text_val:
+            cell.set_facecolor("#1F2937")
+            cell.set_text_props(color="#BFDBFE")
         else:
-            text = cell.get_text().get_text()
-            if "CPI" in text or "FOMC" in text or "NFP" in text:
-                cell.set_facecolor("#3F1D2E")
-                cell.set_text_props(color="#FDE68A")
-            elif "FED CHAIR" in text or "PPI" in text or "PCE" in text:
-                cell.set_facecolor("#1F2937")
-                cell.set_text_props(color="#BFDBFE")
-            else:
-                cell.set_facecolor("#0F172A")
-                cell.set_text_props(color="#CBD5E1")
+            cell.set_facecolor("#0F172A")
+            cell.set_text_props(color="#CBD5E1")
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=260, bbox_inches="tight", facecolor="#0B1020")
+    fig.savefig(buf, format="png", dpi=240, bbox_inches="tight", facecolor="#0B1020")
     fig.clf()
     buf.seek(0)
     return buf
@@ -1893,53 +2047,61 @@ def cmd_calendar(user_id: int, user_name: str) -> tuple[list[str], io.BytesIO | 
     now = datetime.now()
     generated_at = ai_core.get_current_time_str()
 
+    # 滾動 30 天視窗：今天往前 7 天，並往後補滿 30 格（跨月自動延伸）
+    window_start = (now - timedelta(days=7)).date()
+    window_days = 30
+    window_end = window_start + timedelta(days=window_days - 1)
+
     holdings = database.get_aggregated_portfolio(user_id)
     watchlist = database.get_watchlist(user_id)
     symbols = list(dict.fromkeys(list(holdings.keys()) + list(watchlist)))[:20]
 
-    macro_events = _build_us_market_events(now)
-    earnings = market_api.get_earnings_calendar(symbols if symbols else None, limit=20)
+    macro_events: list[dict[str, str]] = []
+    for year in sorted({window_start.year, now.year, window_end.year}):
+        macro_events.extend(_build_us_market_events(datetime(year, 1, 1)))
+
+    earnings = market_api.get_earnings_calendar(symbols if symbols else None, limit=30)
     earning_events = [{"date": str(r.get("date", "")), "title": f"{r.get('symbol', 'N/A')} 財報", "tag": "ER"} for r in earnings if r.get("date")]
 
     all_events = macro_events + earning_events
     all_events.sort(key=lambda x: x["date"])
 
-    one_week_later = now + timedelta(days=7)
-    upcoming = []
+    window_events = []
     for e in all_events:
         try:
-            dt = datetime.strptime(e["date"], "%Y-%m-%d")
-            if now.date() <= dt.date() <= one_week_later.date():
-                upcoming.append(e)
+            dt = datetime.strptime(str(e.get("date", ""))[:10], "%Y-%m-%d").date()
+            if window_start <= dt <= window_end:
+                window_events.append(e)
         except Exception:
             continue
 
-    if not upcoming:
-        week_text = "• 未來一週暫無抓到重大事件（可用 /calendar 重試）。"
+    if not window_events:
+        week_text = "• 這 30 天視窗內暫無抓到重大事件；系統已跨月往後補滿日期。"
     else:
-        week_text = "\n".join([f"• {e['date']}｜{e['title']}" for e in upcoming[:25]])
+        week_text = "\n".join([f"• {e['date']}｜{e['title']}（{e.get('tag', 'EVT')}）" for e in window_events[:35]])
 
     page1 = (
         "🗓️ **美股宏觀與事件日曆 /calendar** (1/2)\n"
         "━━━━━━━━━━━━━━━━━\n"
         f"🕒 生成時間：{generated_at}\n"
-        f"👤 使用者：{user_name}\n\n"
-        "【未來一週重點事件】\n"
+        f"👤 使用者：{user_name}\n"
+        f"📅 視窗：`{window_start}` → `{window_end}`（共 {window_days} 天）\n\n"
+        "【30天滾動視窗重點事件】\n"
         f"{week_text}\n\n"
         "💡 已整合：CPI / PPI / PCE / NFP / FOMC / 聯準會主席談話 / 持股與 Watchlist 財報"
     )
 
     page2 = (
-        "📌 **當月事件重點說明** (2/2)\n"
+        "📌 **滾動行事曆說明** (2/2)\n"
         "━━━━━━━━━━━━━━━━━\n"
-        "• 行事曆圖片會標註當月重大日期。\n"
-        "• 黃色：高衝擊事件（CPI/FOMC/NFP）\n"
-        "• 藍色：中度事件（PPI/PCE/Fed Chair）\n"
-        "• `ER`：持股或 Watchlist 的財報日\n"
-        "• 若日期變動，請以官方公告為準。"
+        "• 圖片固定顯示 30 天：今天往前 7 天，往後補滿到 30 天。\n"
+        "• 若月底或前方沒有事件，日期仍會跨到下個月，不再卡在當月月曆。\n"
+        "• 青色：今天；黃色：高衝擊事件（CPI/FOMC/NFP）。\n"
+        "• 藍色：中度事件（PPI/PCE/Fed Chair/ER）。\n"
+        "• `ER`：持股或 Watchlist 的財報日；日期變動以官方公告為準。"
     )
 
-    cal_img = _generate_month_calendar_image(all_events, generated_at, now.year, now.month)
+    cal_img = _generate_rolling_calendar_image(all_events, generated_at, window_start, days=window_days)
     return [page1, page2], cal_img
 
 

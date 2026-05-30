@@ -175,6 +175,9 @@ def tech_report(data: dict[str, Any]) -> list[str]:
     support_line = tdst.get("support") or {}
     resistance_line = tdst.get("resistance") or {}
     signal_type = signal.get("signal_type", "NONE")
+    signal_score = int(signal.get("score", 0) or 0)
+    score_bar = "█" * max(0, min(7, signal_score)) + "░" * (7 - max(0, min(7, signal_score)))
+    score_face = "🟢 STRONG" if signal_score >= 4 else ("🟡 WATCH" if signal_score >= 2 else "⚪ WAIT")
     signal_light_key = "買" if signal_type == "STRONG_LONG" else ("賣" if signal_type == "STRONG_SHORT" else "中立")
     signal_icon = get_signal_light(signal_light_key)
     entry_zone = signal.get("entry_zone") or {}
@@ -183,9 +186,50 @@ def tech_report(data: dict[str, Any]) -> list[str]:
     entry_zone_text = signal.get("entry_zone_text") or entry_zone.get("text", "N/A")
 
     strategy_body = "指標未顯示強烈共振，建議於關鍵點位觀望。"
+    # A/B/C 三段進場區間（保守/中性/激進）+ 方向箭頭
+    zone_a = "N/A"
+    zone_b = "N/A"
+    zone_c = "N/A"
+    zone_note = "⚪ 尚未形成可執行區間（等待右側確認）"
+    try:
+        if entry_zone and entry_zone.get("low") is not None and entry_zone.get("high") is not None:
+            z_low = float(entry_zone.get("low"))
+            z_high = float(entry_zone.get("high"))
+            z_mid = (z_low + z_high) / 2
+            a = max(float(atr or 0) * 0.2, abs(z_high - z_low) * 0.15)
+            b = max(float(atr or 0) * 0.35, abs(z_high - z_low) * 0.2)
+            c = max(float(atr or 0) * 0.55, abs(z_high - z_low) * 0.3)
+
+            ote_low = z_low + (z_high - z_low) * 0.5
+            ote_high = z_low + (z_high - z_low) * 0.618
+            c_low = z_low + (z_high - z_low) * 0.786
+            c_high = z_high
+
+            # LONG: A 淺回踩、B OTE、C 極限折扣
+            if signal_type in {"STRONG_LONG", "WATCH_LONG"}:
+                zone_a = f"`{safe_round(max(z_mid, z_high - a), 2)} ~ {safe_round(z_high, 2)}` ↗"
+                zone_b = f"`{safe_round(ote_low, 2)} ~ {safe_round(ote_high, 2)}` ↗"
+                zone_c = f"`{safe_round(c_low, 2)} ~ {safe_round(c_high, 2)}` ↗"
+                if signal_type == "STRONG_LONG" and signal_score >= 4:
+                    zone_note = "🟢 STRONG：倉位 2-5-3（A 30% / B 70% / C 0%）"
+                else:
+                    zone_note = "🟡 WATCH：倉位 0-4-6（A 0% / B 40% / C 60%）"
+            # SHORT: A 淺反抽、B OTE、C 極限溢價
+            elif signal_type in {"STRONG_SHORT", "WATCH_SHORT"}:
+                zone_a = f"`{safe_round(z_low, 2)} ~ {safe_round(min(z_high, z_low + a), 2)}` ↘"
+                zone_b = f"`{safe_round(ote_low, 2)} ~ {safe_round(ote_high, 2)}` ↘"
+                zone_c = f"`{safe_round(c_low, 2)} ~ {safe_round(c_high, 2)}` ↘"
+                if signal_type == "STRONG_SHORT" and signal_score >= 4:
+                    zone_note = "🔴 STRONG：倉位 2-5-3（A 30% / B 70% / C 0%）"
+                else:
+                    zone_note = "🟡 WATCH：倉位 0-4-6（A 0% / B 40% / C 60%）"
+            else:
+                zone_note = "🟡 有區間但尚未達 STRONG 訊號，先觀察箭頭方向"
+    except Exception:
+        pass
     if "買" in attack:
         stop_loss_1 = safe_round(price - 1.5 * atr, 2)
-        strategy_body = f"多方動能佔優。🎯 建議進場點：VWAP ({vwap}) 或 POC ({poc}) 附近。\n" f"🛡️ 防守位：{stop_loss_1} (-1.5 ATR)。"
+        strategy_body = f"多方動能佔優。🎯 建議進場點：VWAP ({vwap}) 或 籌碼峰 ({poc}) 附近。\n" f"🛡️ 防守位：{stop_loss_1} (-1.5 ATR)。"
     elif "賣" in attack:
         strategy_body = f"空方動能佔優。📉 建議分批減碼。\n" f"🔭 觀察防禦位：VWAP ({vwap})。"
 
@@ -193,14 +237,21 @@ def tech_report(data: dict[str, Any]) -> list[str]:
         f"🎯 **SMC 狙擊戰術：{symbol} (2/2)**\n"
         f"━━━━━━━━━━━━━━━━━\n"
         f"🧲 **流動性與失衡區**\n"
-        f"• FVG 缺口：{fvg_text}\n"
+        f"• FVG 結構：{fvg_text}\n"
         f"• 流動性掃蕩：{sweep}\n"
-        f"• POC 籌碼密集區：`{poc}`\n\n"
+        f"• 籌碼峰（原 POC）：`{poc}`\n\n"
         f"⚡ **共振狙擊訊號**\n"
-        f"• 狀態：{signal_icon} `{signal_type}`\n"
+        f"• 狀態：{signal_icon} `{signal_type}`｜積分：`{signal_score}/7`\n"
+        f"• 評級條：`[{score_bar}]`｜{score_face}\n"
         f"• MA 濾網：`{ma_filter.get('status', 'N/A')}`\n"
         f"• TDST 區間：`{support_line.get('price', 'N/A')}` ~ `{resistance_line.get('price', 'N/A')}`\n"
         f"• 進場區間：`{entry_zone_text}`\n"
+        f"• 🅰️ 保守 A 區：{zone_a}\n"
+        f"• 🅱️ 中性 B 區：{zone_b}\n"
+        f"• 🅲 激進 C 區：{zone_c}\n"
+        f"• 區間判讀：{zone_note}\n"
+        f"• 🛡️ 停損（SOP）：做多 `C下緣-0.5ATR` / 做空 `C上緣+0.5ATR`\n"
+        f"• 🎯 止盈（SOP）：TP1 減倉 50% + 停損移保本；TP2 於 Swing TP 或流動性池全出\n"
         f"• 訊號條件：\n{signal_reason_text}\n\n"
         f"💡 **戰術執行**\n"
         f"{strategy_body}"
