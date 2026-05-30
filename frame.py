@@ -143,6 +143,12 @@ def tech_report(data: dict[str, Any]) -> list[str]:
 
     short_tp_text, swing_tp_text = _format_take_profit_targets()
 
+    def _fmt_num(v: Any) -> str:
+        try:
+            return f"{float(v):.2f}"
+        except Exception:
+            return str(v)
+
     attack_icon = get_signal_light(attack)
     whale_icon = get_signal_light(whale)
 
@@ -150,7 +156,8 @@ def tech_report(data: dict[str, Any]) -> list[str]:
     page1 = (
         f"📊 **量化作戰儀表板：{symbol} (1/3)**\n"
         f"━━━━━━━━━━━━━━━━━\n"
-        f"現價：`{price}` | **ATR**：`{atr}`\n\n"
+        f"現價：`{_fmt_num(price)}`  |  ATR：`{_fmt_num(atr)}`\n"
+        f"VWAP：`{_fmt_num(vwap)}`  |  POC：`{_fmt_num(poc)}`\n\n"
         f"⚔️ **核心動能**\n"
         f"• 綜合評級：{attack_icon} `{attack}`\n"
         f"• 主力籌碼：{whale_icon} `{whale}` (量能倍數：{vol_ratio}x)\n"
@@ -160,9 +167,7 @@ def tech_report(data: dict[str, Any]) -> list[str]:
         f"• RSI：{rsi}\n"
         f"• TD9：{td}\n\n"
         f"📐 **關鍵點位參考**\n"
-        f"• 壓力位：`{res}`\n"
-        f"• 錨定成本 (VWAP)：`{vwap}`\n"
-        f"• 支撐位：`{sup}`\n\n"
+        f"• 壓力：`{_fmt_num(res)}`  支撐：`{_fmt_num(sup)}`\n\n"
         f"💰 **獲利目標測算 (Take Profit)**\n"
         f"• 短線 (2x ATR)：`{short_tp_text}`\n"
         f"• 波段 (較遠目標)：`{swing_tp_text}`\n"
@@ -247,8 +252,11 @@ def tech_report(data: dict[str, Any]) -> list[str]:
                 tp1_price_text = f"{safe_round(float(price) - float(atr or 0) * 1.5, 2)}"
                 tp2_price_text = f"{swing_tp_text.split('（')[0]}"
             else:
-                zone_note = "🟡 有區間但尚未達 STRONG 訊號，先觀察箭頭方向"
-                # 中立時也給可執行價位（以多方預設，實務可自行偏向反向）
+                zone_note = "WAIT：未達高品質共振，先觀察"
+                # NONE / WAIT 也直接給簡單可讀數值區間
+                zone_a = f"`{safe_round(max(z_mid, z_high - a), 2)} ~ {safe_round(z_high, 2)}`"
+                zone_b = f"`{safe_round(ote_low, 2)} ~ {safe_round(ote_high, 2)}`"
+                zone_c = f"`{safe_round(c_low, 2)} ~ {safe_round(c_high, 2)}`"
                 stop_price_text = f"{safe_round(z_low - float(atr or 0) * 0.5, 2)}"
                 tp1_price_text = f"{safe_round(float(price) + float(atr or 0) * 1.5, 2)}"
                 tp2_price_text = f"{swing_tp_text.split('（')[0]}"
@@ -263,27 +271,23 @@ def tech_report(data: dict[str, Any]) -> list[str]:
     is_high_quality = signal_type in {"STRONG_LONG", "STRONG_SHORT", "WATCH_LONG", "WATCH_SHORT"}
     is_low_quality = signal_type in {"SOFT_LONG", "SOFT_SHORT"}
 
+    abc_card = f"A {zone_a} | B {zone_b} | C {zone_c}"
+
     page2 = (
         f"🟢 **主策略（高品質交易）：{symbol} (2/3)**\n"
         f"━━━━━━━━━━━━━━━━━\n"
         f"• 分類：{'✅ 高品質（可主策略）' if is_high_quality else '⚪ 本次無高品質訊號'}\n"
-        f"🧲 **流動性與失衡區**\n"
-        f"• FVG 結構：{fvg_text}\n"
-        f"• 流動性掃蕩：{sweep}\n"
-        f"• 籌碼峰（原 POC）：`{poc}`\n\n"
-        f"⚡ **共振狙擊訊號**\n"
-        f"• 狀態：{signal_icon} `{signal_type}`｜積分：`{signal_score}/7`\n"
-        f"• 評級條：`[{score_bar}]`｜{score_face}\n"
-        f"• MA 濾網：`{ma_filter.get('status', 'N/A')}`\n"
-        f"• TDST 區間：`{support_line.get('price', 'N/A')}` ~ `{resistance_line.get('price', 'N/A')}`\n"
-        f"• 進場區間：`{entry_zone_text}`\n"
-        f"• 🅰️ 保守 A 區：{zone_a}\n"
-        f"• 🅱️ 中性 B 區：{zone_b}\n"
-        f"• 🅲 激進 C 區：{zone_c}\n"
-        f"• 區間判讀：{zone_note}\n"
-        f"• 🛡️ 停損（SOP 價位）：`{stop_price_text}`\n"
-        f"• 🎯 TP1（SOP 價位）：`{tp1_price_text}`（減倉 50% + 停損移保本）\n"
-        f"• 🎯 TP2（SOP 價位）：`{tp2_price_text}`（Swing TP / 流動性池）\n"
+        f"• FVG：{fvg_text}\n"
+        f"• Sweep：{sweep}\n"
+        f"• POC：`{_fmt_num(poc)}`\n\n"
+        f"⚡ **共振狙擊（簡版）**\n"
+        f"• 訊號：`{signal_type}`  分數：`{signal_score}/7`  `[{score_bar}]`\n"
+        f"• MA：`{ma_filter.get('status', 'N/A')}`\n"
+        f"• TDST：`{_fmt_num(support_line.get('price', 'N/A'))} ~ {_fmt_num(resistance_line.get('price', 'N/A'))}`\n"
+        f"• 進場：`{entry_zone_text}`\n"
+        f"• 區間卡：{abc_card}\n"
+        f"• 判讀：{zone_note}\n"
+        f"• SL：`{stop_price_text}`  TP1：`{tp1_price_text}`  TP2：`{tp2_price_text}`\n"
         f"• 訊號條件：\n{signal_reason_text}\n\n"
         f"💡 **戰術執行**\n"
         f"{strategy_body}"
@@ -299,11 +303,10 @@ def tech_report(data: dict[str, Any]) -> list[str]:
         f"• 分類：{'🟡 簡易策略（SOFT）' if is_low_quality else '⚪ 目前無 SOFT 訊號'}\n"
         f"• 當前訊號：`{signal_type}`｜積分：`{signal_score}/7`\n"
         f"• 進場區間：`{entry_zone_text}`\n"
-        f"• 🅱️ 建議主區：{zone_b}\n"
-        f"• 🅲 建議副區：{zone_c}\n"
-        f"• 🛡️ 停損價位：`{stop_price_text}`\n"
-        f"• 🎯 TP1：`{tp1_price_text}`（先減倉 50%）\n"
-        f"• 🎯 TP2：`{tp2_price_text}`（剩餘部位）\n"
+        f"• 區間卡：{abc_card}\n"
+        f"• SL：`{stop_price_text}`\n"
+        f"• TP1：`{tp1_price_text}`（先減倉 50%）\n"
+        f"• TP2：`{tp2_price_text}`（剩餘部位）\n"
         f"• 風險規範：{low_quality_note}\n"
         f"• 禁則：連續停損 2 次當日停止交易。"
     )
