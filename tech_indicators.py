@@ -296,13 +296,14 @@ def generate_tech_chart_buffer(symbol: str, theme: str = "dark") -> io.BytesIO:
     # 在 FVG 藍色區間中間加上看漲/看跌 FVG 字樣
     if fvg_zone:
         fvg_label = "看漲 FVG" if fvg_zone_dir == "BULLISH" else "看跌 FVG" if fvg_zone_dir == "BEARISH" else "FVG"
+        fvg_text_color = "#10B981" if fvg_zone_dir == "BULLISH" else ("#EF4444" if fvg_zone_dir == "BEARISH" else "#2D6CDF")
         zl, zh = fvg_zone
         # 移至圖表水平正中央
         price_ax.text(
             len(df_plot) // 2,
             (zl + zh) / 2,
             fvg_label,
-            color="#2D6CDF",
+            color=fvg_text_color,
             fontsize=9,
             weight="bold",
             ha="center",
@@ -747,6 +748,69 @@ def build_confluence_signal(
                         "倉位建議：偏向 B/C 區分批，不追 A 區。",
                     ],
                 }
+
+    # 低品質（SOFT）訊號：給方向與價位，但明確標示僅小倉位試單
+    if current_fvg.get("direction") == "BULLISH":
+        soft_score = sum([
+            1 if ma_filter.get("bullish") else 0,
+            1,
+            1 if macd_bull else 0,
+            1 if td_bull else 0,
+            1 if vol_bull else 0,
+            1 if sweep_bull else 0,
+        ])
+        if soft_score >= 3:
+            return {
+                "signal_type": "SOFT_LONG",
+                "direction": "LONG",
+                "score": int(min(soft_score, 7)),
+                "entry_zone": {
+                    "low": safe_round(zone_low, 2),
+                    "high": safe_round(zone_high, 2),
+                    "text": _format_price_zone(zone_low, zone_high),
+                },
+                "entry_zone_text": _format_price_zone(zone_low, zone_high),
+                "stop_loss": safe_round(zone_low - max(float(atr or 0) * 0.5, tolerance), 2),
+                "tdst_level": None,
+                "tolerance": safe_round(tolerance, 2),
+                "confluence_ok": False,
+                "reasons": [
+                    f"SOFT_LONG（低品質）積分 {int(min(soft_score,7))}/7：僅代表方向偏多，未達高品質共振。",
+                    f"FVG 區間：{current_fvg.get('range')}，建議只在 B/C 區小倉位分批。",
+                    "風控：總倉位 20%~30% 上限，嚴格停損，不可重倉。",
+                ],
+            }
+
+    if current_fvg.get("direction") == "BEARISH":
+        soft_score = sum([
+            1 if ma_filter.get("bearish") else 0,
+            1,
+            1 if macd_bear else 0,
+            1 if td_bear else 0,
+            1 if vol_bear else 0,
+            1 if sweep_bear else 0,
+        ])
+        if soft_score >= 3:
+            return {
+                "signal_type": "SOFT_SHORT",
+                "direction": "SHORT",
+                "score": int(min(soft_score, 7)),
+                "entry_zone": {
+                    "low": safe_round(zone_low, 2),
+                    "high": safe_round(zone_high, 2),
+                    "text": _format_price_zone(zone_low, zone_high),
+                },
+                "entry_zone_text": _format_price_zone(zone_low, zone_high),
+                "stop_loss": safe_round(zone_high + max(float(atr or 0) * 0.5, tolerance), 2),
+                "tdst_level": None,
+                "tolerance": safe_round(tolerance, 2),
+                "confluence_ok": False,
+                "reasons": [
+                    f"SOFT_SHORT（低品質）積分 {int(min(soft_score,7))}/7：僅代表方向偏空，未達高品質共振。",
+                    f"FVG 區間：{current_fvg.get('range')}，建議只在 B/C 區小倉位分批。",
+                    "風控：總倉位 20%~30% 上限，嚴格停損，不可重倉。",
+                ],
+            }
 
     return empty_signal
 

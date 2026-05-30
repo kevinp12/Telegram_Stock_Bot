@@ -146,9 +146,9 @@ def tech_report(data: dict[str, Any]) -> list[str]:
     attack_icon = get_signal_light(attack)
     whale_icon = get_signal_light(whale)
 
-    # 第一頁：基礎技術量化
+    # 第一頁：基礎技術量化（總覽）
     page1 = (
-        f"📊 **量化作戰儀表板：{symbol} (1/2)**\n"
+        f"📊 **量化作戰儀表板：{symbol} (1/3)**\n"
         f"━━━━━━━━━━━━━━━━━\n"
         f"現價：`{price}` | **ATR**：`{atr}`\n\n"
         f"⚔️ **核心動能**\n"
@@ -167,7 +167,7 @@ def tech_report(data: dict[str, Any]) -> list[str]:
         f"• 短線 (2x ATR)：`{short_tp_text}`\n"
         f"• 波段 (較遠目標)：`{swing_tp_text}`\n"
         f"━━━━━━━━━━━━━━━━━\n"
-        f"💡 下一頁：SMC 結構與共振狙擊訊號"
+        f"💡 下一頁：高品質交易（STRONG / WATCH）"
     )
 
     # 第二頁：SMC 結構與戰術
@@ -191,7 +191,24 @@ def tech_report(data: dict[str, Any]) -> list[str]:
     zone_b = "N/A"
     zone_c = "N/A"
     zone_note = "⚪ 尚未形成可執行區間（等待右側確認）"
+    stop_price_text = "N/A"
+    tp1_price_text = "N/A"
+    tp2_price_text = "N/A"
+    z_low = None
+    z_high = None
     try:
+        # 若沒有 confluence entry_zone，提供 fallback：用 VWAP/POC + ATR 產生可執行區
+        if not (entry_zone and entry_zone.get("low") is not None and entry_zone.get("high") is not None):
+            base = float(vwap) if isinstance(vwap, (int, float)) else float(price)
+            atr_f = float(atr or 0)
+            half = max(atr_f * 0.8, abs(base) * 0.01)
+            entry_zone = {
+                "low": safe_round(base - half, 2),
+                "high": safe_round(base + half, 2),
+                "text": f"{safe_round(base - half, 2)} ~ {safe_round(base + half, 2)}",
+            }
+            entry_zone_text = entry_zone.get("text", entry_zone_text)
+
         if entry_zone and entry_zone.get("low") is not None and entry_zone.get("high") is not None:
             z_low = float(entry_zone.get("low"))
             z_high = float(entry_zone.get("high"))
@@ -214,6 +231,9 @@ def tech_report(data: dict[str, Any]) -> list[str]:
                     zone_note = "🟢 STRONG：倉位 2-5-3（A 30% / B 70% / C 0%）"
                 else:
                     zone_note = "🟡 WATCH：倉位 0-4-6（A 0% / B 40% / C 60%）"
+                stop_price_text = f"{safe_round(c_low - float(atr or 0) * 0.5, 2)}"
+                tp1_price_text = f"{safe_round(float(price) + float(atr or 0) * 1.5, 2)}"
+                tp2_price_text = f"{swing_tp_text.split('（')[0]}"
             # SHORT: A 淺反抽、B OTE、C 極限溢價
             elif signal_type in {"STRONG_SHORT", "WATCH_SHORT"}:
                 zone_a = f"`{safe_round(z_low, 2)} ~ {safe_round(min(z_high, z_low + a), 2)}` ↘"
@@ -223,8 +243,15 @@ def tech_report(data: dict[str, Any]) -> list[str]:
                     zone_note = "🔴 STRONG：倉位 2-5-3（A 30% / B 70% / C 0%）"
                 else:
                     zone_note = "🟡 WATCH：倉位 0-4-6（A 0% / B 40% / C 60%）"
+                stop_price_text = f"{safe_round(c_high + float(atr or 0) * 0.5, 2)}"
+                tp1_price_text = f"{safe_round(float(price) - float(atr or 0) * 1.5, 2)}"
+                tp2_price_text = f"{swing_tp_text.split('（')[0]}"
             else:
                 zone_note = "🟡 有區間但尚未達 STRONG 訊號，先觀察箭頭方向"
+                # 中立時也給可執行價位（以多方預設，實務可自行偏向反向）
+                stop_price_text = f"{safe_round(z_low - float(atr or 0) * 0.5, 2)}"
+                tp1_price_text = f"{safe_round(float(price) + float(atr or 0) * 1.5, 2)}"
+                tp2_price_text = f"{swing_tp_text.split('（')[0]}"
     except Exception:
         pass
     if "買" in attack:
@@ -233,9 +260,13 @@ def tech_report(data: dict[str, Any]) -> list[str]:
     elif "賣" in attack:
         strategy_body = f"空方動能佔優。📉 建議分批減碼。\n" f"🔭 觀察防禦位：VWAP ({vwap})。"
 
+    is_high_quality = signal_type in {"STRONG_LONG", "STRONG_SHORT", "WATCH_LONG", "WATCH_SHORT"}
+    is_low_quality = signal_type in {"SOFT_LONG", "SOFT_SHORT"}
+
     page2 = (
-        f"🎯 **SMC 狙擊戰術：{symbol} (2/2)**\n"
+        f"🟢 **主策略（高品質交易）：{symbol} (2/3)**\n"
         f"━━━━━━━━━━━━━━━━━\n"
+        f"• 分類：{'✅ 高品質（可主策略）' if is_high_quality else '⚪ 本次無高品質訊號'}\n"
         f"🧲 **流動性與失衡區**\n"
         f"• FVG 結構：{fvg_text}\n"
         f"• 流動性掃蕩：{sweep}\n"
@@ -250,14 +281,34 @@ def tech_report(data: dict[str, Any]) -> list[str]:
         f"• 🅱️ 中性 B 區：{zone_b}\n"
         f"• 🅲 激進 C 區：{zone_c}\n"
         f"• 區間判讀：{zone_note}\n"
-        f"• 🛡️ 停損（SOP）：做多 `C下緣-0.5ATR` / 做空 `C上緣+0.5ATR`\n"
-        f"• 🎯 止盈（SOP）：TP1 減倉 50% + 停損移保本；TP2 於 Swing TP 或流動性池全出\n"
+        f"• 🛡️ 停損（SOP 價位）：`{stop_price_text}`\n"
+        f"• 🎯 TP1（SOP 價位）：`{tp1_price_text}`（減倉 50% + 停損移保本）\n"
+        f"• 🎯 TP2（SOP 價位）：`{tp2_price_text}`（Swing TP / 流動性池）\n"
         f"• 訊號條件：\n{signal_reason_text}\n\n"
         f"💡 **戰術執行**\n"
         f"{strategy_body}"
     )
 
-    return [page1, page2]
+    low_quality_note = "僅允許小倉位試單（20%~30%），僅在 B/C 區分批，不追價。"
+    if is_low_quality:
+        low_quality_note = "已觸發 SOFT 低品質訊號：可試單，但不得重倉，嚴守停損。"
+
+    page3 = (
+        f"🟡 **簡易策略（低品質交易）：{symbol} (3/3)**\n"
+        f"━━━━━━━━━━━━━━━━━\n"
+        f"• 分類：{'🟡 簡易策略（SOFT）' if is_low_quality else '⚪ 目前無 SOFT 訊號'}\n"
+        f"• 當前訊號：`{signal_type}`｜積分：`{signal_score}/7`\n"
+        f"• 進場區間：`{entry_zone_text}`\n"
+        f"• 🅱️ 建議主區：{zone_b}\n"
+        f"• 🅲 建議副區：{zone_c}\n"
+        f"• 🛡️ 停損價位：`{stop_price_text}`\n"
+        f"• 🎯 TP1：`{tp1_price_text}`（先減倉 50%）\n"
+        f"• 🎯 TP2：`{tp2_price_text}`（剩餘部位）\n"
+        f"• 風險規範：{low_quality_note}\n"
+        f"• 禁則：連續停損 2 次當日停止交易。"
+    )
+
+    return [page1, page2, page3]
 
 
 def tech_compare_report(data_list: list[dict[str, Any]]) -> str:
