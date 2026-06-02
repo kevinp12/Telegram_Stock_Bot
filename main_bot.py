@@ -564,6 +564,7 @@ def delete_loading_safe(message, msg):
 def setup_bot_commands() -> None:
     commands = [
         telebot.types.BotCommand("now", "⚡ 即時全景 + 總損益"),
+        telebot.types.BotCommand("score", "📊 個股綜合評分卡"),
         telebot.types.BotCommand("calendar", "🗓️ 宏觀與事件日曆"),
         telebot.types.BotCommand("theory", "📘 交易百科教學"),
         telebot.types.BotCommand("list", "📋 持股詳細明細"),
@@ -1173,6 +1174,21 @@ def on_fin(m):
         release_heavy_task()
 
 
+@bot.message_handler(commands=["score"])
+def on_score(m):
+    user_id, user_name = register_user(m)
+    record_user_log_safely(user_id, user_name, get_username(m), m.text or "", source="/score")
+    status_msg = bot.reply_to(m, "📊 正在計算綜合評分...")
+    try:
+        result = command.cmd_score(m.text or "", user_id)
+        reply(m, result)
+    except Exception as exc:
+        logging.error(f"Score command failed: {exc}")
+        safe_send(m.chat.id, f"❌ 評分執行失敗：{exc}")
+    finally:
+        delete_loading_safe(m, status_msg)
+
+
 @bot.message_handler(commands=["whale"])
 def on_whale(m):
     user_id, user_name = register_user(m)
@@ -1411,6 +1427,7 @@ def on_text(m):
                 "sweep": on_sweep,
                 "news": on_news,
                 "fin": on_fin,
+                "score": on_score,
                 "whale": on_whale,
                 "quota": on_quota,
                 "bc": on_bc,

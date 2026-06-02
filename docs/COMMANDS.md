@@ -12,6 +12,7 @@
 | 指令 | 功能 | 主要入口 |
 |---|---|---|
 | `/now` | 市場總覽與 AI 短評 | `main_bot.on_now` → `command.cmd_now` |
+| `/score` | 個股多維度綜合評分卡 (100分) | `main_bot.on_score` → `command.cmd_score` |
 | `/risk` | 風險儀表板 | `main_bot.on_risk` → `command.cmd_risk` |
 | `/marco` | 宏觀雷達（CPI/PCE/PPI/NFP...） | `main_bot.on_marco` → `command.cmd_marco` |
 | `/calendar` | 宏觀與事件日曆（週重點 + 當月圖） | `main_bot.on_calendar` → `command.cmd_calendar` |

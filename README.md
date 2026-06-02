@@ -134,6 +134,7 @@ gemini_stock_bot_full/
 
 ## A. Market Intelligence
 - `/now`：即時市場全景（大盤 + 斐波參考 + AI 結語）
+- `/score [symbol]`：個股多維度綜合評分卡 (100分)
 - `/news [symbol/topic]`：新聞摘要 + AI 分析
 - `/risk`：風險雷達（VIX、恐貪、期權、社群熱度）
 - `/marco`：宏觀雷達（數據頁 + 教學頁）
@@ -177,7 +178,7 @@ gemini_stock_bot_full/
 
 | Domain | Commands |
 |---|---|
-| Market | `/now`, `/risk`, `/marco`, `/calendar`, `/news` |
+| Market | `/now`, `/score`, `/risk`, `/marco`, `/calendar`, `/news` |
 | Analysis | `/tech`, `/chart`, `/chart theme`, `/tech compare`, `/fin`, `/fin chart`, `/fin compare`, `/whale`, `/ask`, `/bt`, `/sim` |
 | Portfolio | `/buy`, `/sell`, `/list`, `/watch ...`, `/sweep ...` |
 | System | `/status`, `/quota`, `/bc ...`, `/help`, `/op ...`, `/ulog ...` |

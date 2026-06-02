@@ -463,6 +463,320 @@ def _build_fin_compare_message(symbols: list[str], user_id: int) -> list[str] | 
     return ["\n".join(report_sections), ai_page, "\n".join(news_sections)]
 
 
+def _score_label(score: int) -> tuple[str, str]:
+    if score >= 80:
+        return "🟢 強勢候選", "趨勢、基本面或催化整體偏強，可納入優先觀察，但仍需等待合理進場區。"
+    if score >= 65:
+        return "🟡 穩健觀察", "條件不差，但仍有部分風險或資料缺口，適合分批與等待確認。"
+    if score >= 50:
+        return "🟠 中性偏觀望", "多空訊號混雜，建議先看關鍵支撐/壓力與下一個催化。"
+    return "🔴 風險偏高", "目前分數不足，除非有明確事件催化，否則不宜追價。"
+
+
+def _score_bar(score: int, width: int = 10) -> str:
+    filled = max(0, min(width, int(round(score / 100 * width))))
+    return "█" * filled + "░" * (width - filled)
+
+
+def _score_tech(snapshot: dict[str, Any]) -> tuple[int, list[str]]:
+    score = 0
+    notes: list[str] = []
+    attack = str(snapshot.get("attack_status", "觀察"))
+    whale = str(snapshot.get("whale_status", "中立"))
+    ema = str(snapshot.get("ema_status", ""))
+    macd = str(snapshot.get("macd_status", ""))
+    rsi = snapshot.get("rsi", "N/A")
+    price = snapshot.get("last_price", snapshot.get("price"))
+    support = snapshot.get("support")
+    resistance = snapshot.get("resistance")
+    fvg = snapshot.get("fvg", {}) or {}
+    confluence = snapshot.get("confluence_payload", {}) or snapshot.get("confluence_signal", {}) or {}
+
+    attack_points = {
+        "強力攻擊": 8,
+        "大買": 7,
+        "中買": 5,
+        "小買": 3,
+        "觀察": 1,
+        "小賣": -2,
+        "中賣": -4,
+        "大賣": -6,
+        "強力拋售": -8,
+    }
+    score += attack_points.get(attack, 0)
+    notes.append(f"Attack Gauge：{attack}")
+
+    if "多頭排列" in ema:
+        score += 5
+        notes.append("均線：多頭排列")
+    elif "空頭排列" in ema:
+        score -= 5
+        notes.append("均線：空頭排列")
+    else:
+        notes.append("均線：趨勢不明/糾結")
+
+    if "金叉" in macd:
+        score += 3
+    elif "死叉" in macd:
+        score -= 3
+    if "動能增強" in macd:
+        score += 2
+    elif "動能減弱" in macd:
+        score -= 1
+    notes.append(f"MACD：{macd or 'N/A'}")
+
+    try:
+        rsi_f = float(rsi)
+        if 50 <= rsi_f <= 68:
+            score += 4
+            notes.append(f"RSI：{rsi_f:.1f}，健康偏強")
+        elif 68 < rsi_f <= 78:
+            score += 1
+            notes.append(f"RSI：{rsi_f:.1f}，偏熱需防追高")
+        elif rsi_f > 78:
+            score -= 3
+            notes.append(f"RSI：{rsi_f:.1f}，過熱")
+        elif rsi_f < 45:
+            score -= 3
+            notes.append(f"RSI：{rsi_f:.1f}，動能偏弱")
+    except Exception:
+        notes.append("RSI：N/A")
+
+    if "買" in whale:
+        score += 3
+    elif "賣" in whale:
+        score -= 3
+    notes.append(f"主力籌碼：{whale}")
+
+    fvg_type = str(fvg.get("type", ""))
+    if "看漲" in fvg_type:
+        score += 2
+        notes.append(f"FVG：{fvg.get('range', 'N/A')} 看漲失衡區")
+    elif "看跌" in fvg_type:
+        score -= 2
+        notes.append(f"FVG：{fvg.get('range', 'N/A')} 看跌失衡區")
+
+    signal_type = str(confluence.get("signal_type", "NONE"))
+    signal_score = int(confluence.get("score", 0) or 0)
+    if signal_type == "STRONG_LONG":
+        score += 5
+        notes.append(f"共振：STRONG_LONG ({signal_score}/7)")
+    elif signal_type == "WATCH_LONG":
+        score += 3
+        notes.append(f"共振：WATCH_LONG ({signal_score}/7)")
+    elif signal_type in {"STRONG_SHORT", "WATCH_SHORT"}:
+        score -= 5 if signal_type == "STRONG_SHORT" else -3
+        notes.append(f"共振：{signal_type} ({signal_score}/7)")
+
+    try:
+        price_f = float(price)
+        sup_f = float(support)
+        res_f = float(resistance)
+        if price_f > 0 and res_f > sup_f:
+            pos = (price_f - sup_f) / (res_f - sup_f)
+            if pos >= 0.9:
+                score -= 2
+                notes.append("位置：接近短線壓力，追價風險較高")
+            elif 0.25 <= pos <= 0.75:
+                score += 2
+                notes.append("位置：位於支撐/壓力中段，風險報酬較均衡")
+    except Exception:
+        pass
+
+    return max(0, min(25, int(round(score + 12)))), notes[:6]
+
+
+def _score_fundamentals(fundamentals: dict[str, Any]) -> tuple[int, list[str]]:
+    if not fundamentals:
+        return 8, ["財報資料不足：以保守分數處理"]
+    score = 8
+    notes: list[str] = []
+
+    def _num(v: Any) -> float | None:
+        try:
+            if v in {None, "", "N/A"}:
+                return None
+            return float(str(v).replace("$", "").replace(",", "").replace("%", ""))
+        except Exception:
+            return None
+
+    forward_pe = _num(fundamentals.get("forward_pe"))
+    trailing_pe = _num(fundamentals.get("trailing_pe"))
+    profit_margin = _num(fundamentals.get("profit_margin"))
+    gross_margin = _num(fundamentals.get("gross_margin"))
+    revenue_growth = _num(fundamentals.get("revenue_growth_qoq"))
+    forward_eps = _num(fundamentals.get("forward_eps"))
+    trailing_eps = _num(fundamentals.get("trailing_eps"))
+
+    if profit_margin is not None:
+        if profit_margin >= 20:
+            score += 5
+        elif profit_margin >= 10:
+            score += 3
+        elif profit_margin < 0:
+            score -= 4
+        notes.append(f"淨利率：{profit_margin:.2f}%")
+    if gross_margin is not None:
+        if gross_margin >= 55:
+            score += 4
+        elif gross_margin >= 35:
+            score += 2
+        notes.append(f"毛利率：{gross_margin:.2f}%")
+    if revenue_growth is not None:
+        if revenue_growth >= 10:
+            score += 4
+        elif revenue_growth > 0:
+            score += 2
+        else:
+            score -= 2
+        notes.append(f"QoQ 營收成長：{revenue_growth:+.2f}%")
+    if forward_pe is not None:
+        if 0 < forward_pe <= 35:
+            score += 3
+        elif forward_pe > 60:
+            score -= 2
+        notes.append(f"Forward P/E：{forward_pe:.2f}")
+    elif trailing_pe is not None:
+        notes.append(f"Trailing P/E：{trailing_pe:.2f}")
+    if forward_eps is not None and trailing_eps is not None:
+        if forward_eps > trailing_eps:
+            score += 3
+            notes.append("EPS 預期：Forward EPS 高於 TTM，成長預期偏正向")
+        elif forward_eps < trailing_eps:
+            score -= 1
+            notes.append("EPS 預期：Forward EPS 低於 TTM，需留意下修")
+
+    source = fundamentals.get("financial_source")
+    if source:
+        notes.append(f"來源：{source}")
+    return max(0, min(25, int(round(score)))), notes[:6]
+
+
+def _score_news(news_items: list[dict[str, Any]]) -> tuple[int, list[str]]:
+    if not news_items:
+        return 6, ["近期新聞不足：催化分數保守"]
+    score = min(8, len(news_items) * 2)
+    notes: list[str] = []
+    positive_terms = ["upgrade", "beats", "beat", "surge", "record", "strong", "growth", "partnership", "ai", "raises", "outperform"]
+    negative_terms = ["downgrade", "miss", "falls", "probe", "lawsuit", "cuts", "weak", "slump", "risk", "warning"]
+    for item in news_items[:3]:
+        title = str(item.get("title", ""))
+        desc = str(item.get("description", ""))
+        text = f"{title} {desc}".lower()
+        if any(t in text for t in positive_terms):
+            score += 3
+        if any(t in text for t in negative_terms):
+            score -= 3
+        if title:
+            notes.append(title[:90])
+    return max(0, min(15, int(round(score)))), notes[:3]
+
+
+def _score_risk(symbol: str, snapshot: dict[str, Any]) -> tuple[int, list[str]]:
+    discount = 0
+    notes: list[str] = []
+    vix = market_api.get_macro_quote("VIX")
+    vix_price = vix.get("price")
+    try:
+        vix_f = float(vix_price)
+        if vix_f >= 25:
+            discount += 6
+            notes.append(f"VIX {vix_f:.2f}：系統性風險偏高")
+        elif vix_f >= 20:
+            discount += 3
+            notes.append(f"VIX {vix_f:.2f}：波動升溫")
+        else:
+            notes.append(f"VIX {vix_f:.2f}：系統性風險可控")
+    except Exception:
+        discount += 2
+        notes.append("VIX 無法取得：風險折扣 +2")
+
+    try:
+        price = float(snapshot.get("last_price", snapshot.get("price", 0)) or 0)
+        atr = float(snapshot.get("atr", 0) or 0)
+        if price > 0 and atr / price >= 0.08:
+            discount += 4
+            notes.append("ATR/Price 高於 8%：個股波動偏大")
+        elif price > 0 and atr / price >= 0.05:
+            discount += 2
+            notes.append("ATR/Price 高於 5%：需控管倉位")
+    except Exception:
+        pass
+
+    try:
+        rsi = float(snapshot.get("rsi", 0) or 0)
+        if rsi >= 78:
+            discount += 3
+            notes.append("RSI 過熱：追高風險折扣")
+    except Exception:
+        pass
+    return max(0, min(15, int(discount))), notes
+
+
+def cmd_score(text: str, user_id: int | None = None) -> str:
+    """一鍵個股綜合評分卡：技術 + 財報 + 新聞催化 + 風險折扣。"""
+    import tech_indicators
+
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        return "📊 /score 用法\n━━━━━━━━━━━━━━\n請輸入：`/score [股票代號]`\n範例：`/score MRVL`"
+
+    symbols = _normalize_symbols(parts[1])
+    if not symbols:
+        return "❌ 請提供有效股票代號，例如：`/score NVDA`。"
+    symbol = symbols[0]
+
+    snapshot = tech_indicators.calculate_indicators(symbol)
+    if "error" in snapshot:
+        fallback = market_api.get_stock_snapshot(symbol)
+        if not isinstance(fallback.get("price"), (int, float)):
+            return f"❌ 無法取得 `{symbol}` 的技術或行情資料，請確認代號是否正確。"
+        snapshot = fallback
+
+    fundamentals = market_api.get_stock_fundamentals(symbol)
+    news_items = market_api.fetch_news_multi(symbol, limit=3)
+
+    tech_score, tech_notes = _score_tech(snapshot)
+    fundamental_score, fundamental_notes = _score_fundamentals(fundamentals)
+    news_score, news_notes = _score_news(news_items)
+    risk_discount, risk_notes = _score_risk(symbol, snapshot)
+
+    total = max(0, min(100, int(round(tech_score + fundamental_score + news_score + 20 - risk_discount))))
+    label, conclusion = _score_label(total)
+    price = snapshot.get("last_price", snapshot.get("price", "N/A"))
+    fvg = snapshot.get("fvg", {}) or {}
+    company = fundamentals.get("company_name", symbol) if fundamentals else symbol
+
+    def _lines(items: list[str], empty: str = "N/A") -> str:
+        return "\n".join(f"  - {item}" for item in items if item) or f"  - {empty}"
+
+    return (
+        f"📊 **{symbol} 綜合評分卡 /score**\n"
+        f"━━━━━━━━━━━━━━━━━\n"
+        f"🏢 {company}\n"
+        f"💵 現價：`{price}`\n"
+        f"🏁 總分：`{total}/100` `[{_score_bar(total)}]`\n"
+        f"📌 評級：{label}\n"
+        f"💡 結論：{conclusion}\n\n"
+        f"【分數拆解】\n"
+        f"• 技術面：`{tech_score}/25`\n"
+        f"• 財報面：`{fundamental_score}/25`\n"
+        f"• 新聞催化：`{news_score}/15`\n"
+        f"• 基礎配置分：`20/20`\n"
+        f"• 風險折扣：`-{risk_discount}/15`\n\n"
+        f"【技術重點】\n{_lines(tech_notes)}\n\n"
+        f"【財報/估值重點】\n{_lines(fundamental_notes)}\n\n"
+        f"【新聞催化】\n{_lines(news_notes, '暫無近期新聞催化')}\n\n"
+        f"【風險折扣】\n{_lines(risk_notes, '無明顯額外風險折扣')}\n\n"
+        f"【關鍵參考】\n"
+        f"• 支撐/壓力：`{snapshot.get('support', 'N/A')}` / `{snapshot.get('resistance', 'N/A')}`\n"
+        f"• FVG：`{fvg.get('type', 'N/A')}` `{fvg.get('range', 'N/A')}`\n"
+        f"• POC：`{snapshot.get('poc', 'N/A')}`｜ATR：`{snapshot.get('atr', 'N/A')}`\n"
+        f"━━━━━━━━━━━━━━━━━\n"
+        f"⚠️ 評分為決策輔助，不代表買賣建議；建議搭配 `/tech {symbol}`、`/fin {symbol}`、`/ask {symbol} 你的問題` 深入確認。"
+    )
+
+
 def get_price_volume_signal(quote: dict[str, Any]) -> str:
     vol = quote.get("volume_note", "N/A")
     diff = float(quote.get("diff", 0) or 0)
