@@ -1452,9 +1452,9 @@ def on_text(m):
         record_user_log_safely(user_id, user_name, username, text, result, source="natural")
 
         # 自然對話自動圖表觸發
-        syms = command.STOCK_RE.findall(text)
+        syms = command.extract_stock_symbols_from_text(text, limit=1)
         if syms:
-            check_and_send_auto_chart(m.chat.id, text, syms[0].upper(), user_id, user_name, username)
+            check_and_send_auto_chart(m.chat.id, text, syms[0], user_id, user_name, username)
     except Exception as exc:
         logging.error("Natural language handler failed: %s", exc)
         safe_send(m.chat.id, f"❌ AI 回覆失敗：{exc}")

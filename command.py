@@ -24,7 +24,12 @@ import utils
 from config import ADMIN_ID, BOT_START_TIME, MAX_TELEGRAM_MESSAGE_LENGTH, VERSION
 from utils import safe_round
 
-STOCK_RE = re.compile(r"\b[A-Z0-9\.\-]{1,6}\b")
+STOCK_RE = re.compile(r"(?<![A-Z0-9\.\-])([A-Z][A-Z0-9\.\-]{0,5})(?![A-Z0-9\.\-])", re.IGNORECASE)
+COMMON_WORD_TOKENS = {
+    "AI", "A", "I", "THE", "AND", "OR", "TO", "IN", "ON", "OF", "FOR", "WITH", "WHY", "HOW", "WHAT", "NEWS",
+    "ARE", "YOU", "ME", "MY", "YOUR", "CAN", "DO", "IS", "IT", "NOW", "TODAY", "CHART", "HELP", "PLEASE",
+    "CEO", "CFO", "ETF", "FVG", "POC", "VIX", "RSI", "MACD", "EMA", "VWAP", "ATR", "TD", "SMC",
+}
 FIN_COMPARE_STATE: dict[int, list[str]] = {}
 DATA_CLEAR_CONFIRM_STATE: dict[int, datetime] = {}
 OP_DELETE_CONFIRM_STATE: dict[int, tuple[str, datetime]] = {}
@@ -366,6 +371,23 @@ def _is_stock_symbol(query: str) -> bool:
         return False
     snapshot = market_api.get_stock_snapshot(symbol)
     return isinstance(snapshot.get("price"), (int, float)) and snapshot.get("price") != 0
+
+
+def extract_stock_symbols_from_text(text: str, *, limit: int = 3) -> list[str]:
+    """從自然語言中抽取可能的美股代號，支援 `mrvl怎麼看` 這類代號緊貼中文的輸入。"""
+    raw = text or ""
+    candidates = [m.group(1).upper() for m in STOCK_RE.finditer(raw)]
+    symbols: list[str] = []
+    for token in candidates:
+        if token in COMMON_WORD_TOKENS:
+            continue
+        if not re.fullmatch(r"[A-Z][A-Z0-9\.\-]{0,5}", token):
+            continue
+        if token not in symbols:
+            symbols.append(token)
+        if len(symbols) >= limit:
+            break
+    return symbols
 
 
 def _build_fin_compare_message(symbols: list[str], user_id: int) -> list[str] | str:
@@ -2177,8 +2199,8 @@ def cmd_post_market_report(user_name: str = "User", user_id: int | None = None) 
 def handle_natural_language(text: str, user_name: str, user_id: int | None = None) -> str:
     import tech_indicators
 
-    syms = STOCK_RE.findall(text or "")
-    symbol = syms[0].upper() if syms else None
+    syms = extract_stock_symbols_from_text(text or "", limit=1)
+    symbol = syms[0] if syms else None
 
     if symbol:
         # 偵測關鍵字，決定是否切換到 /whale 模式
