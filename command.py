@@ -2290,12 +2290,19 @@ def _generate_rolling_calendar_image(
     start_date,
     days: int = 30,
 ) -> io.BytesIO | None:
-    """生成滾動 30 天行事曆圖片：今天往前 7 天，並往後補滿 30 格。"""
+    """生成簡潔、可讀的滾動事件行事曆圖片。
+
+    設計重點：
+    - 使用 7 欄週曆，星期位置直覺。
+    - 每格最多顯示 3 個事件，避免文字塞滿。
+    - 只用少量顏色標示今天、高衝擊與一般事件。
+    """
     try:
         import matplotlib as mpl
         mpl.use("Agg")
         from matplotlib.backends.backend_agg import FigureCanvasAgg
         from matplotlib.figure import Figure
+        from matplotlib.patches import FancyBboxPatch
     except Exception:
         return None
 
@@ -2304,76 +2311,110 @@ def _generate_rolling_calendar_image(
     days = max(1, int(days))
     date_cells = [start_date + timedelta(days=i) for i in range(days)]
     end_date = date_cells[-1]
+    today = datetime.now().date()
+
+    high_impact_tags = {"CPI", "FOMC", "NFP"}
+    medium_impact_tags = {"PPI", "PCE", "FED CHAIR", "ER"}
 
     event_map: dict[str, list[dict[str, str]]] = {}
-    for e in events:
+    for event in events:
         try:
-            dt = datetime.strptime(str(e.get("date", ""))[:10], "%Y-%m-%d").date()
-            event_map.setdefault(dt.strftime("%Y-%m-%d"), []).append(e)
+            event_date = datetime.strptime(str(event.get("date", ""))[:10], "%Y-%m-%d").date()
+            event_map.setdefault(event_date.strftime("%Y-%m-%d"), []).append(event)
         except Exception:
             continue
 
-    # 固定 30 格：5 列 x 6 欄。月底時會自然跨月，不再卡在當月月曆。
-    cols = 6
-    rows = (days + cols - 1) // cols
-    weekday_names = ["一", "二", "三", "四", "五", "六", "日"]
-    table_data: list[list[str]] = []
-    for r in range(rows):
-        row: list[str] = []
-        for c in range(cols):
-            idx = r * cols + c
-            if idx >= len(date_cells):
-                row.append("")
-                continue
-            d = date_cells[idx]
-            key = d.strftime("%Y-%m-%d")
-            tags = "/".join((item.get("tag") or "EVT") for item in event_map.get(key, [])[:3])
-            label = f"{d.month}/{d.day} 週{weekday_names[d.weekday()]}"
-            row.append(f"{label}\n{tags}" if tags else label)
-        table_data.append(row)
+    # 從週一開始、到週日結束，保留滾動 30 天視窗功能，同時更像一般月曆。
+    calendar_start = start_date - timedelta(days=start_date.weekday())
+    calendar_end = end_date + timedelta(days=6 - end_date.weekday())
+    total_cells = (calendar_end - calendar_start).days + 1
+    rows = max(1, total_cells // 7)
 
-    fig = Figure(figsize=(18, 11.5), facecolor="#0B1020")
+    fig = Figure(figsize=(14, 9), facecolor="#F8FAFC")
     FigureCanvasAgg(fig)
     ax = fig.add_subplot(111)
     ax.axis("off")
-    title = f"美股重大事件滾動行事曆｜{start_date.strftime('%m/%d')} - {end_date.strftime('%m/%d')}（30天）"
-    fig.text(0.01, 0.985, f"生成時間：{generated_at}", color="#E2E8F0", fontsize=12, va="top", ha="left")
-    fig.text(0.5, 0.955, title, color="#F8FAFC", fontsize=23, va="top", ha="center", weight="bold")
-    fig.text(0.5, 0.918, "規則：今天往前 7 天 + 往後補滿至 30 天；跨月會自動延伸。", color="#CBD5E1", fontsize=12, va="top", ha="center")
 
-    headers = ["30天視窗"] * cols
-    tbl = ax.table(cellText=table_data, colLabels=headers, loc="center", cellLoc="left", colLoc="center")
-    tbl.auto_set_font_size(False)
-    tbl.set_fontsize(13)
-    tbl.scale(1.2, 3.05)
+    fig.text(0.06, 0.955, "美股事件行事曆", color="#0F172A", fontsize=24, weight="bold", ha="left")
+    fig.text(
+        0.06,
+        0.918,
+        f"{start_date.strftime('%Y/%m/%d')} - {end_date.strftime('%Y/%m/%d')}｜生成時間：{generated_at}",
+        color="#475569",
+        fontsize=12,
+        ha="left",
+    )
+    fig.text(0.94, 0.955, "藍=今天　紅=高衝擊　灰=一般", color="#64748B", fontsize=11, ha="right")
 
-    today_key = datetime.now().date().strftime("%Y-%m-%d")
-    for (r, c), cell in tbl.get_celld().items():
-        cell.set_edgecolor("#334155")
-        if r == 0:
-            cell.set_facecolor("#1E293B")
-            cell.set_text_props(color="#CBD5E1", weight="bold")
-            continue
+    weekday_names = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
+    left, right = 0.06, 0.94
+    top, bottom = 0.86, 0.08
+    gap = 0.008
+    header_h = 0.035
+    cell_w = (right - left - gap * 6) / 7
+    cell_h = (top - bottom - header_h - gap * (rows - 1)) / rows
 
-        text_val = cell.get_text().get_text()
-        idx = (r - 1) * cols + c
-        d = date_cells[idx] if 0 <= idx < len(date_cells) else None
-        is_today = bool(d and d.strftime("%Y-%m-%d") == today_key)
+    for col, weekday in enumerate(weekday_names):
+        x = left + col * (cell_w + gap)
+        fig.text(x + cell_w / 2, top, weekday, color="#334155", fontsize=12, weight="bold", ha="center", va="center")
+
+    for idx in range(total_cells):
+        current_date = calendar_start + timedelta(days=idx)
+        row = idx // 7
+        col = idx % 7
+        x = left + col * (cell_w + gap)
+        y = top - header_h - (row + 1) * cell_h - row * gap
+
+        key = current_date.strftime("%Y-%m-%d")
+        day_events = event_map.get(key, [])
+        tags = {(event.get("tag") or "EVT").upper() for event in day_events}
+        in_window = start_date <= current_date <= end_date
+        is_today = current_date == today
+        has_high_impact = bool(tags & high_impact_tags)
+        has_event = bool(day_events)
+
         if is_today:
-            cell.set_facecolor("#164E63")
-            cell.set_text_props(color="#FFFFFF", weight="bold")
-        elif "CPI" in text_val or "FOMC" in text_val or "NFP" in text_val:
-            cell.set_facecolor("#3F1D2E")
-            cell.set_text_props(color="#FDE68A", weight="bold")
-        elif "FED CHAIR" in text_val or "PPI" in text_val or "PCE" in text_val or "ER" in text_val:
-            cell.set_facecolor("#1F2937")
-            cell.set_text_props(color="#BFDBFE")
+            face_color, edge_color, text_color = "#E0F2FE", "#0284C7", "#0C4A6E"
+        elif has_high_impact:
+            face_color, edge_color, text_color = "#FEF2F2", "#EF4444", "#7F1D1D"
+        elif has_event:
+            face_color, edge_color, text_color = "#F8FAFC", "#CBD5E1", "#1E293B"
         else:
-            cell.set_facecolor("#0F172A")
-            cell.set_text_props(color="#CBD5E1")
+            face_color, edge_color, text_color = "#FFFFFF", "#E2E8F0", "#64748B"
+
+        if not in_window:
+            face_color, text_color = "#F1F5F9", "#94A3B8"
+
+        card = FancyBboxPatch(
+            (x, y),
+            cell_w,
+            cell_h,
+            boxstyle="round,pad=0.006,rounding_size=0.012",
+            linewidth=1.2 if is_today or has_high_impact else 0.8,
+            edgecolor=edge_color,
+            facecolor=face_color,
+            transform=fig.transFigure,
+        )
+        fig.patches.append(card)
+
+        date_label = f"{current_date.month}/{current_date.day}"
+        if is_today:
+            date_label += " 今天"
+        fig.text(x + 0.012, y + cell_h - 0.025, date_label, color=text_color, fontsize=11, weight="bold", ha="left", va="top")
+
+        for event_index, event in enumerate(day_events[:3]):
+            tag = (event.get("tag") or "EVT").upper()
+            title = str(event.get("title") or tag).replace("公布", "").strip()
+            bullet_color = "#EF4444" if tag in high_impact_tags else "#2563EB" if tag in medium_impact_tags else "#64748B"
+            y_text = y + cell_h - 0.055 - event_index * 0.026
+            fig.text(x + 0.012, y_text, "●", color=bullet_color, fontsize=7, ha="left", va="top")
+            fig.text(x + 0.024, y_text, f"{tag} {title[:12]}", color="#334155", fontsize=8.5, ha="left", va="top")
+
+        if len(day_events) > 3:
+            fig.text(x + 0.012, y + 0.012, f"+{len(day_events) - 3} more", color="#64748B", fontsize=8, ha="left")
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=240, bbox_inches="tight", facecolor="#0B1020")
+    fig.savefig(buf, format="png", dpi=220, bbox_inches="tight", facecolor="#F8FAFC")
     fig.clf()
     buf.seek(0)
     return buf
@@ -2430,10 +2471,10 @@ def cmd_calendar(user_id: int, user_name: str) -> tuple[list[str], io.BytesIO | 
     page2 = (
         "📌 **滾動行事曆說明** (2/2)\n"
         "━━━━━━━━━━━━━━━━━\n"
-        "• 圖片固定顯示 30 天：今天往前 7 天，往後補滿到 30 天。\n"
-        "• 若月底或前方沒有事件，日期仍會跨到下個月，不再卡在當月月曆。\n"
-        "• 青色：今天；黃色：高衝擊事件（CPI/FOMC/NFP）。\n"
-        "• 藍色：中度事件（PPI/PCE/Fed Chair/ER）。\n"
+        "• 圖片顯示 30 天滾動視窗：今天往前 7 天，往後補滿到 30 天。\n"
+        "• 版面改為 7 欄週曆，跨月會自動延伸，閱讀更直覺。\n"
+        "• 藍框：今天；紅框：高衝擊事件（CPI/FOMC/NFP）。\n"
+        "• 小圓點：事件類型；每格最多列 3 筆，避免畫面太擠。\n"
         "• `ER`：持股或 Watchlist 的財報日；日期變動以官方公告為準。"
     )
 
